@@ -104,6 +104,8 @@ export interface ConnectionDef {
 export interface BoxDef {
   id: string;
   name: string;
+  /** The layout this box stands on, or '' when it is not on a layout yet. A box is on one layout at most. */
+  layoutId: string;
   shortName: string;
   description: string;
   /** Free-text notes about station roads/platforms (informational only). */
@@ -123,8 +125,8 @@ export interface TapSettings {
 }
 
 export interface Settings {
-  /** Name of the model railway / layout this copy of the app is set up for. */
-  layoutName: string;
+  /** The layout being worked: its boxes are the ones offered under Open a signal box. '' when none is chosen. */
+  activeLayoutId: string;
   theme: ThemeId;
   strictness: Strictness;
   codeSetId: string;
@@ -172,11 +174,32 @@ export type JunctionKind =
   | 'catchPoints'
   | 'turntable';
 
-/** Who a track circuit belongs to: a signal box, the line between two boxes (a block section), or nobody yet. */
+/**
+ * Who a track circuit belongs to: a signal box you work, the line between two boxes (a block section),
+ * the box at the far end of a connection (worked by the simulated signaller, e.g. sidings it controls), or nobody yet.
+ */
 export type TrackOwner =
   | { kind: 'none' }
   | { kind: 'box'; boxId: string }
-  | { kind: 'line'; boxId: string; connectionId: string };
+  | { kind: 'line'; boxId: string; connectionId: string }
+  | { kind: 'remote'; boxId: string; connectionId: string };
+
+/** A signal box drawn on the plan: one you work, or the far box of one of its connections. */
+export type MarkerBox = { kind: 'box'; boxId: string } | { kind: 'remote'; boxId: string; connectionId: string };
+
+/** Where a signal box stands on the plan. */
+export interface BoxMarker {
+  id: string;
+  box: MarkerBox;
+  /** Position when not attached to a track circuit (grid units). */
+  x: number;
+  y: number;
+  /** The track circuit it stands beside, or ''. When attached it follows that track. */
+  circuitId: string;
+  /** Offset from the middle of the attached track circuit (grid units). */
+  dx: number;
+  dy: number;
+}
 
 /** Where a track that leaves the scene goes. */
 export type ExitTarget =
@@ -203,6 +226,17 @@ export interface TrackCircuit {
   ends: [CircuitEnd, CircuitEnd];
   /** Bend points between the ends, in order (grid units). Drawn with rounded corners: curves. */
   via?: Array<{ x: number; y: number }>;
+  /**
+   * Set when this track is a platform road: its platform number (e.g. "1", "2", "3 bay") and which
+   * side the platform face is on (the same sides as Lay a parallel track). Used later by the box to
+   * say where an arriving train stands.
+   */
+  platform?: { number: string; side: 1 | -1 };
+  /**
+   * Traffic on this track: which running line it is part of and the way trains run along it
+   * (towards end 0 or end 1). Absent = both ways (single lines, sidings, loops worked both ways).
+   */
+  traffic?: { line: RunningLine; toward: 0 | 1 };
 }
 
 export interface Junction {
@@ -212,6 +246,8 @@ export interface Junction {
   kind: JunctionKind;
   /** The signal box that works it, or '' if not assigned yet. */
   boxId: string;
+  /** Set when the far box of this connection (of box `boxId`) works it instead: the simulated signaller. */
+  connectionId?: string;
   x: number;
   y: number;
   /** Turned round (rotated half a turn): the toe faces right instead of left. Keeps its hand. */
@@ -229,6 +265,25 @@ export interface Junction {
 export interface TrackPlan {
   circuits: TrackCircuit[];
   junctions: Junction[];
+  /** Signal boxes placed on the plan. */
+  markers?: BoxMarker[];
+}
+
+/** A running line on double track: the up line or the down line. */
+export type RunningLine = 'up' | 'down';
+
+/** Which side of a double line trains keep to: left-hand running (British practice) or right-hand. */
+export type RunningSide = 'left' | 'right';
+
+/** One model railway: its name, fiddle yards and track plan. Boxes join a layout through BoxDef.layoutId. */
+export interface Layout {
+  id: string;
+  name: string;
+  fiddleYards: FiddleYard[];
+  /** Drawn in the layout configurator. Empty until the user builds one. */
+  trackPlan: TrackPlan;
+  /** Which side of a double line trains keep to (default left, as in Britain). */
+  running?: RunningSide;
 }
 
 export interface AppState {
@@ -237,8 +292,7 @@ export interface AppState {
   trainTypes: TrainType[];
   codeSets: CodeSet[];
   roster: Loco[];
-  fiddleYards: FiddleYard[];
   boxes: BoxDef[];
-  /** The layout's track plan, drawn in the layout configurator. Empty until the user builds one. */
-  trackPlan: TrackPlan;
+  /** The model railways set up in this app. The roster is shared by all of them. */
+  layouts: Layout[];
 }

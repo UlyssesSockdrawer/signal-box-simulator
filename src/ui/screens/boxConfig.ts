@@ -14,11 +14,13 @@ import {
   setShelfPositions,
   SHORT_NAME_MAX,
 } from '../../core/boxes';
+import { findYard, layoutOfBox, layoutOfYard, yardsForBox } from '../../core/layouts';
 import { layoutShelf, positionLabel } from '../../core/shelf';
 import type { AppState, BoxDef, ConnectionDef, LineType, WorkingMode } from '../../core/types';
 import { topBar, type Ctx, type Screen } from '../app';
 import { disposeBoxRuntime } from '../boxRuntime';
 import { confirmButton, h, option, toast } from '../dom';
+import { moveBoxToLayout } from './layouts';
 
 /**
  * Box configurator: what one signal box needs in order to work — its name,
@@ -136,6 +138,27 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
         (v) => updBox((b) => setShelfPositions(b, Number(v))),
         { help: `Places for instrument groups along the shelf, left to right (1 to ${MAX_SHELF_POSITIONS}).`, onReject: () => (shelfInput.value = String(box.shelfPositions)) },
       ),
+      selectField(
+        `bc_layout_${box.id}`,
+        'Layout',
+        h(
+          'select',
+          {
+            on: {
+              change: (e: Event) => {
+                const sel = e.target as HTMLSelectElement;
+                // Moving clears the box's track on the layout it leaves: asks first when it has any.
+                moveBoxToLayout(ctx, box.id, sel.value, () => (sel.value = box.layoutId));
+              },
+            },
+          },
+          option('', 'Not on a layout', !layoutOfBox(st, box)),
+          ...st.layouts.map((l) => option(l.id, l.name, l.id === box.layoutId)),
+        ),
+        st.layouts.length
+          ? 'The layout this box stands on. Open a signal box lists the boxes on the active layout. Moving it clears its track on the layout it leaves.'
+          : 'No layouts yet. Create one in the layout configurator, then put this box on it.',
+      ),
     ),
     st.boxes.length > 1
       ? h(
@@ -158,6 +181,8 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
     const pos = slots.findIndex((s) => s?.id === c.id);
     const plate = h('span', { class: 'plate' }, c.neighbourName);
     const fy = servesFiddleYard(c);
+    const yards = yardsForBox(st, box);
+    const curYard = findYard(st, c.fiddleYardId);
     const yn = (label: string, on: boolean, apply: () => void) =>
       h('button', { class: 'btn small', type: 'button', 'aria-pressed': String(on), on: { click: () => !on && apply() } }, label);
     return h(
@@ -221,7 +246,10 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
           h(
             'div',
             { class: 'seg', role: 'group', 'aria-labelledby': `bc_fyq_${c.id}` },
-            yn('Yes', fy, () => updConn(c.id, (cc, _b, a) => (cc.fiddleYardId = a.fiddleYards[0]?.id ?? ''))),
+            yn('Yes', fy, () => {
+              if (!yards.length) return toast(layoutOfBox(st, box) ? `${layoutOfBox(st, box)!.name} has no fiddle yards yet. Add one in the layout configurator.` : `Put ${box.name} on a layout with a fiddle yard first.`);
+              updConn(c.id, (cc) => (cc.fiddleYardId = yards[0].id));
+            }),
             yn('No', !fy, () => updConn(c.id, (cc) => (cc.fiddleYardId = ''))),
           ),
           h(
@@ -239,9 +267,12 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
               h(
                 'select',
                 { on: { change: (e: Event) => updConn(c.id, (cc) => (cc.fiddleYardId = (e.target as HTMLSelectElement).value)) } },
-                ...st.fiddleYards.map((y) => option(y.id, y.name, y.id === c.fiddleYardId)),
+                ...yards.map((y) => option(y.id, y.name, y.id === c.fiddleYardId)),
+                ...(curYard && !yards.includes(curYard) ? [option(curYard.id, `${curYard.name} (on ${layoutOfYard(st, curYard.id)?.name ?? 'another layout'})`, true)] : []),
               ),
-              'Fiddle yards and their roads are set up in Fiddle yard & station.',
+              curYard && !yards.includes(curYard)
+                ? `This yard is on ${layoutOfYard(st, curYard.id)?.name ?? 'another layout'}, not ${layoutOfBox(st, box)?.name ?? "this box's layout"}. Choose one of this layout's yards.`
+                : "Each layout's fiddle yards and their roads are set up in the layout configurator (Details).",
             )
           : null,
       ),

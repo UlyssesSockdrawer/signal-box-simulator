@@ -1,6 +1,7 @@
 import { BellPlayer } from '../audio/bell';
 import type { Store } from '../core/store';
 import { addBox, canOpenBox } from '../core/boxes';
+import { activeLayout, findLayout, findYard, layoutOfYard, setActiveLayout, unassignedBoxes } from '../core/layouts';
 import type { AppState, BoxDef, Loco } from '../core/types';
 import { h, replace, safeRerender, toast } from './dom';
 import { boxScreen } from './screens/box';
@@ -9,11 +10,12 @@ import { helpScreen } from './screens/help';
 import { layoutScreen } from './screens/layout';
 import { rosterScreen } from './screens/roster';
 import { settingsScreen } from './screens/settings';
-import { trackPlanScreen, trackPlanSummary } from './screens/trackPlan';
+import { layoutListScreen, layoutMenuSummary, moveBoxToLayout } from './screens/layouts';
+import { trackPlanScreen } from './screens/trackPlan';
 import { tutorialScreen } from './screens/tutorial';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.11';
+export const APP_VERSION = '0.3.12';
 
 export interface Ctx {
   store: Store;
@@ -56,14 +58,19 @@ export function activeCodeSet(state: AppState) {
 
 export function locationText(state: AppState, l: Loco): string {
   const loc = l.location;
+  // Name the layout when the loco is on one other than the active layout.
+  const elsewhere = (layoutId: string | undefined) => {
+    const lay = findLayout(state, layoutId);
+    return lay && lay.id !== activeLayout(state)?.id ? `${lay.name}: ` : '';
+  };
   if (loc.kind === 'fiddleYard') {
-    const yard = state.fiddleYards.find((y) => y.id === loc.yardId);
+    const yard = findYard(state, loc.yardId);
     const road = yard?.roads.find((r) => r.id === loc.roadId);
-    return `${yard?.name ?? 'Fiddle yard'}, ${road?.name ?? loc.roadId}`;
+    return `${elsewhere(layoutOfYard(state, loc.yardId)?.id)}${yard?.name ?? 'Fiddle yard'}, ${road?.name ?? loc.roadId}`;
   }
   if (loc.kind === 'station') {
     const box = state.boxes.find((b) => b.id === loc.boxId);
-    return `${box?.name ?? loc.boxId} station${loc.note ? ` (${loc.note})` : ''}`;
+    return `${elsewhere(box?.layoutId)}${box?.name ?? loc.boxId} station${loc.note ? ` (${loc.note})` : ''}`;
   }
   if (loc.kind === 'farBox') {
     const conn = state.boxes.find((b) => b.id === loc.boxId)?.connections.find((c) => c.id === loc.connectionId);
@@ -94,8 +101,11 @@ function menuScreen(ctx: Ctx): Screen {
       h('span', { class: 'mi-label' }, label),
       sub ? h('span', { class: 'mi-sub' }, sub) : null,
     );
-  const fyCount = st.roster.filter((l) => l.location.kind === 'fiddleYard').length;
-  const stnCount = st.roster.filter((l) => l.location.kind === 'station').length;
+  const active = activeLayout(st);
+  const yardIds = new Set((active?.fiddleYards ?? []).map((y) => y.id));
+  const boxIds = new Set(st.boxes.filter((b) => (active && b.layoutId === active.id) || !findLayout(st, b.layoutId)).map((b) => b.id));
+  const fyCount = st.roster.filter((l) => l.location.kind === 'fiddleYard' && yardIds.has(l.location.yardId)).length;
+  const stnCount = st.roster.filter((l) => l.location.kind === 'station' && boxIds.has(l.location.boxId)).length;
   return {
     title: 'Main menu',
     el: h(
@@ -106,16 +116,16 @@ function menuScreen(ctx: Ctx): Screen {
         { class: 'splash' },
         h('h1', { class: 'nameboard splash-board' }, 'Signal Box Simulator'),
         h('p', { class: 'splash-sub' }, 'A signal box simulator for your model railway'),
-        st.settings.layoutName ? h('p', { class: 'nameboard splash-layout' }, st.settings.layoutName) : null,
+        active ? h('p', { class: 'nameboard splash-layout' }, active.name) : null,
       ),
       h(
         'nav',
         { class: 'menu-grid menu-shelf', 'aria-label': 'Main menu' },
         item('boxes', 'Open a signal box', '', true),
         item('config', 'Box configurator', 'Each box, its shelf and the boxes it is connected to'),
-        item('plan', 'Layout configurator', trackPlanSummary(st)),
+        item('plan', 'Layout configurator', layoutMenuSummary(st)),
         item('roster', 'Locomotive roster', `${st.roster.length} locomotives`),
-        item('layout', 'Fiddle yard & station', `${fyCount} in fiddle yard, ${stnCount} in station`),
+        item('layout', 'Fiddle yard & station', `${fyCount} in fiddle yard${(active?.fiddleYards.length ?? 0) > 1 ? 's' : ''}, ${stnCount} in station`),
         item('tutorial', 'Tutorial', 'Absolute block and bell codes, step by step'),
         item('help', 'Bell code reference', activeCodeSet(st).name),
         item('settings', 'Settings', `${st.settings.strictness === 'learner' ? 'Learner' : 'Strict'} mode`),
@@ -127,13 +137,15 @@ function menuScreen(ctx: Ctx): Screen {
 
 function boxSelectScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;
+  const active = activeLayout(st);
   const configure = (id: string) => ctx.goFrom(`config/${id}`, { route: 'boxes', label: 'signal boxes' });
-  const boxTile = (b: BoxDef) => {
+  const boxTile = (b: BoxDef, unassigned = false) => {
     const openable = canOpenBox(b);
     return h(
       'article',
-      { class: 'box-tile', 'aria-labelledby': `bt_${b.id}` },
+      { class: `box-tile${unassigned ? ' unassigned' : ''}`, 'aria-labelledby': `bt_${b.id}` },
       h('h2', { class: 'nameboard box-card-board', id: `bt_${b.id}` }, b.name),
+      unassigned ? h('p', { class: 'unassigned-tag' }, 'Not on a layout') : null,
       b.description ? h('p', { class: 'bt-desc' }, b.description) : null,
       openable
         ? h(
@@ -150,6 +162,19 @@ function boxSelectScreen(ctx: Ctx): Screen {
         { class: 'row bt-actions' },
         openable ? h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.go(`box/${b.id}`) } }, `Open ${b.name} box`) : null,
         h('button', { class: openable ? 'btn' : 'btn primary', type: 'button', on: { click: () => configure(b.id) } }, 'Configure'),
+        unassigned && active
+          ? h(
+              'button',
+              {
+                class: 'btn',
+                type: 'button',
+                on: {
+                  click: () => moveBoxToLayout(ctx, b.id, active.id),
+                },
+              },
+              `Put on ${active.name}`,
+            )
+          : null,
       ),
     );
   };
@@ -162,23 +187,85 @@ function boxSelectScreen(ctx: Ctx): Screen {
       on: {
         click: () => {
           let id = '';
-          ctx.store.update((a) => (id = addBox(a).id));
+          ctx.store.update((a) => (id = addBox(a, active?.id ?? '').id));
           configure(id);
         },
       },
     },
     plusIcon(),
     h('span', { class: 'mi-label' }, 'Add a signal box'),
-    h('span', { class: 'mi-sub' }, 'A new box for you to work. Set it up in the box configurator.'),
+    h('span', { class: 'mi-sub' }, active ? `A new box on ${active.name} for you to work. Set it up in the box configurator.` : 'A new box for you to work. Set it up in the box configurator.'),
   );
+
+  // The active layout's boxes; boxes not on any layout in their own group (they can still be opened);
+  // boxes on other layouts are left out, with a note.
+  const onActive = active ? st.boxes.filter((b) => b.layoutId === active.id) : [];
+  const loose = unassignedBoxes(st);
+  const elsewhere = st.boxes.filter((b) => !onActive.includes(b) && !loose.includes(b));
+  const switcher = st.layouts.length > 1
+    ? h(
+        'div',
+        { class: 'field layout-switch' },
+        h('label', { for: 'bs_layout' }, 'Active layout'),
+        h(
+          'select',
+          {
+            id: 'bs_layout',
+            on: {
+              change: (e: Event) => {
+                const v = (e.target as HTMLSelectElement).value;
+                ctx.store.update((a) => setActiveLayout(a, v));
+              },
+            },
+          },
+          ...st.layouts.map((l) => h('option', { value: l.id, selected: l.id === active?.id }, l.name)),
+        ),
+      )
+    : null;
+  const sections: Array<HTMLElement | null> = [];
+  if (active) {
+    sections.push(
+      h(
+        'nav',
+        { class: 'menu-shelf box-shelf', 'aria-label': `Signal boxes on ${active.name}` },
+        h('h2', { class: 'nameboard section-board box-group-board' }, active.name),
+        switcher,
+        onActive.length ? null : h('p', { class: 'bt-desc box-group-note' }, `No signal boxes are on ${active.name} yet. Add one, or put an existing box on it.`),
+        ...onActive.map((b) => boxTile(b)),
+        addTile,
+      ),
+    );
+  }
+  if (loose.length || !active) {
+    sections.push(
+      h(
+        'section',
+        { class: 'menu-shelf box-shelf box-group-loose', 'aria-label': 'Signal boxes not on a layout' },
+        h('h2', { class: 'nameboard section-board box-group-board' }, 'Not on a layout'),
+        h(
+          'p',
+          { class: 'bt-desc box-group-note' },
+          active
+            ? 'These boxes are not on any layout yet. You can still open them, or put them on a layout.'
+            : 'No layout is set up yet, so every box is listed here. You can open a box without one; create a layout in the layout configurator when you are ready.',
+        ),
+        ...loose.map((b) => boxTile(b, !!active || st.layouts.length > 0)),
+        active ? null : addTile,
+      ),
+    );
+  }
+  if (elsewhere.length) {
+    sections.push(
+      h(
+        'p',
+        { class: 'muted box-elsewhere' },
+        `${elsewhere.length === 1 ? '1 box is' : `${elsewhere.length} boxes are`} on other layouts: ${elsewhere.map((b) => `${b.name} (${findLayout(st, b.layoutId)?.name})`).join(', ')}. Change the active layout to work ${elsewhere.length === 1 ? 'it' : 'them'}.`,
+      ),
+    );
+  }
   return {
     title: 'Signal boxes',
-    el: h(
-      'main',
-      { class: 'page' },
-      topBar(ctx, 'Choose a signal box'),
-      h('nav', { class: 'menu-shelf box-shelf', 'aria-label': 'Signal boxes' }, ...st.boxes.map(boxTile), addTile),
-    ),
+    el: h('main', { class: 'page' }, topBar(ctx, 'Choose a signal box'), ...sections),
   };
 }
 
@@ -252,9 +339,17 @@ export function startApp(root: HTMLElement, store: Store): void {
       case 'config':
         screen = boxConfigScreen(ctx, arg);
         break;
-      case 'plan':
-        screen = trackPlanScreen(ctx);
+      case 'plan': {
+        // The layout configurator opens on the list of layouts (or a prompt to create the first).
+        const layout = findLayout(store.state, arg);
+        if (!layout) {
+          if (arg) history.replaceState(null, '', '#plan');
+          screen = layoutListScreen(ctx);
+          break;
+        }
+        screen = trackPlanScreen(ctx, layout.id, route.split('/')[2] === 'details' ? 'details' : undefined);
         break;
+      }
       case 'help':
         screen = helpScreen(ctx);
         break;

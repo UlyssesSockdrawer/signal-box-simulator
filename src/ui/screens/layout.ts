@@ -1,13 +1,22 @@
 import { farBoxLocations } from '../../core/boxes';
 import { newId } from '../../core/store';
-import type { Location, Loco } from '../../core/types';
+import { activeLayout, findLayout, findYard, removeRoad } from '../../core/layouts';
+import type { BoxDef, Location, Loco } from '../../core/types';
 import { locationText, locoFullName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
-import { confirmButton, h, option } from '../dom';
+import { confirmButton, h, option, toast } from '../dom';
+import { confirmTrainsOff } from './layouts';
 import { locOptions, parseLoc } from './roster';
 
-/** Fiddle yard roads and station contents, used on the layout page and in the signal box side panel. */
-export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
+/**
+ * Fiddle yard roads and station contents for one layout (the active one unless given),
+ * used on the Fiddle yard & station page and in the signal box side panel. Boxes not on
+ * any layout are shown too, so they can still be worked before a layout is set up.
+ */
+export function layoutEditor(ctx: Ctx, stacked = false, layoutId?: string): HTMLElement {
   const st = ctx.store.state;
+  const layout = layoutId === undefined ? activeLayout(st) : findLayout(st, layoutId);
+  const shownBox = (b: BoxDef) => (layout ? b.layoutId === layout.id : false) || !findLayout(st, b.layoutId);
+  const noLayout = (b: BoxDef) => !findLayout(st, b.layoutId);
   const moveLoco = (id: string, loc: Location) =>
     ctx.store.update((s) => {
       const l = s.roster.find((x) => x.id === id);
@@ -47,7 +56,7 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
       ...st.roster.filter((l) => !exclude(l)).map((l) => option(l.id, `${locoFullName(l)} (${locationText(st, l)})`)),
     );
 
-  const yards = st.fiddleYards.map((y) =>
+  const yards = (layout?.fiddleYards ?? []).map((y) =>
     h(
       'section',
       { class: 'panel' },
@@ -60,7 +69,7 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
           type: 'text',
           value: y.name,
           'aria-label': 'Fiddle yard name',
-          on: { change: (e: Event) => ctx.store.update((s) => { const yy = s.fiddleYards.find((x) => x.id === y.id); if (yy) yy.name = (e.target as HTMLInputElement).value || yy.name; }) },
+          on: { change: (e: Event) => ctx.store.update((s) => { const yy = findYard(s, y.id); if (yy) yy.name = (e.target as HTMLInputElement).value || yy.name; }) },
         }),
       ),
       h(
@@ -80,7 +89,7 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
                 type: 'text',
                 value: r.name,
                 'aria-label': 'Road name',
-                on: { change: (e: Event) => ctx.store.update((s) => { const rr = s.fiddleYards.find((x) => x.id === y.id)?.roads.find((x) => x.id === r.id); if (rr) rr.name = (e.target as HTMLInputElement).value || rr.name; }) },
+                on: { change: (e: Event) => ctx.store.update((s) => { const rr = findYard(s, y.id)?.roads.find((x) => x.id === r.id); if (rr) rr.name = (e.target as HTMLInputElement).value || rr.name; }) },
               }),
               h('input', {
                 id: `rnote_${r.id}`,
@@ -88,7 +97,7 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
                 value: r.notes,
                 placeholder: 'Notes (length, use…)',
                 'aria-label': 'Road notes',
-                on: { change: (e: Event) => ctx.store.update((s) => { const rr = s.fiddleYards.find((x) => x.id === y.id)?.roads.find((x) => x.id === r.id); if (rr) rr.notes = (e.target as HTMLInputElement).value; }) },
+                on: { change: (e: Event) => ctx.store.update((s) => { const rr = findYard(s, y.id)?.roads.find((x) => x.id === r.id); if (rr) rr.notes = (e.target as HTMLInputElement).value; }) },
               }),
             ),
             occ.length ? h('ul', { class: 'plain' }, ...occ.map(occupantRow)) : h('p', { class: 'muted small' }, 'Empty'),
@@ -96,9 +105,25 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
               'div',
               { class: 'row' },
               placeSelect(`place_${r.id}`, 'Place a loco on this road…', (l) => l.location.kind === 'fiddleYard' && l.location.roadId === r.id, { kind: 'fiddleYard', yardId: y.id, roadId: r.id }),
-              occ.length
+              y.roads.length <= 1
                 ? null
-                : confirmButton('Remove road', 'Press again', () => ctx.store.update((s) => { const yy = s.fiddleYards.find((x) => x.id === y.id); if (yy) yy.roads = yy.roads.filter((x) => x.id !== r.id); }), 'btn ghost danger small'),
+                : occ.length
+                  ? h(
+                      'button',
+                      {
+                        class: 'btn ghost danger small',
+                        type: 'button',
+                        on: {
+                          click: () =>
+                            confirmTrainsOff(occ, `Remove ${r.name}?`, `on ${r.name}`, 'Remove the road', () => {
+                              ctx.store.update((s) => removeRoad(s, y.id, r.id));
+                              toast(`${r.name} removed. ${occ.length === 1 ? 'Its train is' : 'Its trains are'} off the layout.`);
+                            }),
+                        },
+                      },
+                      'Remove road',
+                    )
+                  : confirmButton('Remove road', 'Press again', () => ctx.store.update((s) => removeRoad(s, y.id, r.id)), 'btn ghost danger small'),
             ),
           );
         }),
@@ -108,19 +133,20 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
         {
           class: 'btn',
           type: 'button',
-          on: { click: () => ctx.store.update((s) => { const yy = s.fiddleYards.find((x) => x.id === y.id); if (yy) yy.roads.push({ id: newId('road'), name: `Road ${yy.roads.length + 1}`, notes: '' }); }) },
+          on: { click: () => ctx.store.update((s) => { const yy = findYard(s, y.id); if (yy) yy.roads.push({ id: newId('road'), name: `Road ${yy.roads.length + 1}`, notes: '' }); }) },
         },
         '+ Add road',
       ),
     ),
   );
 
-  const stations = st.boxes.map((b) => {
+  const stations = st.boxes.filter(shownBox).map((b) => {
     const occ = st.roster.filter((l) => l.location.kind === 'station' && l.location.boxId === b.id);
     return h(
       'section',
       { class: 'panel' },
       h('h2', { class: 'nameboard section-board' }, `${b.name} station`),
+      noLayout(b) && layout ? h('p', { class: 'muted small' }, `${b.name} box is not on a layout yet.`) : null,
       h('details', null, h('summary', null, 'Station notes'), h('p', { class: 'pre' }, b.stationNotes)),
       occ.length
         ? h(
@@ -149,7 +175,7 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
   });
 
   // Locations on the layout served by the box at the far end of a line with no fiddle yard.
-  const farLocations = farBoxLocations(st).map(({ box: b, conn: c }) => {
+  const farLocations = farBoxLocations(st).filter(({ box: b }) => shownBox(b)).map(({ box: b, conn: c }) => {
     const here = { kind: 'farBox' as const, boxId: b.id, connectionId: c.id };
     const occ = st.roster.filter((l) => l.location.kind === 'farBox' && l.location.connectionId === c.id);
     return h(
@@ -183,9 +209,14 @@ export function layoutEditor(ctx: Ctx, stacked = false): HTMLElement {
     );
   });
 
+  const noYards = layout && !yards.length ? h('p', { class: 'muted' }, `${layout.name} has no fiddle yards. Add them in the layout configurator (Details).`) : null;
+  const noLayoutNote = !layout
+    ? h('p', { class: 'muted' }, st.layouts.length ? 'This box is not on a layout, so no fiddle yards are shown. Put it on a layout in the box configurator.' : 'No layout is set up yet. Create one in the layout configurator to add fiddle yards.')
+    : null;
+  const yardEls: HTMLElement[] = [...(noLayoutNote ? [noLayoutNote] : []), ...(noYards ? [noYards] : []), ...yards];
   return stacked
-    ? h('div', { class: 'stack' }, ...stations, ...farLocations, ...yards)
-    : h('div', { class: 'two-col' }, h('div', { class: 'stack' }, ...yards), h('div', { class: 'stack' }, ...stations, ...farLocations));
+    ? h('div', { class: 'stack' }, ...stations, ...farLocations, ...yardEls)
+    : h('div', { class: 'two-col' }, h('div', { class: 'stack' }, ...yardEls), h('div', { class: 'stack' }, ...stations, ...farLocations));
 }
 
 export function layoutScreen(ctx: Ctx): Screen {
@@ -195,6 +226,7 @@ export function layoutScreen(ctx: Ctx): Screen {
       'main',
       { class: 'page' },
       topBar(ctx, 'Fiddle yard & station'),
+      activeLayout(ctx.store.state) ? h('p', { class: 'nameboard splash-layout yard-layout' }, activeLayout(ctx.store.state)!.name) : null,
       h('p', { class: 'muted' }, 'Set up what is standing where before a session. Trains move automatically as you signal them; you can correct anything here.'),
       layoutEditor(ctx),
     ),

@@ -1,3 +1,4 @@
+import { findYard } from '../../core/layouts';
 import { describeCode, REGULATION_SIGNALS, signalCode, trainCode } from '../../core/bellcodes';
 import { realScheduler } from '../../core/scheduler';
 import { instrumentName, type LogEntry } from '../../core/sectionController';
@@ -107,7 +108,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     }),
   );
 
-  const side = sidePanel(ctx);
+  const side = sidePanel(ctx, box.id);
   ctx.onLeave(side.dispose);
 
   const header = h(
@@ -756,7 +757,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const v = c.view;
     const state = st();
     const inStation = stationLocos(state, box.id);
-    const yard = state.fiddleYards.find((y) => y.id === conn.fiddleYardId);
+    const yard = findYard(state, conn.fiddleYardId);
     const accepted = v.mode === 'ab' ? v.remoteInstrument === 'LC' : v.tokenWithdrawnHere || v.releaseAvailable;
     const occupied = new Set(state.roster.flatMap((l) => (l.location.kind === 'fiddleYard' && l.location.yardId === yard?.id ? [l.location.roadId] : [])));
     if (!arrRoad || !yard?.roads.some((r) => r.id === arrRoad)) arrRoad = yard?.roads.find((r) => !occupied.has(r.id))?.id ?? yard?.roads[0]?.id ?? '';
@@ -956,7 +957,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
 
 type SideTab = 'codes' | 'layout';
 
-function sidePanel(ctx: Ctx): { el: HTMLElement; toggle(tab: SideTab): void; dispose(): void } {
+function sidePanel(ctx: Ctx, boxId: string): { el: HTMLElement; toggle(tab: SideTab): void; dispose(): void } {
   let tab: SideTab = 'codes';
   const body = h('div', { class: 'side-body' });
   const tabBtn = (t: SideTab, label: string) =>
@@ -972,7 +973,7 @@ function sidePanel(ctx: Ctx): { el: HTMLElement; toggle(tab: SideTab): void; dis
   const render = () => {
     if (el.hidden) return;
     for (const b of tabs.querySelectorAll<HTMLElement>('.side-tab')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    replace(body, tab === 'codes' ? codeReference(ctx, true) : layoutEditor(ctx, true));
+    replace(body, tab === 'codes' ? codeReference(ctx, true) : layoutEditor(ctx, true, ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId ?? ""));
   };
   // Data changes rebuild the panel once focus has moved on, keeping the user's place.
   const rerender = safeRerender(() => body, render, () => body);

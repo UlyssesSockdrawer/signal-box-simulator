@@ -6,7 +6,7 @@
 // is joined to at most one circuit end. A port with nothing joined, and a
 // circuit end of kind 'open', are unfinished ends: the editor shows a + there.
 
-import type { AppState, CircuitEnd, ExitTarget, Junction, JunctionKind, TrackCircuit, TrackOwner, TrackPlan } from './types';
+import type { AppState, BoxMarker, CircuitEnd, ExitTarget, Junction, JunctionKind, Layout, MarkerBox, RunningLine, RunningSide, TrackCircuit, TrackOwner, TrackPlan } from './types';
 
 // ---------------------------------------------------------------- catalogue
 
@@ -249,7 +249,7 @@ export interface Anchor extends Pt {
 }
 
 export function emptyPlan(): TrackPlan {
-  return { circuits: [], junctions: [] };
+  return { circuits: [], junctions: [], markers: [] };
 }
 
 /** Apply a junction's mirror, quarter turn and half turn to a local offset or direction. */
@@ -409,6 +409,12 @@ export function planBounds(plan: TrackPlan): { minX: number; minY: number; maxX:
     add(j);
     for (const p of portsOf(j)) add(localToWorld(j, p.x, p.y));
   }
+  // Signal boxes drawn on the plan (the icon stands a little above its point).
+  for (const m of plan.markers ?? []) {
+    const p = markerPos(plan, m);
+    add({ x: p.x - 1, y: p.y - 1.5 });
+    add({ x: p.x + 1, y: p.y + 1 });
+  }
   if (!xs.length) return null;
   return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
 }
@@ -463,15 +469,53 @@ function makeCircuit(plan: TrackPlan, a: CircuitEnd, b: CircuitEnd, owner: Track
   return c;
 }
 
-function makeJunction(plan: TrackPlan, kind: JunctionKind, x: number, y: number, rotate: boolean, boxId: string, quarter = false): Junction {
-  const j: Junction = { id: newId('jn'), number: kind === 'joint' ? '' : nextJunctionNumber(plan), kind, boxId, x, y, rotate, mirror: false, quarter };
+function makeJunction(plan: TrackPlan, kind: JunctionKind, x: number, y: number, rotate: boolean, w: Worker, quarter = false): Junction {
+  const j: Junction = { id: newId('jn'), number: kind === 'joint' ? '' : nextJunctionNumber(plan), kind, boxId: w.boxId, x, y, rotate, mirror: false, quarter };
+  if (w.boxId && w.connectionId) j.connectionId = w.connectionId;
   if (kind === 'turntable') j.roads = [...TURNTABLE_DEFAULT_ROADS];
   plan.junctions.push(j);
   return j;
 }
 
-function ownerBox(owner: TrackOwner): string {
-  return owner.kind === 'box' ? owner.boxId : '';
+/** Who works a junction: a box you work, or (with connectionId) the far box of one of its connections. */
+export interface Worker {
+  boxId: string;
+  connectionId?: string;
+}
+
+/** The worker for junctions on track with this owner (track on a line between boxes gives none). */
+export function workerOf(owner: TrackOwner): Worker {
+  if (owner.kind === 'box') return { boxId: owner.boxId };
+  if (owner.kind === 'remote') return { boxId: owner.boxId, connectionId: owner.connectionId };
+  return { boxId: '' };
+}
+
+export function junctionWorker(j: Junction): Worker {
+  return j.boxId && j.connectionId ? { boxId: j.boxId, connectionId: j.connectionId } : { boxId: j.boxId };
+}
+
+/** The owner for new track grown from a junction: whoever works the junction. */
+export function ownerOfJunction(j: Junction): TrackOwner {
+  if (j.boxId && j.connectionId) return { kind: 'remote', boxId: j.boxId, connectionId: j.connectionId };
+  return j.boxId ? { kind: 'box', boxId: j.boxId } : { kind: 'none' };
+}
+
+/** A key for comparing owners and workers: '' for nobody, 'box|id', 'remote|box|conn', 'line|box|conn'. */
+export function ownerKey(o: TrackOwner | Worker): string {
+  if ('kind' in o) {
+    if (o.kind === 'box') return `box|${o.boxId}`;
+    if (o.kind === 'remote') return `remote|${o.boxId}|${o.connectionId}`;
+    if (o.kind === 'line') return `line|${o.boxId}|${o.connectionId}`;
+    return '';
+  }
+  if (!o.boxId) return '';
+  return o.connectionId ? `remote|${o.boxId}|${o.connectionId}` : `box|${o.boxId}`;
+}
+
+export function setJunctionWorker(j: Junction, w: Worker): void {
+  j.boxId = w.boxId;
+  if (w.boxId && w.connectionId) j.connectionId = w.connectionId;
+  else delete j.connectionId;
 }
 
 /** Lay a new, unconnected track circuit below everything else (or the first one on an empty plan). */
@@ -574,13 +618,13 @@ function landFrom(plan: TrackPlan, junctionId: string, a: Anchor, len: number, k
 }
 
 /** Put a junction so that its entry port sits at `at`, facing along `heading`. */
-function placeJunction(plan: TrackPlan, kind: JunctionKind, at: Pt, heading: { dx: number; dy: number }, boxId: string): Junction {
+function placeJunction(plan: TrackPlan, kind: JunctionKind, at: Pt, heading: { dx: number; dy: number }, w: Worker): Junction {
   const def = JUNCTIONS[kind];
   const entry = def.ports.find((p) => p.id === def.entry)!;
   // Turned to face the way the track is heading, so right-hand points still turn to the right.
   const o0 = orientFor(heading);
   const o = orient({ ...o0, mirror: false }, entry.x, entry.y);
-  return makeJunction(plan, kind, at.x - o.x, at.y - o.y, o0.rotate, boxId, o0.quarter);
+  return makeJunction(plan, kind, at.x - o.x, at.y - o.y, o0.rotate, w, o0.quarter);
 }
 
 /** The turn that makes a junction's toe face back along a track heading this way. */
@@ -643,7 +687,7 @@ function growFacing(plan: TrackPlan, ref: OpenEndRef, piece: GrowPiece): { circu
     if (piece === 'track' || piece === 'curveLeft' || piece === 'curveRight') {
       // The line continues as a new circuit beyond a joint.
       const heading = { dx: Math.sign(a.dx), dy: a.dx === 0 ? Math.sign(a.dy) : 0 };
-      const j = placeJunction(plan, 'joint', a, heading, ownerBox(c.owner));
+      const j = placeJunction(plan, 'joint', a, heading, workerOf(c.owner));
       c.ends[ref.end] = { kind: 'joined', junctionId: j.id, port: 'a' };
       const start: Anchor = { x: a.x, y: a.y, ...heading };
       const n =
@@ -652,14 +696,14 @@ function growFacing(plan: TrackPlan, ref: OpenEndRef, piece: GrowPiece): { circu
           : curveFrom(plan, { kind: 'joined', junctionId: j.id, port: 'b' }, start, piece === 'curveLeft' ? 'left' : 'right', c.owner);
       return { circuitId: n.id };
     }
-    const j = placeJunction(plan, piece, a, { dx: Math.sign(a.dx), dy: Math.sign(a.dy) }, ownerBox(c.owner));
+    const j = placeJunction(plan, piece, a, { dx: Math.sign(a.dx), dy: Math.sign(a.dy) }, workerOf(c.owner));
     c.ends[ref.end] = { kind: 'joined', junctionId: j.id, port: JUNCTIONS[piece].entry };
     return { junctionId: j.id };
   }
 
   // From a junction port: there must be a track circuit between the port and anything else.
   const j0 = findJunction(plan, ref.junctionId)!;
-  const owner: TrackOwner = j0.boxId ? { kind: 'box', boxId: j0.boxId } : { kind: 'none' };
+  const owner: TrackOwner = ownerOfJunction(j0);
   const from: CircuitEnd = { kind: 'joined', junctionId: j0.id, port: ref.port };
   if (piece === 'curveLeft' || piece === 'curveRight') return { circuitId: curveFrom(plan, from, a, piece === 'curveLeft' ? 'left' : 'right', owner).id };
   if (piece === 'track' || piece === 'bufferStops' || piece === 'exit') {
@@ -671,7 +715,7 @@ function growFacing(plan: TrackPlan, ref: OpenEndRef, piece: GrowPiece): { circu
   }
   const far = landFrom(plan, j0.id, a, 4, j0.kind);
   const n = makeCircuit(plan, from, { kind: 'open', ...far }, owner);
-  const j = placeJunction(plan, piece, far, a.dx === 0 ? { dx: 0, dy: Math.sign(a.dy) } : { dx: Math.sign(a.dx), dy: 0 }, j0.boxId);
+  const j = placeJunction(plan, piece, far, a.dx === 0 ? { dx: 0, dy: Math.sign(a.dy) } : { dx: Math.sign(a.dx), dy: 0 }, junctionWorker(j0));
   n.ends[1] = { kind: 'joined', junctionId: j.id, port: JUNCTIONS[piece].entry };
   return { junctionId: j.id };
 }
@@ -740,7 +784,7 @@ export function joinOpenEnds(plan: TrackPlan, a: OpenEndRef, b: OpenEndRef): { e
     const cb = findCircuit(plan, b.circuitId)!;
     const ha = endHeading(plan, ca, a.end)!;
     // The joint faces the way the first track is heading: it joins port 'a', the second track 'b'.
-    const j = placeJunction(plan, 'joint', ha, { dx: Math.sign(ha.dx), dy: ha.dx === 0 ? Math.sign(ha.dy) : 0 }, ownerBox(ca.owner));
+    const j = placeJunction(plan, 'joint', ha, { dx: Math.sign(ha.dx), dy: ha.dx === 0 ? Math.sign(ha.dy) : 0 }, workerOf(ca.owner));
     ca.ends[a.end] = { kind: 'joined', junctionId: j.id, port: 'a' };
     cb.ends[b.end] = { kind: 'joined', junctionId: j.id, port: 'b' };
     return { circuitId: cb.id };
@@ -748,7 +792,7 @@ export function joinOpenEnds(plan: TrackPlan, a: OpenEndRef, b: OpenEndRef): { e
   if (a.kind === 'port' && b.kind === 'port') {
     if (a.junctionId === b.junctionId && a.port === b.port) return { error: 'Choose a different end.' };
     const ja = findJunction(plan, a.junctionId)!;
-    const owner: TrackOwner = ja.boxId ? { kind: 'box', boxId: ja.boxId } : { kind: 'none' };
+    const owner: TrackOwner = ownerOfJunction(ja);
     const n = makeCircuit(plan, { kind: 'joined', junctionId: a.junctionId, port: a.port }, { kind: 'joined', junctionId: b.junctionId, port: b.port }, owner);
     return { circuitId: n.id };
   }
@@ -787,6 +831,7 @@ export function detachEnd(plan: TrackPlan, circuitId: string, end: 0 | 1): void 
   const a = endAnchor(plan, e);
   const off = a ? { x: a.x + (a.dx || 0), y: a.y + (a.dy || 0) } : { x: 0, y: 0 };
   c.ends[end] = { kind: 'open', ...off };
+  pruneJoints(plan);
 }
 
 /**
@@ -817,7 +862,14 @@ export function mergeAtJoint(plan: TrackPlan, jointId: string, keep?: string): {
   else delete k.circuit.via;
   tidyBends(plan, k.circuit);
   if (!k.circuit.name) k.circuit.name = o.circuit.name;
+  if (!k.circuit.platform && o.circuit.platform) k.circuit.platform = structuredClone(o.circuit.platform);
+  if (!k.circuit.traffic && o.circuit.traffic) {
+    // The other circuit's trains run away from the joint (towards its far end): in the merged circuit, towards the end it brought.
+    const away = o.circuit.traffic.toward !== o.end;
+    k.circuit.traffic = { line: o.circuit.traffic.line, toward: (away ? k.end : 1 - k.end) as 0 | 1 };
+  }
   if (k.circuit.owner.kind === 'none') k.circuit.owner = structuredClone(o.circuit.owner);
+  releaseMarkers(plan, o.circuit.id, k.circuit.id);
   plan.circuits = plan.circuits.filter((c) => c.id !== o.circuit.id);
   plan.junctions = plan.junctions.filter((x) => x.id !== j.id);
   return { circuitId: k.circuit.id };
@@ -835,7 +887,21 @@ export function acrossJoint(plan: TrackPlan, circuitId: string, end: 0 | 1): { j
 }
 
 export function deleteCircuit(plan: TrackPlan, circuitId: string): void {
+  releaseMarkers(plan, circuitId);
   plan.circuits = plan.circuits.filter((c) => c.id !== circuitId);
+  pruneJoints(plan);
+}
+
+/**
+ * Remove plain joints that no longer join any track (left behind when the tracks either
+ * side were deleted or unjoined). A joint with track on one side stays: it is an unfinished end.
+ */
+export function pruneJoints(plan: TrackPlan): number {
+  const used = new Set<string>();
+  for (const c of plan.circuits) for (const e of c.ends) if (e.kind === 'joined') used.add(e.junctionId);
+  const before = plan.junctions.length;
+  plan.junctions = plan.junctions.filter((j) => j.kind !== 'joint' || used.has(j.id));
+  return before - plan.junctions.length;
 }
 
 export function deleteJunction(plan: TrackPlan, junctionId: string): void {
@@ -1021,8 +1087,8 @@ export function crossoverFrom(plan: TrackPlan, ref: OpenEndRef, hand: 'pointsRig
   let j2: Junction | undefined;
   const existing = plan.circuits.find((c) => levelRuns(plan, c).some((r) => r.y === jy && r.x1 < lo && r.x2 > hi));
   if (existing) j2 = insertJunction(plan, existing.id, kind, jx, jy, rotate).junction;
-  if (!j2) j2 = makeJunction(plan, kind, jx, jy, rotate, j1.boxId);
-  const owner: TrackOwner = j1.boxId ? { kind: 'box', boxId: j1.boxId } : { kind: 'none' };
+  if (!j2) j2 = makeJunction(plan, kind, jx, jy, rotate, junctionWorker(j1));
+  const owner: TrackOwner = ownerOfJunction(j1);
   const x = makeCircuit(plan, { kind: 'joined', junctionId: j1.id, port: from.port }, { kind: 'joined', junctionId: j2.id, port: 'reverse' }, owner);
   return { junctionId: j2.id, circuitId: x.id };
 }
@@ -1149,6 +1215,67 @@ function parallelPoints(path: Pt[], side: 1 | -1, spacing: number): Pt[] {
   });
 }
 
+// ---------------------------------------------------------------- platforms
+
+export const PLATFORM_MAX = 8;
+/** How far the platform face is drawn from the track centre line (grid units). */
+export const PLATFORM_OFFSET = 0.8;
+
+export function checkPlatformNumber(number: string): string | null {
+  if (!number.trim()) return 'Enter the platform number, e.g. 1.';
+  if (number.trim().length > PLATFORM_MAX) return `Keep it to ${PLATFORM_MAX} characters or fewer.`;
+  return null;
+}
+
+/** Make a track circuit a platform road (null: not a platform). A new platform gets the next free number for its box. */
+export function setPlatform(plan: TrackPlan, circuitId: string, platform: { number?: string; side?: 1 | -1 } | null): void {
+  const c = findCircuit(plan, circuitId);
+  if (!c) return;
+  if (!platform) {
+    delete c.platform;
+    return;
+  }
+  const number = platform.number?.trim() || c.platform?.number || nextPlatformNumber(plan, c);
+  c.platform = { number, side: platform.side ?? c.platform?.side ?? 1 };
+}
+
+/** The lowest whole platform number not yet used by track belonging to the same box. */
+export function nextPlatformNumber(plan: TrackPlan, c: TrackCircuit): string {
+  const key = ownerKey(c.owner);
+  const used = new Set(plan.circuits.filter((x) => x.id !== c.id && x.platform && ownerKey(x.owner) === key).map((x) => x.platform!.number.trim().toUpperCase()));
+  for (let n = 1; ; n++) if (!used.has(String(n))) return String(n);
+}
+
+/**
+ * The platform face, drawn alongside the longest straight (level or upright) stretch of the
+ * track on its side: a platform road reached through a turnout has no platform on the turnout road.
+ */
+export function platformPath(plan: TrackPlan, c: TrackCircuit): Pt[] {
+  const path = circuitPath(plan, c);
+  if (!c.platform || path.length < 2) return [];
+  const off = parallelPoints(path, c.platform.side, PLATFORM_OFFSET);
+  let best = -1;
+  let bi = 1;
+  for (let i = 1; i < path.length; i++) {
+    const p = path[i - 1];
+    const q = path[i];
+    const l = p.x === q.x || p.y === q.y ? Math.hypot(q.x - p.x, q.y - p.y) : -1;
+    if (l > best) {
+      best = l;
+      bi = i;
+    }
+  }
+  return best > 0 ? [off[bi - 1], off[bi]] : off;
+}
+
+/** Platform roads on a plan, optionally only those belonging to one owner (an ownerKey, e.g. 'box|becton'). */
+export function platformsOf(plan: TrackPlan, key?: string): Array<{ circuit: TrackCircuit; number: string }> {
+  return plan.circuits
+    .filter((c) => c.platform && (key === undefined || ownerKey(c.owner) === key))
+    .map((c) => ({ circuit: c, number: c.platform!.number }))
+    .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+}
+
 /** Which way each side of a circuit is, for labelling: 'above', 'below', 'left' or 'right'. */
 export function parallelSideNames(plan: TrackPlan, circuitId: string): Array<{ side: 1 | -1; name: string }> {
   const c = findCircuit(plan, circuitId);
@@ -1253,7 +1380,7 @@ export function insertJunction(plan: TrackPlan, circuitId: string, kind: Junctio
   const rightEnd = (1 - leftEnd) as 0 | 1;
   const leftPort = rotate ? def.through : def.entry;
   const rightPort = rotate ? def.entry : def.through;
-  const j = makeJunction(plan, kind, x, y, rotate, ownerBox(c.owner));
+  const j = makeJunction(plan, kind, x, y, rotate, workerOf(c.owner));
   const oldRight = c.ends[rightEnd];
   c.ends[rightEnd] = { kind: 'joined', junctionId: j.id, port: leftPort };
   const n = makeCircuit(plan, { kind: 'joined', junctionId: j.id, port: rightPort }, oldRight, c.owner);
@@ -1353,11 +1480,178 @@ export function connectParallel(plan: TrackPlan, circuitA: string, circuitB: str
   return { circuitId: x.id };
 }
 
+// ---------------------------------------------------------------- traffic (up and down lines)
+
+/** The port a train runs straight on to through a junction (joints, points' normal road, crossings), or null (Y points, turntables). */
+export function straightOn(j: Junction, port: string): string | null {
+  const def = JUNCTIONS[j.kind];
+  if (j.kind === 'turntable') return null;
+  const p = def.ports.find((x) => x.id === port);
+  if (!p) return null;
+  let best: string | null = null;
+  let bestDot = -0.99;
+  for (const r of def.routes) {
+    if (r.slip || (r.a !== port && r.b !== port)) continue;
+    const other = def.ports.find((x) => x.id === (r.a === port ? r.b : r.a));
+    if (!other) continue;
+    const len = Math.hypot(p.dx, p.dy) * Math.hypot(other.dx, other.dy) || 1;
+    const dot = (p.dx * other.dx + p.dy * other.dy) / len;
+    if (dot <= bestDot) {
+      bestDot = dot;
+      best = other.id;
+    }
+  }
+  return best;
+}
+
+/** The track circuit a train runs on to from one end of a circuit, going straight on, and the end it enters by. */
+export function runOn(plan: TrackPlan, c: TrackCircuit, end: 0 | 1): { circuit: TrackCircuit; end: 0 | 1; via: Junction } | null {
+  const e = c.ends[end];
+  if (e.kind !== 'joined') return null;
+  const j = findJunction(plan, e.junctionId);
+  if (!j) return null;
+  const q = straightOn(j, e.port);
+  const u = q ? portUse(plan, j.id, q) : null;
+  return u && u.circuit.id !== c.id ? { circuit: u.circuit, end: u.end, via: j } : null;
+}
+
+/** The circuits of a running line: this one and those straight on from it through joints, points and crossings. */
+export function lineRun(plan: TrackPlan, circuitId: string): TrackCircuit[] {
+  const start = findCircuit(plan, circuitId);
+  if (!start) return [];
+  const seen = new Set([start.id]);
+  const out = [start];
+  const queue = [start];
+  while (queue.length) {
+    const c = queue.shift()!;
+    for (const end of [0, 1] as const) {
+      const n = runOn(plan, c, end);
+      if (n && !seen.has(n.circuit.id)) {
+        seen.add(n.circuit.id);
+        out.push(n.circuit);
+        queue.push(n.circuit);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Set the traffic on a track circuit (null: both ways). With `wholeLine`, the same line and
+ * direction carry on along the whole running line (see lineRun), each circuit facing the way
+ * the trains go. Returns how many circuits were set.
+ */
+export function setTraffic(plan: TrackPlan, circuitId: string, traffic: { line: RunningLine; toward: 0 | 1 } | null, wholeLine = false): number {
+  const start = findCircuit(plan, circuitId);
+  if (!start) return 0;
+  const apply = (c: TrackCircuit, t: { line: RunningLine; toward: 0 | 1 } | null) => {
+    if (t) c.traffic = { line: t.line, toward: t.toward };
+    else delete c.traffic;
+  };
+  apply(start, traffic);
+  if (!wholeLine) return 1;
+  const seen = new Set([start.id]);
+  const queue: Array<{ c: TrackCircuit; t: { line: RunningLine; toward: 0 | 1 } | null }> = [{ c: start, t: traffic }];
+  let n = 1;
+  while (queue.length) {
+    const { c, t } = queue.shift()!;
+    for (const end of [0, 1] as const) {
+      const r = runOn(plan, c, end);
+      if (!r || seen.has(r.circuit.id)) continue;
+      seen.add(r.circuit.id);
+      // Leaving by this end: the next track runs away from the junction. Arriving by it: towards it.
+      const nt = t ? { line: t.line, toward: (end === t.toward ? 1 - r.end : r.end) as 0 | 1 } : null;
+      apply(r.circuit, nt);
+      n++;
+      queue.push({ c: r.circuit, t: nt });
+    }
+  }
+  return n;
+}
+
+/** The longest level or upright stretch of a circuit: its two points (in end 0 → end 1 order) and unit direction. */
+function mainStretch(plan: TrackPlan, c: TrackCircuit): { a: Pt; b: Pt; d: Pt } | null {
+  const path = circuitPath(plan, c);
+  let best = 0;
+  let bi = 0;
+  for (let i = 1; i < path.length; i++) {
+    const p = path[i - 1];
+    const q = path[i];
+    const l = p.x === q.x || p.y === q.y ? Math.hypot(q.x - p.x, q.y - p.y) : 0;
+    if (l > best) {
+      best = l;
+      bi = i;
+    }
+  }
+  if (!best) return null;
+  const a = path[bi - 1];
+  const b = path[bi];
+  return { a, b, d: { x: Math.sign(b.x - a.x), y: Math.sign(b.y - a.y) } };
+}
+
+/** Tracks running alongside a circuit (parallel, overlapping, up to two track spacings away), nearest first, with the side they are on. */
+export function tracksAlongside(plan: TrackPlan, circuitId: string): Array<{ circuit: TrackCircuit; side: 1 | -1; distance: number }> {
+  const c = findCircuit(plan, circuitId);
+  const m = c ? mainStretch(plan, c) : null;
+  if (!c || !m) return [];
+  const along = (p: Pt) => p.x * m.d.x + p.y * m.d.y;
+  // Left of travel on a plan with y downwards: (dy, -dx), as in parallelPoints.
+  const left = { x: m.d.y, y: -m.d.x };
+  const lo = Math.min(along(m.a), along(m.b));
+  const hi = Math.max(along(m.a), along(m.b));
+  const out: Array<{ circuit: TrackCircuit; side: 1 | -1; distance: number }> = [];
+  for (const o of plan.circuits) {
+    if (o.id === c.id) continue;
+    const path = circuitPath(plan, o);
+    let found: { side: 1 | -1; distance: number } | null = null;
+    for (let i = 1; i < path.length; i++) {
+      const p = path[i - 1];
+      const q = path[i];
+      const dd = { x: Math.sign(q.x - p.x), y: Math.sign(q.y - p.y) };
+      if (Math.abs(dd.x * m.d.x + dd.y * m.d.y) !== 1 || (dd.x !== 0 && dd.y !== 0)) continue;
+      const off = (p.x - m.a.x) * left.x + (p.y - m.a.y) * left.y;
+      const dist = Math.abs(off);
+      if (dist < 1 || dist > 2 * TRACK_SPACING) continue;
+      const olo = Math.min(along(p), along(q));
+      const ohi = Math.max(along(p), along(q));
+      if (Math.min(hi, ohi) - Math.max(lo, olo) < 2) continue;
+      if (!found || dist < found.distance) found = { side: off > 0 ? 1 : -1, distance: dist };
+    }
+    if (found) out.push({ circuit: o, ...found });
+  }
+  return out.sort((x, y) => x.distance - y.distance);
+}
+
+/**
+ * Make two tracks alongside each other a double line: this one the `line` (up or down), the other
+ * the opposite line. Which way each runs follows from the running side: with left-hand running a
+ * train has the other line on its right. Both lines are set along their whole length.
+ */
+export function setDoubleLine(plan: TrackPlan, circuitId: string, partnerId: string, line: RunningLine, running: RunningSide = 'left'): { error?: string; set?: number } {
+  const c = findCircuit(plan, circuitId);
+  const o = findCircuit(plan, partnerId);
+  const m = c ? mainStretch(plan, c) : null;
+  const mo = o ? mainStretch(plan, o) : null;
+  const pair = tracksAlongside(plan, circuitId).find((x) => x.circuit.id === partnerId);
+  if (!c || !o || !m || !mo || !pair) return { error: 'Those two tracks do not run alongside each other.' };
+  // Travelling along c from end 0 to end 1, the other line is on side `pair.side` (1 = left).
+  // Left-hand running wants the other line on the right (-1), right-hand running on the left.
+  const want = running === 'left' ? -1 : 1;
+  const toward: 0 | 1 = pair.side === want ? 1 : 0;
+  const travel = toward === 1 ? m.d : { x: -m.d.x, y: -m.d.y };
+  // The other line runs the opposite way.
+  const same = mo.d.x * travel.x + mo.d.y * travel.y > 0;
+  const otherToward: 0 | 1 = same ? 0 : 1;
+  const other: RunningLine = line === 'up' ? 'down' : 'up';
+  let n = setTraffic(plan, c.id, { line, toward }, true);
+  if (!o.traffic || o.traffic.line !== other || o.traffic.toward !== otherToward || !lineRun(plan, c.id).some((x) => x.id === o.id)) n += setTraffic(plan, o.id, { line: other, toward: otherToward }, true);
+  return { set: n };
+}
+
 export function sameOwner(a: TrackOwner, b: TrackOwner): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'box' && b.kind === 'box') return a.boxId === b.boxId;
-  if (a.kind === 'line' && b.kind === 'line') return a.boxId === b.boxId && a.connectionId === b.connectionId;
-  return true;
+  return ownerKey(a) === ownerKey(b);
 }
 
 // ---------------------------------------------------------------- graph
@@ -1385,8 +1679,9 @@ export function neighbours(plan: TrackPlan, c: TrackCircuit): Array<{ circuit: T
 export function branchFrom(plan: TrackPlan, circuitId: string): { circuits: TrackCircuit[]; junctions: Junction[] } {
   const start = findCircuit(plan, circuitId);
   if (!start || start.owner.kind === 'line') return { circuits: start ? [start] : [], junctions: [] };
-  const startBox = ownerBox(start.owner);
-  const canTake = (c: TrackCircuit) => c.owner.kind === 'none' || (c.owner.kind === 'box' && c.owner.boxId === startBox);
+  const startKey = ownerKey(start.owner);
+  const canTake = (c: TrackCircuit) => c.owner.kind === 'none' || ownerKey(c.owner) === startKey;
+  const canWork = (j: Junction) => !j.boxId || ownerKey(junctionWorker(j)) === startKey;
   const seen = new Set<string>([start.id]);
   const circuits: TrackCircuit[] = [start];
   const junctions = new Map<string, Junction>();
@@ -1396,11 +1691,11 @@ export function branchFrom(plan: TrackPlan, circuitId: string): { circuits: Trac
     for (const e of c.ends) {
       if (e.kind !== 'joined') continue;
       const j = findJunction(plan, e.junctionId);
-      if (j && (j.boxId === '' || j.boxId === startBox)) junctions.set(j.id, j);
+      if (j && canWork(j)) junctions.set(j.id, j);
     }
     for (const n of neighbours(plan, c)) {
       if (seen.has(n.circuit.id) || !canTake(n.circuit)) continue;
-      if (n.via.boxId !== '' && n.via.boxId !== startBox) continue;
+      if (!canWork(n.via)) continue;
       seen.add(n.circuit.id);
       circuits.push(n.circuit);
       queue.push(n.circuit);
@@ -1409,11 +1704,154 @@ export function branchFrom(plan: TrackPlan, circuitId: string): { circuits: Trac
   return { circuits, junctions: [...junctions.values()] };
 }
 
-export function giveBranch(plan: TrackPlan, circuitId: string, boxId: string): number {
+/** Give a branch to a box you work (a box id) or to the far box of a connection (a 'remote' owner). */
+export function giveBranch(plan: TrackPlan, circuitId: string, to: string | Extract<TrackOwner, { kind: 'box' | 'remote' }>): number {
+  const owner: TrackOwner = typeof to === 'string' ? { kind: 'box', boxId: to } : to;
   const { circuits, junctions } = branchFrom(plan, circuitId);
-  for (const c of circuits) c.owner = { kind: 'box', boxId };
-  for (const j of junctions) j.boxId = boxId;
+  for (const c of circuits) c.owner = structuredClone(owner);
+  for (const j of junctions) setJunctionWorker(j, workerOf(owner));
   return circuits.length + junctions.length;
+}
+
+// ---------------------------------------------------------------- signal boxes on the plan
+
+export function markerKey(b: MarkerBox): string {
+  return b.kind === 'box' ? `box|${b.boxId}` : `remote|${b.boxId}|${b.connectionId}`;
+}
+
+export function findMarker(plan: TrackPlan, id: string): BoxMarker | undefined {
+  return (plan.markers ?? []).find((m) => m.id === id);
+}
+
+/** The point halfway along a track circuit's drawn route. */
+export function circuitMiddle(plan: TrackPlan, c: TrackCircuit): (Pt & { level: boolean }) | null {
+  const path = circuitPath(plan, c);
+  if (path.length < 2) return null;
+  const lens = path.slice(1).map((p, i) => Math.hypot(p.x - path[i].x, p.y - path[i].y));
+  let half = lens.reduce((a, b) => a + b, 0) / 2;
+  for (let i = 0; i < lens.length; i++) {
+    if (half <= lens[i] || i === lens.length - 1) {
+      const t = lens[i] ? Math.min(1, half / lens[i]) : 0;
+      const a = path[i];
+      const b = path[i + 1];
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, level: Math.abs(b.y - a.y) < Math.abs(b.x - a.x) };
+    }
+    half -= lens[i];
+  }
+  return null;
+}
+
+/** Where the attached track's middle is, if the marker is attached to a track that still exists. */
+export function markerAnchor(plan: TrackPlan, m: BoxMarker): Pt | null {
+  if (!m.circuitId) return null;
+  const c = findCircuit(plan, m.circuitId);
+  return c ? circuitMiddle(plan, c) : null;
+}
+
+/** Where a signal box marker is drawn. */
+export function markerPos(plan: TrackPlan, m: BoxMarker): Pt {
+  const a = markerAnchor(plan, m);
+  return a ? { x: a.x + m.dx, y: a.y + m.dy } : { x: m.x, y: m.y };
+}
+
+/** The usual place for a box beside a track: above a level track (clear of its label), or to the right of an upright one. */
+function besideOffset(plan: TrackPlan, c: TrackCircuit): Pt {
+  const mid = circuitMiddle(plan, c);
+  return mid && !mid.level ? { x: 3, y: 0 } : { x: 0, y: -3 };
+}
+
+/**
+ * Put a signal box on the plan, beside a track circuit (attached: it follows the track)
+ * or on its own below the plan. A box appears on the plan once: placing it again moves it.
+ */
+export function placeMarker(plan: TrackPlan, box: MarkerBox, circuitId = ''): BoxMarker {
+  plan.markers ??= [];
+  const key = markerKey(box);
+  let m = plan.markers.find((x) => markerKey(x.box) === key);
+  if (!m) {
+    m = { id: newId('sb'), box: structuredClone(box), x: 0, y: 0, circuitId: '', dx: 0, dy: -2 };
+    plan.markers.push(m);
+  }
+  const c = circuitId ? findCircuit(plan, circuitId) : undefined;
+  if (c) {
+    const off = besideOffset(plan, c);
+    m.circuitId = c.id;
+    m.dx = off.x;
+    m.dy = off.y;
+    const p = markerPos(plan, m);
+    m.x = Math.round(p.x);
+    m.y = Math.round(p.y);
+  } else {
+    const b = planBounds(plan);
+    m.circuitId = '';
+    m.x = b ? b.minX : 2;
+    m.y = b ? b.maxY + 3 : 4;
+  }
+  return m;
+}
+
+/** Move a marker so it is drawn at (x, y). An attached marker stays attached, at a new offset from its track. */
+export function moveMarker(plan: TrackPlan, id: string, x: number, y: number): void {
+  const m = findMarker(plan, id);
+  if (!m) return;
+  const a = markerAnchor(plan, m);
+  if (a) {
+    m.dx = Math.round((x - a.x) * 2) / 2;
+    m.dy = Math.round((y - a.y) * 2) / 2;
+  }
+  m.x = Math.round(x);
+  m.y = Math.round(y);
+}
+
+/** Attach a marker to a track circuit ('' to let it stand on its own where it is). */
+export function attachMarker(plan: TrackPlan, id: string, circuitId: string): void {
+  const m = findMarker(plan, id);
+  if (!m) return;
+  const here = markerPos(plan, m);
+  m.x = Math.round(here.x);
+  m.y = Math.round(here.y);
+  const c = circuitId ? findCircuit(plan, circuitId) : undefined;
+  if (!c) {
+    m.circuitId = '';
+    return;
+  }
+  m.circuitId = c.id;
+  const mid = circuitMiddle(plan, c)!;
+  const dx = here.x - mid.x;
+  const dy = here.y - mid.y;
+  // Already close by: keep it where it is. Otherwise put it beside the track.
+  if (Math.hypot(dx, dy) <= 4) {
+    m.dx = Math.round(dx * 2) / 2;
+    m.dy = Math.round(dy * 2) / 2;
+  } else {
+    const off = besideOffset(plan, c);
+    m.dx = off.x;
+    m.dy = off.y;
+  }
+}
+
+export function deleteMarker(plan: TrackPlan, id: string): void {
+  plan.markers = (plan.markers ?? []).filter((m) => m.id !== id);
+}
+
+/** Before a track circuit goes: markers attached to it stay where they are drawn (moved to `to`, if given). */
+function releaseMarkers(plan: TrackPlan, circuitId: string, to?: string): void {
+  for (const m of plan.markers ?? []) {
+    if (m.circuitId !== circuitId) continue;
+    const p = markerPos(plan, m);
+    m.x = Math.round(p.x);
+    m.y = Math.round(p.y);
+    m.circuitId = '';
+    if (to) {
+      m.circuitId = to;
+      const c = findCircuit(plan, to);
+      const mid = c ? circuitMiddle(plan, c) : null;
+      if (mid) {
+        m.dx = Math.round((p.x - mid.x) * 2) / 2;
+        m.dy = Math.round((p.y - mid.y) * 2) / 2;
+      } else m.circuitId = '';
+    }
+  }
 }
 
 // ---------------------------------------------------------------- checks
@@ -1422,11 +1860,17 @@ export type PlanIssue =
   | { kind: 'openEnd'; ref: OpenEndRef; text: string }
   | { kind: 'unassignedCircuit'; circuitId: string; text: string }
   | { kind: 'unassignedJunction'; junctionId: string; text: string }
-  | { kind: 'duplicateNumber'; junctionId: string; text: string };
+  | { kind: 'offLayoutCircuit'; circuitId: string; text: string }
+  | { kind: 'offLayoutJunction'; junctionId: string; text: string }
+  | { kind: 'duplicateNumber'; junctionId: string; text: string }
+  | { kind: 'duplicatePlatform'; circuitId: string; text: string }
+  | { kind: 'flowClash'; circuitId: string; text: string };
 
-export function planIssues(state: AppState): PlanIssue[] {
-  const plan = state.trackPlan;
+export function planIssues(state: AppState, layout: Layout): PlanIssue[] {
+  const plan = layout.trackPlan;
   const issues: PlanIssue[] = [];
+  const onLayout = (boxId: string) => state.boxes.some((b) => b.id === boxId && b.layoutId === layout.id);
+  const boxName = (boxId: string) => state.boxes.find((b) => b.id === boxId)?.name ?? 'a box';
   for (const ref of openEnds(plan)) {
     if (ref.kind === 'end') {
       const c = findCircuit(plan, ref.circuitId)!;
@@ -1437,33 +1881,71 @@ export function planIssues(state: AppState): PlanIssue[] {
       issues.push({ kind: 'openEnd', ref, text: `${junctionName(j)}: ${p.label.toLowerCase()} is not finished.` });
     }
   }
-  for (const c of plan.circuits) if (c.owner.kind === 'none') issues.push({ kind: 'unassignedCircuit', circuitId: c.id, text: `${circuitLabel(c)} is not given to a signal box or line.` });
-  for (const j of plan.junctions) if (!j.boxId && j.kind !== 'joint' && j.kind !== 'turntable') issues.push({ kind: 'unassignedJunction', junctionId: j.id, text: `${junctionName(j)} is not worked by a signal box.` });
+  for (const c of plan.circuits) {
+    if (c.owner.kind === 'none') issues.push({ kind: 'unassignedCircuit', circuitId: c.id, text: `${circuitLabel(c)} is not given to a signal box or line.` });
+    else if (!onLayout(c.owner.boxId)) issues.push({ kind: 'offLayoutCircuit', circuitId: c.id, text: `${circuitLabel(c)} belongs to ${boxName(c.owner.boxId)}, which is not on this layout.` });
+  }
+  for (const j of plan.junctions) {
+    if (j.kind === 'joint') continue;
+    if (!j.boxId) {
+      if (j.kind !== 'turntable') issues.push({ kind: 'unassignedJunction', junctionId: j.id, text: `${junctionName(j)} is not worked by a signal box.` });
+    } else if (!onLayout(j.boxId)) issues.push({ kind: 'offLayoutJunction', junctionId: j.id, text: `${junctionName(j)} is worked from ${boxName(j.boxId)}, which is not on this layout.` });
+  }
   const seen = new Map<string, Junction>();
   for (const j of plan.junctions) {
     if (j.kind === 'joint') continue;
-    const key = `${j.boxId}|${j.number.trim().toUpperCase()}`;
-    if (seen.has(key)) issues.push({ kind: 'duplicateNumber', junctionId: j.id, text: `${junctionName(j)}: number ${j.number} is used twice${j.boxId ? ` in ${state.boxes.find((b) => b.id === j.boxId)?.name ?? 'that box'}` : ''}.` });
+    const key = `${ownerKey(junctionWorker(j))}|${j.number.trim().toUpperCase()}`;
+    if (seen.has(key)) issues.push({ kind: 'duplicateNumber', junctionId: j.id, text: `${junctionName(j)}: number ${j.number} is used twice${j.boxId ? ` in ${boxName(j.boxId)}` : ''}.` });
     else seen.set(key, j);
+  }
+  // Traffic: trains running straight on from one track to the next must keep going the same way.
+  const clashSeen = new Set<string>();
+  for (const c of plan.circuits) {
+    if (!c.traffic) continue;
+    for (const end of [0, 1] as const) {
+      const r = runOn(plan, c, end);
+      if (!r || !r.circuit.traffic) continue;
+      const key = [c.id, r.circuit.id].sort().join('|');
+      if (clashSeen.has(key)) continue;
+      clashSeen.add(key);
+      const outHere = c.traffic.toward === end; // c's trains leave by this end
+      const inThere = r.circuit.traffic.toward !== r.end; // the next track's trains leave by the far end
+      if (outHere !== inThere) issues.push({ kind: 'flowClash', circuitId: c.id, text: `${circuitLabel(c)} and ${circuitLabel(r.circuit)} have trains running towards each other (or away from each other) at ${r.via.kind === 'joint' ? 'the joint between them' : junctionName(r.via)}.` });
+    }
+  }
+  const plats = new Map<string, TrackCircuit>();
+  for (const c of plan.circuits) {
+    if (!c.platform || c.owner.kind === 'none') continue;
+    const key = `${ownerKey(c.owner)}|${c.platform.number.trim().toUpperCase()}`;
+    const first = plats.get(key);
+    if (first) issues.push({ kind: 'duplicatePlatform', circuitId: c.id, text: `${circuitLabel(c)}: platform ${c.platform.number} is also ${circuitLabel(first)}${c.owner.kind === 'box' ? ` in ${boxName(c.owner.boxId)}` : ''}.` });
+    else plats.set(key, c);
   }
   return issues;
 }
 
 // ---------------------------------------------------------------- tidy-up
 
-/** Drop references to boxes, connections and fiddle yards that no longer exist, and repair damaged data. */
+/** Tidy every layout's track plan (see sanitisePlan). */
 export function sanitiseTrackPlan(state: AppState): void {
-  const raw = state.trackPlan as Partial<TrackPlan> | undefined;
+  for (const l of state.layouts) sanitisePlan(state, l);
+}
+
+/** Drop references to boxes, connections and fiddle yards that no longer exist, and repair damaged data. */
+export function sanitisePlan(state: AppState, layout: Layout): void {
+  const raw = layout.trackPlan as Partial<TrackPlan> | undefined;
   const plan: TrackPlan = {
     circuits: Array.isArray(raw?.circuits) ? raw!.circuits : [],
     junctions: Array.isArray(raw?.junctions) ? raw!.junctions : [],
+    markers: Array.isArray(raw?.markers) ? raw!.markers : [],
   };
-  state.trackPlan = plan;
+  layout.trackPlan = plan;
   const boxIds = new Set(state.boxes.map((b) => b.id));
   const connOk = (boxId: string, connId: string) => state.boxes.some((b) => b.id === boxId && b.connections.some((c) => c.id === connId));
   plan.junctions = plan.junctions.filter((j) => j && JUNCTIONS[j.kind]);
   for (const j of plan.junctions) {
     if (j.boxId && !boxIds.has(j.boxId)) j.boxId = '';
+    if (j.connectionId !== undefined && (!j.boxId || !connOk(j.boxId, j.connectionId))) delete j.connectionId;
     j.number = String(j.number ?? '');
     if (typeof j.rotate !== 'boolean') {
       // v0.3.6 'flip' mirrored left to right, which is a half turn of the top-to-bottom mirror image.
@@ -1487,19 +1969,30 @@ export function sanitiseTrackPlan(state: AppState): void {
       c.via = Array.isArray(c.via) ? c.via.filter((v) => v && Number.isFinite(v.x) && Number.isFinite(v.y)).map((v) => ({ x: Math.round(v.x), y: Math.round(v.y) })) : [];
       if (!c.via.length) delete c.via;
     }
+    if (c.traffic !== undefined) {
+      const t = c.traffic as Partial<NonNullable<TrackCircuit['traffic']>> | null;
+      if (!t || (t.line !== 'up' && t.line !== 'down')) delete c.traffic;
+      else c.traffic = { line: t.line, toward: t.toward === 0 ? 0 : 1 };
+    }
+    if (c.platform !== undefined) {
+      const pl = c.platform as Partial<NonNullable<TrackCircuit['platform']>> | null;
+      if (!pl || typeof pl !== 'object') delete c.platform;
+      else c.platform = { number: String(pl.number ?? '').trim() || '1', side: pl.side === -1 ? -1 : 1 };
+    }
     const o = c.owner;
-    if (!o || (o.kind === 'box' && !boxIds.has(o.boxId)) || (o.kind === 'line' && !connOk(o.boxId, o.connectionId))) c.owner = { kind: 'none' };
+    if (!o || (o.kind === 'box' && !boxIds.has(o.boxId)) || ((o.kind === 'line' || o.kind === 'remote') && !connOk(o.boxId, o.connectionId))) c.owner = { kind: 'none' };
     c.ends.forEach((e, i) => {
       if (e.kind === 'joined') {
         const j = findJunction(plan, e.junctionId);
         if (!j || !portsOf(j).some((p) => p.id === e.port)) c.ends[i] = { kind: 'open', x: 0, y: 0 };
       } else if (e.kind === 'exit') {
         const t = e.to;
-        if (!t || (t.kind === 'fiddleYard' && !state.fiddleYards.some((y) => y.id === t.yardId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
+        if (!t || (t.kind === 'fiddleYard' && !layout.fiddleYards.some((y) => y.id === t.yardId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
       }
     });
   }
   for (const j of plan.junctions) normaliseMirror(plan, j);
+  pruneJoints(plan);
   // A port may only be joined once: later duplicates become unfinished.
   const used = new Set<string>();
   for (const c of plan.circuits) {
@@ -1512,5 +2005,24 @@ export function sanitiseTrackPlan(state: AppState): void {
         c.ends[i] = { kind: 'open', x: (a?.x ?? 0) + 1, y: (a?.y ?? 0) + 1 };
       } else used.add(key);
     });
+  }
+  // Signal boxes on the plan: one marker per box, for boxes and connections that still exist.
+  const seenBox = new Set<string>();
+  const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  plan.markers = plan.markers!.filter((m) => {
+    if (!m || !m.box || typeof m.id !== 'string') return false;
+    const ok = m.box.kind === 'box' ? boxIds.has(m.box.boxId) : m.box.kind === 'remote' && connOk(m.box.boxId, m.box.connectionId);
+    if (!ok) return false;
+    const key = markerKey(m.box);
+    if (seenBox.has(key)) return false;
+    seenBox.add(key);
+    return true;
+  });
+  for (const m of plan.markers) {
+    m.x = num(m.x);
+    m.y = num(m.y);
+    m.dx = num(m.dx);
+    m.dy = num(m.dy, -2);
+    if (typeof m.circuitId !== 'string' || (m.circuitId && !findCircuit(plan, m.circuitId))) m.circuitId = '';
   }
 }

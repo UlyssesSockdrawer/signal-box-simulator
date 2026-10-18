@@ -1,4 +1,5 @@
 import { farBoxLocations } from '../../core/boxes';
+import { activeLayout, findLayout } from '../../core/layouts';
 import { newId } from '../../core/store';
 import type { AppState, Location, Loco } from '../../core/types';
 import { activeCodeSet, locationText, topBar, trainTypeName, type Ctx, type Screen } from '../app';
@@ -16,17 +17,32 @@ export function locValue(l: Location): string {
   return 'off';
 }
 
-export function locOptions(state: AppState, current: Location): HTMLOptionElement[] {
+/**
+ * Every place a loco can be put, grouped by layout (the active layout first). The roster is
+ * shared by every layout, so a loco can be moved to another layout's yard or station.
+ */
+export function locOptions(state: AppState, current: Location): Array<HTMLOptionElement | HTMLOptGroupElement> {
   const cur = locValue(current);
-  const opts: HTMLOptionElement[] = [];
-  for (const y of state.fiddleYards) for (const r of y.roads) opts.push(option(`fy|${y.id}|${r.id}`, `${y.name}: ${r.name}`, cur === `fy|${y.id}|${r.id}`));
-  for (const b of state.boxes) opts.push(option(`st|${b.id}`, `${b.name} station`, cur === `st|${b.id}`));
-  for (const { box, conn } of farBoxLocations(state)) {
-    const v = `fb|${box.id}|${conn.id}`;
-    opts.push(option(v, `At ${conn.neighbourName} (line from ${box.name})`, cur === v));
-  }
-  opts.push(option('off', 'Off layout / shed', cur === 'off'));
-  return opts;
+  const far = farBoxLocations(state);
+  const groupFor = (layoutId: string, label: string) => {
+    const opts: HTMLOptionElement[] = [];
+    for (const y of findLayout(state, layoutId)?.fiddleYards ?? []) for (const r of y.roads) opts.push(option(`fy|${y.id}|${r.id}`, `${y.name}: ${r.name}`, cur === `fy|${y.id}|${r.id}`));
+    for (const b of state.boxes.filter((x) => (layoutId ? x.layoutId === layoutId : !findLayout(state, x.layoutId)))) opts.push(option(`st|${b.id}`, `${b.name} station`, cur === `st|${b.id}`));
+    for (const { box, conn } of far.filter((f) => (layoutId ? f.box.layoutId === layoutId : !findLayout(state, f.box.layoutId)))) {
+      const v = `fb|${box.id}|${conn.id}`;
+      opts.push(option(v, `At ${conn.neighbourName} (line from ${box.name})`, cur === v));
+    }
+    return { label, opts };
+  };
+  const active = activeLayout(state);
+  const groups = [
+    ...(active ? [groupFor(active.id, active.name)] : []),
+    ...state.layouts.filter((l) => l.id !== active?.id).map((l) => groupFor(l.id, l.name)),
+    groupFor('', 'Not on a layout'),
+  ].filter((g) => g.opts.length);
+  const off = option('off', 'Off layout / shed', cur === 'off');
+  if (groups.length <= 1) return [...(groups[0]?.opts ?? []), off];
+  return [...groups.map((g) => h('optgroup', { label: g.label }, ...g.opts)), off];
 }
 
 export function parseLoc(v: string, prev: Location): Location {

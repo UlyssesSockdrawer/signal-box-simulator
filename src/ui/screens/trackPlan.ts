@@ -21,6 +21,15 @@ import {
   TURNTABLE_RADIUS,
   acrossJoint,
   mergeAtJoint,
+  lineRun,
+  setDoubleLine,
+  setTraffic,
+  tracksAlongside,
+  checkPlatformNumber,
+  platformPath,
+  pruneJoints,
+  setPlatform,
+  PLATFORM_MAX,
   crossoverFrom,
   deleteCircuit,
   deleteJunction,
@@ -55,16 +64,29 @@ import {
   setJunctionKind,
   shiftCircuit,
   splitCircuit,
+  attachMarker,
+  deleteMarker,
+  findMarker,
+  junctionWorker,
+  markerAnchor,
+  markerKey,
+  markerPos,
+  moveMarker,
+  ownerKey,
+  placeMarker,
+  setJunctionWorker,
   type CrossoverLean,
   type GrowPiece,
   type OpenEndRef,
   type PlanIssue,
   type Pt,
 } from '../../core/trackPlan';
-import type { AppState, ExitTarget, Junction, JunctionKind, TrackCircuit, TrackOwner, TrackPlan } from '../../core/types';
+import { findLayout } from '../../core/layouts';
+import type { AppState, BoxDef, BoxMarker, ExitTarget, Junction, JunctionKind, Layout, MarkerBox, TrackCircuit, TrackOwner, TrackPlan } from '../../core/types';
 import { topBar, type Ctx, type Screen } from '../app';
 import { confirmButton, h, option, safeRerender, toast } from '../dom';
 import { plusIcon } from './boxConfig';
+import { layoutDetails } from './layouts';
 
 /*
  * Layout configurator: build the layout's track plan by growing it from its
@@ -87,12 +109,16 @@ const LINE_GREY = '#5f6368';
 /** Box colours on the enamel diagram (all dark enough for white text and to stand out on cream). */
 const BOX_COLOURS = ['#1f4e8c', '#b5541b', '#2e6b3a', '#6a3d8c', '#8a5a00', '#0f6b6b', '#a3271f', '#455a64'];
 
-type Tab = 'plan' | 'areas';
-type Sel = { kind: 'circuit'; id: string } | { kind: 'junction'; id: string } | null;
+type Tab = 'plan' | 'areas' | 'details';
+type Sel = { kind: 'circuit'; id: string } | { kind: 'junction'; id: string } | { kind: 'marker'; id: string } | null;
 type Pick =
   | { kind: 'join'; from: OpenEndRef }
   | { kind: 'parallel'; from: string }
-  | { kind: 'parallelChoose'; from: string; to: string };
+  | { kind: 'parallelChoose'; from: string; to: string }
+  /** Placing a signal box: tap the track it stands beside. `box` is a markerKey. */
+  | { kind: 'placeBox'; box: string; circuitId?: string }
+  /** Attaching a placed signal box to a track. */
+  | { kind: 'attachMarker'; id: string };
 
 interface Ui {
   tab: Tab;
@@ -110,12 +136,16 @@ interface Ui {
   trailing: boolean;
   /** The selected bend of the selected track circuit, if any. */
   bend: number | null;
+  /** Traffic changes apply to the selected track circuit only, not its whole line. */
+  trafficOne: boolean;
 }
 
 // Kept for the session, so coming back to the screen finds it as it was.
-const ui: Ui = { tab: 'plan', sel: null, menu: null, pick: null, zoom: 1, zoomChosen: false, names: true, issueIdx: 0, insertKind: 'pointsRight', insertFlip: false, trailing: false, bend: null };
+const ui: Ui = { tab: 'plan', sel: null, menu: null, pick: null, zoom: 1, zoomChosen: false, names: true, issueIdx: 0, insertKind: 'pointsRight', insertFlip: false, trailing: false, bend: null, trafficOne: false };
 const undoStack: string[] = [];
 const redoStack: string[] = [];
+/** The layout the undo history and selection belong to. */
+let uiLayout = '';
 const UNDO_MAX = 60;
 
 type Hit =
@@ -123,13 +153,15 @@ type Hit =
   | { t: 'junction'; id: string }
   | { t: 'open'; ref: OpenEndRef }
   | { t: 'end'; circuitId: string; end: 0 | 1 }
-  | { t: 'bend'; circuitId: string; i: number };
+  | { t: 'bend'; circuitId: string; i: number }
+  | { t: 'marker'; id: string };
 
 type Drag =
   | { kind: 'bend'; circuitId: string; i: number; ox: number; oy: number }
   | { kind: 'junction'; id: string; ox: number; oy: number }
   | { kind: 'end'; circuitId: string; end: 0 | 1; ox: number; oy: number }
-  | { kind: 'circuit'; id: string };
+  | { kind: 'circuit'; id: string }
+  | { kind: 'marker'; id: string; ox: number; oy: number };
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number | undefined> = {}, ...children: Array<SVGElement | string | null>): SVGElementTagNameMap[K] {
   const el = document.createElementNS(NS, tag);
@@ -142,22 +174,45 @@ const junctions = (n: number) => `${n} junction${n === 1 ? '' : 's'}`;
 const refKey = (r: OpenEndRef) => (r.kind === 'end' ? `e|${r.circuitId}|${r.end}` : `p|${r.junctionId}|${r.port}`);
 const sameRef = (a: OpenEndRef | null, b: OpenEndRef | null) => !!a && !!b && refKey(a) === refKey(b);
 
-export function trackPlanScreen(ctx: Ctx): Screen {
+export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Screen {
   const store = ctx.store;
-  const plan = () => store.state.trackPlan;
+  const layoutIn = (a: AppState): Layout => findLayout(a, layoutId) ?? a.layouts[0];
+  const layout = () => layoutIn(store.state);
+  const plan = () => layout().trackPlan;
   let quiet = false;
+  if (uiLayout !== layoutId) {
+    // Another layout: its own undo history, nothing selected.
+    uiLayout = layoutId;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    ui.sel = null;
+    ui.menu = null;
+    ui.pick = null;
+    ui.bend = null;
+    ui.zoomChosen = false;
+  }
+  if (startTab) ui.tab = startTab;
+  // The back button returns to the list of layouts.
+  if (!ctx.returnTo) ctx.returnTo = { route: 'plan', label: 'layouts' };
+  ctx.onLeave(() => {
+    if (ctx.returnTo?.route === 'plan') ctx.returnTo = null;
+  });
 
   // ---------------------------------------------------------------- editing with undo
   const edit = <R>(fn: (p: TrackPlan, a: AppState) => R): R => {
-    const before = JSON.stringify(store.state.trackPlan);
+    const before = JSON.stringify(plan());
     let out!: R;
     quiet = true;
     try {
-      store.update((a) => (out = fn(a.trackPlan, a)));
+      store.update((a) => {
+        out = fn(layoutIn(a).trackPlan, a);
+        // Never leave a joint with nothing joined to it: it could not be selected to delete.
+        pruneJoints(layoutIn(a).trackPlan);
+      });
     } finally {
       quiet = false;
     }
-    if (JSON.stringify(store.state.trackPlan) !== before) {
+    if (JSON.stringify(plan()) !== before) {
       undoStack.push(before);
       if (undoStack.length > UNDO_MAX) undoStack.shift();
       redoStack.length = 0;
@@ -167,13 +222,14 @@ export function trackPlanScreen(ctx: Ctx): Screen {
   const restore = (from: string[], to: string[]) => {
     const snap = from.pop();
     if (!snap) return;
-    to.push(JSON.stringify(store.state.trackPlan));
+    to.push(JSON.stringify(plan()));
     quiet = true;
-    store.update((a) => (a.trackPlan = JSON.parse(snap)));
+    store.update((a) => (layoutIn(a).trackPlan = JSON.parse(snap)));
     quiet = false;
     // Drop a selection or menu that no longer exists.
     if (ui.sel?.kind === 'circuit' && !findCircuit(plan(), ui.sel.id)) ui.sel = null;
     if (ui.sel?.kind === 'junction' && !findJunction(plan(), ui.sel.id)) ui.sel = null;
+    if (ui.sel?.kind === 'marker' && !findMarker(plan(), ui.sel.id)) ui.sel = null;
     if (ui.menu && !isOpenEnd(plan(), ui.menu)) ui.menu = null;
     ui.pick = null;
     renderAll();
@@ -183,18 +239,39 @@ export function trackPlanScreen(ctx: Ctx): Screen {
 
   // ---------------------------------------------------------------- names
   const boxName = (id: string) => store.state.boxes.find((b) => b.id === id)?.name ?? 'Unknown box';
-  const boxColour = (id: string) => {
-    const i = store.state.boxes.findIndex((b) => b.id === id);
+  /** Boxes on this layout, in the app's box order. */
+  const layoutBoxes = (): BoxDef[] => store.state.boxes.filter((b) => b.layoutId === layoutId);
+  const onLayout = (boxId: string) => layoutBoxes().some((b) => b.id === boxId);
+  /** Every box you work on this layout, then every far box of their connections: one colour each. */
+  const colourKeys = () => [...layoutBoxes().map((b) => `box|${b.id}`), ...layoutBoxes().flatMap((b) => b.connections.map((c) => `remote|${b.id}|${c.id}`))];
+  const keyColour = (key: string) => {
+    const i = colourKeys().indexOf(key);
     return i < 0 ? INK : BOX_COLOURS[i % BOX_COLOURS.length];
   };
-  const lineName = (boxId: string, connId: string) => {
-    const b = store.state.boxes.find((x) => x.id === boxId);
-    const c = b?.connections.find((x) => x.id === connId);
-    return `Line: ${b?.name ?? '?'} – ${c?.neighbourName ?? '?'}`;
-  };
-  const ownerText = (o: TrackOwner) => (o.kind === 'box' ? boxName(o.boxId) : o.kind === 'line' ? lineName(o.boxId, o.connectionId) : 'Not assigned');
+  const boxColour = (id: string) => keyColour(`box|${id}`);
+  const connOf = (boxId: string, connId: string) => store.state.boxes.find((x) => x.id === boxId)?.connections.find((x) => x.id === connId);
+  const lineName = (boxId: string, connId: string) => `Line: ${boxName(boxId)} – ${connOf(boxId, connId)?.neighbourName ?? '?'}`;
+  /** The far box of a connection, worked by the simulated signaller. */
+  const remoteName = (boxId: string, connId: string) => `${connOf(boxId, connId)?.neighbourName ?? '?'} (simulated, from ${boxName(boxId)})`;
+  const offLayout = (boxId: string) => (onLayout(boxId) ? '' : ' (not on this layout)');
+  const ownerText = (o: TrackOwner) =>
+    o.kind === 'box'
+      ? boxName(o.boxId) + offLayout(o.boxId)
+      : o.kind === 'line'
+        ? lineName(o.boxId, o.connectionId) + offLayout(o.boxId)
+        : o.kind === 'remote'
+          ? remoteName(o.boxId, o.connectionId) + offLayout(o.boxId)
+          : 'Not assigned';
+  const workerText = (j: Junction) => (j.connectionId ? remoteName(j.boxId, j.connectionId) : boxName(j.boxId)) + offLayout(j.boxId);
+  const markerBoxName = (b: MarkerBox) => (b.kind === 'box' ? boxName(b.boxId) : connOf(b.boxId, b.connectionId)?.neighbourName ?? '?');
+  const markerShort = (b: MarkerBox) => (b.kind === 'box' ? store.state.boxes.find((x) => x.id === b.boxId)?.shortName : connOf(b.boxId, b.connectionId)?.neighbourShort) || markerBoxName(b);
+  /** Boxes that can be drawn on this plan: each box on the layout and each of its connected boxes. */
+  const markerChoices = (): Array<{ key: string; box: MarkerBox; label: string }> => [
+    ...layoutBoxes().map((b) => ({ key: `box|${b.id}`, box: { kind: 'box' as const, boxId: b.id }, label: b.name })),
+    ...layoutBoxes().flatMap((b) => b.connections.map((c) => ({ key: `remote|${b.id}|${c.id}`, box: { kind: 'remote' as const, boxId: b.id, connectionId: c.id }, label: `${c.neighbourName} (simulated, from ${b.name})` }))),
+  ];
   const exitText = (to: ExitTarget) => {
-    if (to.kind === 'fiddleYard') return `To ${store.state.fiddleYards.find((y) => y.id === to.yardId)?.name ?? 'fiddle yard'}`;
+    if (to.kind === 'fiddleYard') return `To ${layout().fiddleYards.find((y) => y.id === to.yardId)?.name ?? 'fiddle yard'}`;
     if (to.kind === 'connection') {
       const c = store.state.boxes.find((b) => b.id === to.boxId)?.connections.find((x) => x.id === to.connectionId);
       return `To ${c?.neighbourName ?? 'another box'}`;
@@ -219,13 +296,10 @@ export function trackPlanScreen(ctx: Ctx): Screen {
   const boardWrap = h('div', { class: 'tp-board-wrap' });
   const statusEl = h('div', { class: 'tp-status' });
   const sideEl = h('aside', { class: 'config-case tp-side', 'aria-label': 'Selected piece' });
-  const root = h(
-    'main',
-    { class: 'page config-page tp-page' },
-    topBar(ctx, 'Layout configurator'),
-    tabsEl,
-    h('div', { class: 'config-shelf tp-shelf' }, h('div', { class: 'tp-wrap' }, h('div', { class: 'tp-main' }, toolbarEl, pickbarEl, boardWrap, statusEl), sideEl)),
-  );
+  const shelfEl = h('div', { class: 'config-shelf tp-shelf' }, h('div', { class: 'tp-wrap' }, h('div', { class: 'tp-main' }, toolbarEl, pickbarEl, boardWrap, statusEl), sideEl));
+  const detailsEl = h('div', { class: 'config-shelf ld-shelf', hidden: true });
+  const top = topBar(ctx, layout().name);
+  const root = h('main', { class: 'page config-page tp-page' }, top, tabsEl, shelfEl, detailsEl);
 
   // ---------------------------------------------------------------- tabs, toolbar, pick bar
   const renderTabs = () => {
@@ -249,7 +323,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
         },
         label,
       );
-    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'));
+    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('details', 'Details'));
   };
 
   const fit = () => {
@@ -331,11 +405,36 @@ export function trackPlanScreen(ctx: Ctx): Screen {
         btn('Codes + names', () => ((ui.names = true), renderBoard(), renderToolbar()), { pressed: ui.names }),
       ),
       ...(ui.tab === 'plan' ? [btn('+ Lay a new track', layNewTrack, { cls: 'tp-new' }), btn('+ Lay double track', layDoubleTrack)] : []),
+      btn('+ Signal box', () => startPlaceBox(ui.sel?.kind === 'circuit' ? ui.sel.id : undefined), { aria: ui.sel?.kind === 'circuit' ? 'Place a signal box beside the selected track' : 'Place a signal box on the plan' }),
     );
   };
 
   const cancelPick = () => {
     ui.pick = null;
+    renderAll();
+  };
+  /** Finish placing a signal box: beside a track circuit, or on its own (''). */
+  const placeBoxAt = (circuitId: string) => {
+    const p = ui.pick;
+    if (p?.kind !== 'placeBox') return;
+    const ch = markerChoices().find((x) => x.key === p.box);
+    if (!ch) return cancelPick();
+    const m = edit((pl) => placeMarker(pl, ch.box, circuitId));
+    ui.pick = null;
+    ui.sel = { kind: 'marker', id: m.id };
+    renderAll();
+    scrollToSel();
+    toast(circuitId ? `${ch.label} placed beside ${findCircuit(plan(), circuitId)?.code ?? 'the track'}. Drag it to move it; it follows the track.` : `${ch.label} placed. Drag it where it stands.`);
+  };
+  const startPlaceBox = (circuitId?: string) => {
+    const choices = markerChoices();
+    if (!choices.length) return toast('No signal boxes are on this layout yet. Add them on the Details tab.');
+    const placed = new Set((plan().markers ?? []).map((m) => markerKey(m.box)));
+    const first = choices.find((c) => !placed.has(c.key)) ?? choices[0];
+    ui.menu = null;
+    ui.pick = { kind: 'placeBox', box: first.key, circuitId };
+    // Only one box to choose: no need to ask which.
+    if (circuitId && choices.length === 1) return placeBoxAt(circuitId);
     renderAll();
   };
   const leanIcon = (lean: CrossoverLean) =>
@@ -354,6 +453,25 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     } else if (p.kind === 'parallel') {
       const c = findCircuit(plan(), p.from);
       pickbarEl.replaceChildren(h('span', { class: 'tp-pick-text' }, `Tap the track that runs alongside ${c?.code ?? 'this track'}.`), cancel);
+    } else if (p.kind === 'placeBox') {
+      const choices = markerChoices();
+      const sel = h(
+        'select',
+        { id: 'tp_place_box', 'aria-label': 'Signal box to place', on: { change: (e: Event) => (p.box = (e.target as HTMLSelectElement).value) } },
+        ...choices.map((ch) => option(ch.key, `${ch.label}${(plan().markers ?? []).some((m) => markerKey(m.box) === ch.key) ? ' (on the plan: moves it)' : ''}`, ch.key === p.box)),
+      );
+      const beside = p.circuitId ? findCircuit(plan(), p.circuitId) : undefined;
+      pickbarEl.replaceChildren(
+        h('label', { class: 'tp-pick-place', for: 'tp_place_box' }, 'Place'),
+        sel,
+        h('span', { class: 'tp-pick-text' }, beside ? 'Place it beside the selected track, tap another track circuit, or place it on its own.' : 'Now tap the track circuit it stands beside, or place it on its own.'),
+        ...(beside ? [h('button', { class: 'btn small primary', type: 'button', on: { click: () => placeBoxAt(beside.id) } }, `Beside ${beside.code}`)] : []),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => placeBoxAt('') } }, 'Place it on its own'),
+        cancel,
+      );
+    } else if (p.kind === 'attachMarker') {
+      const m = findMarker(plan(), p.id);
+      pickbarEl.replaceChildren(h('span', { class: 'tp-pick-text' }, `Tap the track circuit ${m ? markerBoxName(m.box) : 'the box'} stands beside.`), cancel);
     } else {
       const a = findCircuit(plan(), p.from);
       const b = findCircuit(plan(), p.to);
@@ -417,11 +535,11 @@ export function trackPlanScreen(ctx: Ctx): Screen {
 
   const circuitColour = (c: TrackCircuit): { stroke: string; dash?: string } => {
     if (ui.tab !== 'areas') return { stroke: INK };
-    if (c.owner.kind === 'box') return { stroke: boxColour(c.owner.boxId) };
     if (c.owner.kind === 'line') return { stroke: LINE_GREY, dash: '12 6' };
+    if (c.owner.kind === 'box' || c.owner.kind === 'remote') return { stroke: keyColour(ownerKey(c.owner)), dash: onLayout(c.owner.boxId) ? undefined : '2 5' };
     return { stroke: INK };
   };
-  const junctionColour = (j: Junction) => (ui.tab === 'areas' && j.boxId ? boxColour(j.boxId) : INK);
+  const junctionColour = (j: Junction) => (ui.tab === 'areas' && j.boxId ? keyColour(ownerKey(junctionWorker(j))) : INK);
 
   const plusMark = (p: Pt, ref: OpenEndRef, label: string, state: 'normal' | 'menu' | 'target' | 'source') => {
     const cx = X(p.x);
@@ -455,7 +573,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     const dots = svg('pattern', { id: 'tp-dots', width: u, height: u, patternUnits: 'userSpaceOnUse', x: X(Math.floor(view.ox)) % u, y: Y(Math.floor(view.oy)) % u }, svg('circle', { cx: 0.5, cy: 0.5, r: 1.2, fill: '#c9bfa6' }));
     s.append(svg('defs', {}, dots), svg('rect', { x: 0, y: 0, width: W, height: H, fill: 'url(#tp-dots)', class: 'tp-bg' }));
 
-    const picking = ui.pick?.kind === 'parallel';
+    const picking = ui.pick?.kind === 'parallel' || ui.pick?.kind === 'placeBox' || ui.pick?.kind === 'attachMarker';
     const selC = ui.sel?.kind === 'circuit' ? ui.sel.id : null;
     const selJ = ui.sel?.kind === 'junction' ? ui.sel.id : null;
     const branch = ui.tab === 'areas' && selC ? new Set(branchFrom(p, selC).circuits.map((c) => c.id)) : null;
@@ -468,12 +586,36 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       const pd = curvedD(path);
       const col = circuitColour(c);
       const freeEnds = c.ends.some((e) => e.kind !== 'joined');
-      const g = svg('g', { ...hitAttrs({ t: 'circuit', id: c.id }, `Track circuit ${circuitLabel(c)}`, freeEnds), class: `tp-hit tp-circuit${picking && c.id !== (ui.pick as { from: string }).from ? ' tp-pickable' : ''}` });
+      const g = svg('g', { ...hitAttrs({ t: 'circuit', id: c.id }, `Track circuit ${circuitLabel(c)}`, freeEnds), class: `tp-hit tp-circuit${picking && c.id !== (ui.pick as { from?: string }).from ? ' tp-pickable' : ''}` });
       g.append(svg('path', { d: pd, class: 'tp-hitline', fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(18, u * 0.8), 'stroke-linejoin': 'round' }));
       if (c.id === selC) g.append(svg('path', { d: pd, fill: 'none', stroke: '#e6b450', 'stroke-width': Math.max(14, u * 0.7), 'stroke-linejoin': 'round', opacity: 0.7 }));
       else if (branch?.has(c.id)) g.append(svg('path', { d: pd, fill: 'none', stroke: '#e6b450', 'stroke-width': Math.max(12, u * 0.6), 'stroke-linejoin': 'round', opacity: 0.35 }));
       if (ui.pick?.kind === 'parallelChoose' && (c.id === ui.pick.from || c.id === ui.pick.to))
         g.append(svg('path', { d: pd, fill: 'none', stroke: '#1f5546', 'stroke-width': Math.max(14, u * 0.7), 'stroke-linejoin': 'round', opacity: 0.45 }));
+      // A platform road: the platform face drawn alongside, with its number on it.
+      let platformUp = false;
+      if (c.platform) {
+        const pp = platformPath(p, c);
+        if (pp.length >= 2) {
+          g.append(svg('path', { d: curvedD(pp), class: 'tp-platform', fill: 'none', stroke: '#a89c80', 'stroke-width': Math.max(8, u * 0.55), 'stroke-linejoin': 'round' }));
+          let pb = 1;
+          let pl = 0;
+          for (let i = 1; i < pp.length; i++) {
+            const l = Math.hypot(pp[i].x - pp[i - 1].x, pp[i].y - pp[i - 1].y);
+            if (l > pl) {
+              pl = l;
+              pb = i;
+            }
+          }
+          const tx = X((pp[pb - 1].x + pp[pb].x) / 2);
+          const ty = Y((pp[pb - 1].y + pp[pb].y) / 2);
+          platformUp = (pp[pb - 1].y + pp[pb].y) / 2 < (path[Math.min(pb, path.length - 1) - 1].y + path[Math.min(pb, path.length - 1)].y) / 2;
+          const label = `P${c.platform.number}`;
+          const tw = Math.max(22, label.length * 7.5 + 8);
+          labels.push(svg('rect', { x: tx - tw / 2, y: ty - 8, width: tw, height: 16, rx: 2, fill: '#f6f1e3', stroke: '#0c0a08', 'stroke-width': 1.5 }));
+          labels.push(svg('text', { x: tx, y: ty + 4, 'text-anchor': 'middle', class: 'tp-tag', fill: '#0c0a08' }, label));
+        }
+      }
       g.append(svg('path', { d: pd, class: 'tp-line', fill: 'none', stroke: col.stroke, 'stroke-width': 6, 'stroke-dasharray': col.dash, 'stroke-linejoin': 'round' }));
       // End fittings
       c.ends.forEach((e, i) => {
@@ -489,8 +631,15 @@ export function trackPlanScreen(ctx: Ctx): Screen {
             g.append(svg('path', { d: `M${px - uy * 13} ${py + ux * 13}L${px + uy * 13} ${py - ux * 13}`, stroke: col.stroke, 'stroke-width': 7 }));
           } else {
             g.append(svg('path', { d: `M${px + ux * 14} ${py + uy * 14}L${px - uy * 9} ${py + ux * 9}L${px + uy * 9} ${py - ux * 9}Z`, fill: col.stroke }));
+            // Level exits: the name beyond the arrow. Upright exits: the name runs on along the line
+            // (turned to read upwards or downwards), so exits side by side never overprint each other.
+            const upright = Math.abs(uy) > Math.abs(ux) * 2;
+            const tx = px + ux * 20;
+            const ty = py + uy * 20;
             labels.push(
-              svg('text', { x: px + ux * 20, y: py + uy * 20 + font * 0.35, 'text-anchor': ux < 0 ? 'end' : 'start', class: 'tp-label', 'font-size': font, fill: INK }, exitText(e.to)),
+              upright
+                ? svg('text', { x: tx, y: ty, 'text-anchor': 'start', 'dominant-baseline': 'middle', transform: `rotate(${uy < 0 ? -90 : 90} ${tx} ${ty})`, class: 'tp-label', 'font-size': font, fill: INK }, exitText(e.to))
+                : svg('text', { x: tx, y: ty + font * 0.35, 'text-anchor': ux < 0 ? 'end' : 'start', class: 'tp-label', 'font-size': font, fill: INK }, exitText(e.to)),
             );
           }
           g.append(svg('circle', { ...hitAttrs({ t: 'end', circuitId: c.id, end: i as 0 | 1 }, `${e.kind === 'exit' ? 'Scene exit' : 'Buffer stops'} at the end of ${c.code}`, true), cx: px, cy: py, r: 14, fill: 'transparent' }));
@@ -525,8 +674,27 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       const mx = X((a.x + z.x) / 2);
       const my = Y((a.y + z.y) / 2);
       const level = a.y === z.y;
-      const text = ui.names ? circuitLabel(c) : c.code;
-      labels.push(svg('text', { x: level ? mx : mx + 10, y: level ? my - 10 : my, 'text-anchor': level ? 'middle' : 'start', class: 'tp-label', 'font-size': font, fill: col.stroke === LINE_GREY ? '#3c4043' : col.stroke }, text));
+      // Up and down lines: arrows along the track show the way trains run.
+      if (c.traffic) {
+        const fwd = c.traffic.toward === 1;
+        const dx = (z.x - a.x) * (fwd ? 1 : -1);
+        const dy = (z.y - a.y) * (fwd ? 1 : -1);
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+        const pts = Math.hypot(z.x - a.x, z.y - a.y) * u > 140 ? [0.25, 0.75] : [0.5];
+        for (const f of pts) {
+          const cx = X(a.x + (z.x - a.x) * f);
+          const cy = Y(a.y + (z.y - a.y) * f);
+          const s = 7;
+          g.append(svg('path', { d: `M${cx + ux * s} ${cy + uy * s}L${cx - ux * s - uy * s} ${cy - uy * s + ux * s}L${cx - ux * s * 0.4} ${cy - uy * s * 0.4}L${cx - ux * s + uy * s} ${cy - uy * s - ux * s}Z`, fill: '#f6f1e3', stroke: col.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', class: 'tp-flow' }));
+        }
+      }
+      const lineWord = c.traffic ? (c.traffic.line === 'up' ? 'Up' : 'Down') : '';
+      const text = ui.names ? `${circuitLabel(c)}${lineWord ? ` · ${lineWord}` : ''}` : c.code;
+      // Labels go above level track, or below it when the platform is on top.
+      const ly = platformUp ? my + font + 8 : my - 10;
+      labels.push(svg('text', { x: level ? mx : mx + 10, y: level ? ly : my, 'text-anchor': level ? 'middle' : 'start', class: 'tp-label', 'font-size': font, fill: col.stroke === LINE_GREY ? '#3c4043' : col.stroke }, text));
     }
 
     // Junctions
@@ -579,6 +747,10 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     }
     for (const l of labels) s.append(l);
 
+    // Signal boxes
+    const selM = ui.sel?.kind === 'marker' ? ui.sel.id : null;
+    for (const m of p.markers ?? []) s.append(drawMarker(p, m, m.id === selM));
+
     // Unfinished ends
     const joinFrom = ui.pick?.kind === 'join' ? ui.pick.from : null;
     for (const ref of openEnds(p)) {
@@ -588,6 +760,39 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       s.append(plusMark(a, ref, joinFrom && state === 'target' ? `Join to ${refText(ref)}` : `Add to ${refText(ref)}`, state));
     }
     return s;
+  };
+
+  /** A signal box: a small cabin on a base, with its short name; a dashed lead to the track it stands beside. */
+  const drawMarker = (p: TrackPlan, m: BoxMarker, selected: boolean): SVGElement => {
+    const pos = markerPos(p, m);
+    const anchor = markerAnchor(p, m);
+    const cx = X(pos.x);
+    const cy = Y(pos.y);
+    const k = Math.max(0.75, Math.min(1.3, view.u / UNIT));
+    const remote = m.box.kind === 'remote';
+    const col = ui.tab === 'areas' ? keyColour(markerKey(m.box)) : INK;
+    const name = markerBoxName(m.box);
+    const g = svg('g', { ...hitAttrs({ t: 'marker', id: m.id }, `${name} signal box${remote ? ' (simulated)' : ''}`, true), class: 'tp-hit tp-marker' });
+    if (anchor) {
+      g.append(svg('path', { d: `M${cx} ${cy + 8 * k}L${X(anchor.x)} ${Y(anchor.y)}`, stroke: col, 'stroke-width': 2, 'stroke-dasharray': '3 3', fill: 'none' }));
+      g.append(svg('circle', { cx: X(anchor.x), cy: Y(anchor.y), r: 3.5, fill: col }));
+    }
+    if (selected) g.append(svg('circle', { cx, cy: cy - 3 * k, r: 26 * k, fill: '#e6b450', opacity: 0.6 }));
+    const w = 30 * k;
+    const body = remote ? '#f6f1e3' : col;
+    const glass = remote ? col : '#f6f1e3';
+    // Roof, glazed cabin, base: a signal box seen from the front.
+    g.append(svg('path', { d: `M${cx - w / 2 - 3 * k} ${cy - 10 * k}L${cx} ${cy - 18 * k}L${cx + w / 2 + 3 * k} ${cy - 10 * k}Z`, fill: col, stroke: '#0c0a08', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }));
+    g.append(svg('rect', { x: cx - w / 2, y: cy - 10 * k, width: w, height: 9 * k, fill: body, stroke: col, 'stroke-width': 2, 'stroke-dasharray': remote ? '3 2' : undefined }));
+    for (let i = 0; i < 3; i++) g.append(svg('rect', { x: cx - w / 2 + 3 * k + i * 8.5 * k, y: cy - 8 * k, width: 6.5 * k, height: 5 * k, fill: glass }));
+    g.append(svg('rect', { x: cx - w / 2, y: cy - 1 * k, width: w, height: 9 * k, fill: remote ? body : '#7a3b22', stroke: col, 'stroke-width': 2, 'stroke-dasharray': remote ? '3 2' : undefined }));
+    const label = markerShort(m.box);
+    const font = Math.max(10, Math.round(11 * k));
+    const tw = Math.max(22, label.length * font * 0.68 + 10);
+    g.append(svg('rect', { x: cx - tw / 2, y: cy + 11 * k, width: tw, height: font + 6, rx: 2, fill: ui.tab === 'areas' ? col : '#0c0a08' }));
+    g.append(svg('text', { x: cx, y: cy + 11 * k + font + 1, 'text-anchor': 'middle', class: 'tp-tag', 'font-size': font, fill: '#ffffff' }, label));
+    g.append(svg('rect', { x: cx - w / 2 - 8, y: cy - 22 * k, width: w + 16, height: 36 * k + font, fill: 'transparent' }));
+    return g;
   };
 
   /** Where a + is drawn: at a free track end, or just beyond a junction's unfinished road. */
@@ -618,7 +823,12 @@ export function trackPlanScreen(ctx: Ctx): Screen {
   boardEl.addEventListener('scroll', () => positionMenu());
 
   const renderBoard = (p: TrackPlan = plan()) => {
-    const empty = !p.circuits.length && !p.junctions.length;
+    // Phones start further out so more of the plan fits; pinch or the buttons change it.
+    if (!ui.zoomChosen && boardEl.clientWidth > 0) {
+      ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
+      ui.zoomChosen = true;
+    }
+    const empty = !p.circuits.length && !p.junctions.length && !(p.markers ?? []).length;
     emptyEl.hidden = !empty;
     svgHost.hidden = empty;
     if (empty) {
@@ -635,7 +845,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       const target = ui.sel
         ? [...svgHost.querySelectorAll<SVGElement>('[data-hit]')].find((el) => {
             const hh = JSON.parse(el.getAttribute('data-hit')!) as Hit;
-            return (hh.t === 'circuit' || hh.t === 'junction') && hh.id === ui.sel!.id;
+            return (hh.t === 'circuit' || hh.t === 'junction' || hh.t === 'marker') && hh.id === ui.sel!.id;
           })
         : null;
       if (!target) return;
@@ -795,6 +1005,12 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       const j = findJunction(p, hit.id);
       return j ? { kind: 'junction', id: j.id, ox: j.x, oy: j.y } : null;
     }
+    if (hit.t === 'marker') {
+      const m = findMarker(p, hit.id);
+      if (!m) return null;
+      const pos = markerPos(p, m);
+      return { kind: 'marker', id: m.id, ox: pos.x, oy: pos.y };
+    }
     if (hit.t === 'end' || (hit.t === 'open' && hit.ref.kind === 'end')) {
       const circuitId = hit.t === 'end' ? hit.circuitId : (hit.ref as { circuitId: string }).circuitId;
       const end = hit.t === 'end' ? hit.end : (hit.ref as { end: 0 | 1 }).end;
@@ -812,6 +1028,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     if (g.kind === 'bend') moveBend(p, g.circuitId, g.i, g.ox + dx, g.oy + dy);
     else if (g.kind === 'junction') moveJunction(p, g.id, g.ox + dx, g.oy + dy);
     else if (g.kind === 'end') moveEnd(p, g.circuitId, g.end, g.ox + dx, g.oy + dy);
+    else if (g.kind === 'marker') moveMarker(p, g.id, g.ox + dx, g.oy + dy);
     else shiftCircuit(p, g.id, dx, dy);
   };
 
@@ -844,6 +1061,18 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       return;
     }
     const circuitId = hit.t === 'circuit' ? hit.id : hit.t === 'end' ? hit.circuitId : null;
+    if (pick?.kind === 'placeBox') {
+      if (!circuitId) return toast('Tap a track circuit, or press Place it on its own.');
+      return placeBoxAt(circuitId);
+    }
+    if (pick?.kind === 'attachMarker') {
+      if (!circuitId) return toast('Tap a track circuit.');
+      edit((pl) => attachMarker(pl, pick.id, circuitId));
+      ui.pick = null;
+      ui.sel = { kind: 'marker', id: pick.id };
+      renderAll();
+      return toast(`Attached to ${findCircuit(plan(), circuitId)?.code ?? 'the track'}: it now follows that track.`);
+    }
     if (pick?.kind === 'parallel' || pick?.kind === 'parallelChoose') {
       if (!circuitId) return toast('Tap a track circuit.');
       if (circuitId === pick.from) return toast('Tap the other track: the one that runs alongside.');
@@ -853,7 +1082,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     }
     if (pick?.kind === 'join') return toast('Tap a + to join to, or Cancel.');
     ui.menu = null;
-    const next: Sel = circuitId ? { kind: 'circuit', id: circuitId } : hit.t === 'junction' ? { kind: 'junction', id: hit.id } : null;
+    const next: Sel = circuitId ? { kind: 'circuit', id: circuitId } : hit.t === 'junction' ? { kind: 'junction', id: hit.id } : hit.t === 'marker' ? { kind: 'marker', id: hit.id } : null;
     if (next?.kind !== ui.sel?.kind || next?.id !== ui.sel?.id) ui.bend = null;
     ui.sel = next;
     renderAll();
@@ -913,6 +1142,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
         ui.sel = { kind: 'circuit', id: dd.drag.circuitId };
         ui.bend = dd.drag.i;
       }
+      if (dd.drag.kind === 'marker') ui.sel = { kind: 'marker', id: dd.drag.id };
       renderAll();
     } else {
       // A tap: act on the click that follows, so that a menu opened by the tap
@@ -1081,15 +1311,16 @@ export function trackPlanScreen(ctx: Ctx): Screen {
 
   // ---------------------------------------------------------------- status strip
   const issuesFor = (): PlanIssue[] => {
-    const all = planIssues(store.state);
-    return ui.tab === 'plan' ? all.filter((i) => i.kind === 'openEnd' || i.kind === 'duplicateNumber') : all.filter((i) => i.kind === 'unassignedCircuit' || i.kind === 'unassignedJunction');
+    const all = planIssues(store.state, layout());
+    const planKinds = ['openEnd', 'duplicateNumber', 'duplicatePlatform', 'flowClash'];
+    return ui.tab === 'plan' ? all.filter((i) => planKinds.includes(i.kind)) : all.filter((i) => !planKinds.includes(i.kind));
   };
   const showIssue = (i: PlanIssue) => {
     ui.pick = null;
     if (i.kind === 'openEnd') {
       ui.menu = ui.tab === 'plan' ? i.ref : null;
       ui.sel = i.ref.kind === 'end' ? { kind: 'circuit', id: i.ref.circuitId } : { kind: 'junction', id: i.ref.junctionId };
-    } else if (i.kind === 'unassignedCircuit') ui.sel = { kind: 'circuit', id: i.circuitId };
+    } else if (i.kind === 'unassignedCircuit' || i.kind === 'offLayoutCircuit' || i.kind === 'duplicatePlatform' || i.kind === 'flowClash') ui.sel = { kind: 'circuit', id: i.circuitId };
     else ui.sel = { kind: 'junction', id: i.junctionId };
     renderAll();
     scrollToSel();
@@ -1106,7 +1337,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     const counts = `${p.circuits.length} track circuit${p.circuits.length === 1 ? '' : 's'} · ${junctions(p.junctions.filter((j) => j.kind !== 'joint').length)}`;
     if (!issues.length) {
       statusEl.className = 'tp-status ok';
-      statusEl.replaceChildren(h('span', null, ui.tab === 'plan' ? 'Every end is finished.' : 'All track is given to a box or line.'), h('span', { class: 'tp-counts' }, counts));
+      statusEl.replaceChildren(h('span', null, ui.tab === 'plan' ? 'Every end is finished.' : 'All track is given to a box or line on this layout.'), h('span', { class: 'tp-counts' }, counts));
       return;
     }
     statusEl.className = 'tp-status';
@@ -1162,16 +1393,31 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     return h('div', { class: 'field' }, h('label', { for: id }, label), sel, help ? h('small', { class: 'help' }, help) : null);
   };
 
-  const ownerOptions = (current: TrackOwner) => {
-    const val = current.kind === 'box' ? `box|${current.boxId}` : current.kind === 'line' ? `line|${current.boxId}|${current.connectionId}` : 'none';
-    const opts = [option('none', 'Not assigned', val === 'none'), ...store.state.boxes.map((b) => option(`box|${b.id}`, b.name, val === `box|${b.id}`))];
-    for (const b of store.state.boxes) for (const c of b.connections) opts.push(option(`line|${b.id}|${c.id}`, lineName(b.id, c.id), val === `line|${b.id}|${c.id}`));
-    return opts;
+  /**
+   * Who track can be given to on this layout: its boxes, the lines between them and their
+   * connected boxes, and the connected boxes themselves (worked by the simulated signaller).
+   * A current owner that is no longer on the layout stays in the list, marked.
+   */
+  const ownerOptions = (val: string, currentLabel: string, forJunction = false) => {
+    const boxes = layoutBoxes();
+    const opt = (v: string, label: string) => option(v || 'none', label, val === v);
+    const groups: Array<HTMLOptionElement | HTMLOptGroupElement> = [opt('', 'Not assigned')];
+    if (boxes.length) groups.push(h('optgroup', { label: 'Signal boxes you work' }, ...boxes.map((b) => opt(`box|${b.id}`, b.name))));
+    if (!forJunction) {
+      const lines = boxes.flatMap((b) => b.connections.map((c) => opt(`line|${b.id}|${c.id}`, lineName(b.id, c.id))));
+      if (lines.length) groups.push(h('optgroup', { label: 'Lines between boxes (block sections)' }, ...lines));
+    }
+    const remotes = boxes.flatMap((b) => b.connections.map((c) => opt(`remote|${b.id}|${c.id}`, remoteName(b.id, c.id))));
+    if (remotes.length) groups.push(h('optgroup', { label: 'Connected boxes (simulated signaller)' }, ...remotes));
+    const listed = new Set(['', ...boxes.flatMap((b) => [`box|${b.id}`, ...b.connections.flatMap((c) => [`line|${b.id}|${c.id}`, `remote|${b.id}|${c.id}`])])]);
+    if (!listed.has(val)) groups.push(opt(val, currentLabel));
+    return groups;
   };
   const parseOwner = (v: string): TrackOwner => {
     const [k, a, b] = v.split('|');
     if (k === 'box') return { kind: 'box', boxId: a };
     if (k === 'line') return { kind: 'line', boxId: a, connectionId: b };
+    if (k === 'remote') return { kind: 'remote', boxId: a, connectionId: b };
     return { kind: 'none' };
   };
 
@@ -1179,17 +1425,37 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     const p = plan();
     const st = store.state;
     if (ui.tab === 'areas') {
-      const rows = st.boxes.map((b) => {
-        const nC = p.circuits.filter((c) => c.owner.kind === 'box' && c.owner.boxId === b.id).length;
-        const nJ = p.junctions.filter((j) => j.boxId === b.id && j.kind !== 'joint').length;
-        return keyRow(boxColour(b.id), undefined, b.name, `${nC} track circuit${nC === 1 ? '' : 's'} · ${junctions(nJ)}`);
-      });
+      const count = (key: string) => {
+        const nC = p.circuits.filter((c) => ownerKey(c.owner) === key).length;
+        const nJ = p.junctions.filter((j) => j.kind !== 'joint' && ownerKey(junctionWorker(j)) === key).length;
+        return { nC, nJ, text: `${nC} track circuit${nC === 1 ? '' : 's'} · ${junctions(nJ)}` };
+      };
+      const rows: HTMLElement[] = [];
+      for (const b of layoutBoxes()) {
+        rows.push(keyRow(boxColour(b.id), undefined, b.name, count(`box|${b.id}`).text));
+        for (const c of b.connections) {
+          const k = `remote|${b.id}|${c.id}`;
+          const n = count(k);
+          // Connected boxes only appear once they have some track, to keep the key short.
+          if (n.nC || n.nJ) rows.push(keyRow(keyColour(k), undefined, `${c.neighbourName} (simulated)`, `From ${b.name} · ${n.text}`));
+        }
+      }
       const lines = p.circuits.filter((c) => c.owner.kind === 'line');
       const none = p.circuits.filter((c) => c.owner.kind === 'none').length;
+      const away = p.circuits.filter((c) => c.owner.kind !== 'none' && !onLayout(c.owner.boxId)).length;
       return [
         h('span', { class: 'plate' }, 'Signal boxes'),
-        h('p', { class: 'help' }, 'Tap a track circuit to give it, or its whole branch, to a box. Track between two boxes belongs to the line that joins them.'),
-        h('div', { class: 'tp-key' }, ...rows, keyRow(LINE_GREY, '9 5', 'Lines between boxes', lines.length ? lines.map((c) => c.code).join(', ') : 'None yet'), keyRow(INK, undefined, 'Not assigned', `${none} track circuit${none === 1 ? '' : 's'}`)),
+        h('p', { class: 'help' }, 'Tap a track circuit to give it, or its whole branch, to a box. Track between two boxes belongs to the line that joins them. Track a connected box controls (sidings it works, for example) can be given to that box: the simulated signaller works it.'),
+        layoutBoxes().length ? null : h('p', { class: 'config-warn' }, 'No signal boxes are on this layout yet. Put boxes on it on the Details tab.'),
+        h(
+          'div',
+          { class: 'tp-key' },
+          ...rows,
+          keyRow(LINE_GREY, '9 5', 'Lines between boxes', lines.length ? lines.map((c) => c.code).join(', ') : 'None yet'),
+          keyRow(INK, undefined, 'Not assigned', `${none} track circuit${none === 1 ? '' : 's'}`),
+          away ? keyRow(INK, '2 5', 'Box not on this layout', `${away} track circuit${away === 1 ? '' : 's'}`) : null,
+        ),
+        markersSummary(),
       ];
     }
     return [
@@ -1198,7 +1464,36 @@ export function trackPlanScreen(ctx: Ctx): Screen {
       h('p', { class: 'help' }, 'For a crossover, tap the + on a turnout road (or the end of a track) and choose Crossover: opposing points of the same hand start the track alongside. To join two tracks already laid side by side, select one and choose Connect to a parallel track.'),
       h('p', { class: 'help' }, 'Track circuits that meet at a joint (the short tick across the line) can be made into one: select either and press Merge.'),
       p.circuits.length ? null : h('button', { class: 'btn primary', type: 'button', on: { click: layNewTrack } }, 'Lay the first track'),
+      markersSummary(),
     ];
+  };
+  /** Which boxes are drawn on the plan, with a quick way to place the rest. */
+  const markersSummary = () => {
+    const choices = markerChoices();
+    if (!choices.length) return null;
+    const placed = new Map((plan().markers ?? []).map((m) => [markerKey(m.box), m]));
+    const userBoxes = choices.filter((c) => c.box.kind === 'box');
+    return h(
+      'div',
+      { class: 'tp-markers' },
+      h('h3', { class: 'shelf-label' }, 'Signal boxes on the plan'),
+      h(
+        'ul',
+        { class: 'plain' },
+        ...userBoxes.map((c) => {
+          const m = placed.get(c.key);
+          return h(
+            'li',
+            { class: 'tp-marker-row' },
+            h('span', null, h('strong', null, c.label), h('small', { class: 'help' }, m ? (m.circuitId ? ` · beside ${findCircuit(plan(), m.circuitId)?.code ?? '?'}` : ' · on the plan') : ' · not placed')),
+            m
+              ? h('button', { class: 'btn small', type: 'button', on: { click: () => ((ui.sel = { kind: 'marker', id: m.id }), renderAll(), scrollToSel()) } }, 'Select')
+              : h('button', { class: 'btn small', type: 'button', on: { click: () => ((ui.pick = { kind: 'placeBox', box: c.key }), (ui.menu = null), renderAll()) } }, 'Place'),
+          );
+        }),
+      ),
+      h('small', { class: 'help' }, 'Connected boxes can be placed too, with + Signal box.'),
+    );
   };
   const keyRow = (colour: string, dash: string | undefined, title: string, sub: string) =>
     h(
@@ -1300,8 +1595,9 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     let extra: HTMLElement | null = null;
     if (e.kind === 'exit') {
       const val = e.to.kind === 'fiddleYard' ? `fy|${e.to.yardId}` : e.to.kind === 'connection' ? `conn|${e.to.boxId}|${e.to.connectionId}` : 'off';
-      const opts = [option('off', 'Off the scene', val === 'off'), ...store.state.fiddleYards.map((y) => option(`fy|${y.id}`, y.name, val === `fy|${y.id}`))];
-      for (const b of store.state.boxes) for (const cn of b.connections) opts.push(option(`conn|${b.id}|${cn.id}`, `Line to ${cn.neighbourName} (from ${b.name})`, val === `conn|${b.id}|${cn.id}`));
+      const opts = [option('off', 'Off the scene', val === 'off'), ...layout().fiddleYards.map((y) => option(`fy|${y.id}`, y.name, val === `fy|${y.id}`))];
+      for (const b of layoutBoxes()) for (const cn of b.connections) opts.push(option(`conn|${b.id}|${cn.id}`, `Line to ${cn.neighbourName} (from ${b.name})`, val === `conn|${b.id}|${cn.id}`));
+      if (e.to.kind === 'connection' && !onLayout(e.to.boxId)) opts.push(option(val, `Line to ${connOf(e.to.boxId, e.to.connectionId)?.neighbourName ?? '?'} (from ${boxName(e.to.boxId)}, not on this layout)`, true));
       extra = selectField(
         `tp_exit_${i}`,
         'Leads to',
@@ -1339,6 +1635,78 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     );
   };
 
+  /** Up line, down line or both ways, and the way trains run; normally for the whole running line. */
+  const trafficSection = (c: TrackCircuit) => {
+    const p = plan();
+    const run = lineRun(p, c.id);
+    const whole = !ui.trafficOne && run.length > 1;
+    const running = layout().running === 'right' ? 'right' : 'left';
+    const setT = (t: { line: 'up' | 'down'; toward: 0 | 1 } | null) => {
+      const n = edit((pl) => setTraffic(pl, c.id, t, whole));
+      renderAll();
+      if (n > 1) toast(`Set along the whole line: ${n} track circuits.`);
+    };
+    const t = c.traffic;
+    const segBtn = (label: string, on: boolean, fn: () => void) => h('button', { class: 'btn small', type: 'button', 'aria-pressed': String(on), on: { click: () => !on && fn() } }, label);
+    const alongside = tracksAlongside(p, c.id).slice(0, 2);
+    const sideName = (side: 1 | -1) => parallelSideNames(p, c.id).find((x) => x.side === side)?.name ?? '';
+    return h(
+      'div',
+      { class: 'tp-traffic' },
+      h('span', { class: 'field-label', id: 'tp_traffic_l' }, 'Traffic'),
+      h(
+        'div',
+        { class: 'seg tp-seg3', role: 'group', 'aria-labelledby': 'tp_traffic_l' },
+        segBtn('Both ways', !t, () => setT(null)),
+        segBtn('Up line', t?.line === 'up', () => setT({ line: 'up', toward: t?.toward ?? 1 })),
+        segBtn('Down line', t?.line === 'down', () => setT({ line: 'down', toward: t?.toward ?? 1 })),
+      ),
+      t
+        ? h(
+            'div',
+            { class: 'field' },
+            h('span', { class: 'field-label', id: 'tp_toward_l' }, 'Trains run towards'),
+            h('div', { class: 'seg', role: 'group', 'aria-labelledby': 'tp_toward_l' }, segBtn(endName(c, 0), t.toward === 0, () => setT({ line: t.line, toward: 0 })), segBtn(endName(c, 1), t.toward === 1, () => setT({ line: t.line, toward: 1 }))),
+          )
+        : null,
+      run.length > 1
+        ? h(
+            'label',
+            { class: 'check', for: 'tp_traffic_one' },
+            h('input', { id: 'tp_traffic_one', type: 'checkbox', checked: ui.trafficOne, on: { change: (ev: Event) => ((ui.trafficOne = (ev.target as HTMLInputElement).checked), renderSide()) } }),
+            h('span', null, `Change ${c.code} only (otherwise the whole line: ${run.map((x) => x.code).join(', ')})`),
+          )
+        : null,
+      ...alongside.map((a) =>
+        h(
+          'button',
+          {
+            class: 'btn small',
+            type: 'button',
+            on: {
+              click: () => {
+                const line = t?.line ?? 'up';
+                const r = edit((pl) => setDoubleLine(pl, c.id, a.circuit.id, line, running));
+                if (r.error) return toast(r.error);
+                renderAll();
+                toast(`Double line: ${c.code} is the ${line} line, ${a.circuit.code} the ${line === 'up' ? 'down' : 'up'} line, ${running}-hand running.`);
+              },
+            },
+          },
+          `Double line with ${a.circuit.code} (${sideName(a.side)}): ${c.code} ${t?.line ?? 'up'}`,
+        ),
+      ),
+      h(
+        'small',
+        { class: 'help' },
+        t
+          ? `Trains on the ${t.line} line run one way only; the arrows on the plan show which. `
+          : 'Single lines and sidings run both ways. Mark the lines of double track as up and down. ',
+        alongside.length ? `Double line sets both lines and their directions for ${running}-hand running (change it on the Details tab).` : '',
+      ),
+    );
+  };
+
   const circuitCase = (c: TrackCircuit) => {
     const p = plan();
     const els: Array<HTMLElement | null> = [];
@@ -1365,6 +1733,70 @@ export function trackPlanScreen(ctx: Ctx): Screen {
         ),
       );
     }
+    if (ui.tab === 'plan') els.push(trafficSection(c));
+    if (ui.tab === 'plan') {
+      const pid = 'tp_isplat';
+      const sides = parallelSideNames(p, c.id);
+      els.push(
+        h(
+          'div',
+          { class: 'tp-platform-case' },
+          h(
+            'label',
+            { class: 'check', for: pid },
+            h('input', {
+              id: pid,
+              type: 'checkbox',
+              checked: !!c.platform,
+              on: {
+                change: (ev: Event) => {
+                  const on = (ev.target as HTMLInputElement).checked;
+                  edit((pl) => setPlatform(pl, c.id, on ? {} : null));
+                  renderAll();
+                },
+              },
+            }),
+            h('span', null, h('strong', null, 'This track is a platform road')),
+          ),
+          c.platform
+            ? h(
+                'div',
+                { class: 'tp-two' },
+                checked('tp_platno', 'Platform number', c.platform.number, PLATFORM_MAX, checkPlatformNumber, (v) => {
+                  edit((pl) => setPlatform(pl, c.id, { number: v }));
+                  renderAll();
+                }, 'e.g. 1, 2, 3 bay'),
+                h(
+                  'div',
+                  { class: 'field' },
+                  h('span', { class: 'field-label', id: 'tp_platside_l' }, 'Platform side'),
+                  h(
+                    'div',
+                    { class: 'seg', role: 'group', 'aria-labelledby': 'tp_platside_l' },
+                    ...sides.map((sd) =>
+                      h(
+                        'button',
+                        {
+                          class: 'btn small',
+                          type: 'button',
+                          'aria-pressed': String(c.platform!.side === sd.side),
+                          on: {
+                            click: () => {
+                              edit((pl) => setPlatform(pl, c.id, { side: sd.side }));
+                              renderAll();
+                            },
+                          },
+                        },
+                        sd.name[0].toUpperCase() + sd.name.slice(1),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : h('small', { class: 'help' }, 'Mark station roads with a platform as platforms and number them. The signal box will use the numbers to say where an arriving train stands.'),
+        ),
+      );
+    }
     els.push(
       selectField(
         'tp_owner',
@@ -1383,15 +1815,46 @@ export function trackPlanScreen(ctx: Ctx): Screen {
               },
             },
           },
-          ...ownerOptions(c.owner),
+          ...ownerOptions(ownerKey(c.owner), ownerText(c.owner)),
         ),
-        'The box whose track this is, or the line between two boxes (the block section).',
+        'The box whose track this is, the line between two boxes (the block section), or a connected box whose simulated signaller controls it (sidings it works, for example).',
       ),
     );
-    if (ui.tab === 'areas' && c.owner.kind !== 'line' && store.state.boxes.length) {
+    {
+      // Signal boxes standing beside this track.
+      const here = (p.markers ?? []).filter((m) => m.circuitId === c.id);
+      const choices = markerChoices();
+      if (here.length || choices.length)
+        els.push(
+          h(
+            'div',
+            { class: 'tp-boxhere' },
+            h('span', { class: 'field-label' }, 'Signal box standing here'),
+            here.length
+              ? h('small', { class: 'help' }, `${here.map((m) => markerBoxName(m.box)).join(' and ')} stand${here.length === 1 ? 's' : ''} beside ${c.code}.`)
+              : h('small', { class: 'help' }, `Put a signal box beside ${c.code} to show where it stands on the layout.`),
+            h(
+              'div',
+              { class: 'row' },
+              ...here.map((m) => h('button', { class: 'btn small', type: 'button', on: { click: () => ((ui.sel = { kind: 'marker', id: m.id }), renderAll()) } }, `Select ${markerBoxName(m.box)}`)),
+              choices.length ? h('button', { class: 'btn small', type: 'button', on: { click: () => startPlaceBox(c.id) } }, 'Put a signal box here') : null,
+            ),
+          ),
+        );
+    }
+    if (ui.tab === 'areas' && c.owner.kind !== 'line' && layoutBoxes().length) {
       const br = branchFrom(p, c.id);
       const n = br.circuits.length + br.junctions.length;
-      const giveSel = h('select', { id: 'tp_give' }, ...store.state.boxes.map((b) => option(b.id, b.name, c.owner.kind === 'box' ? b.id === c.owner.boxId : false)));
+      const cur = ownerKey(c.owner);
+      const giveSel = h(
+        'select',
+        { id: 'tp_give' },
+        h('optgroup', { label: 'Signal boxes you work' }, ...layoutBoxes().map((b) => option(`box|${b.id}`, b.name, cur === `box|${b.id}`))),
+        ...(() => {
+          const r = layoutBoxes().flatMap((b) => b.connections.map((cn) => option(`remote|${b.id}|${cn.id}`, remoteName(b.id, cn.id), cur === `remote|${b.id}|${cn.id}`)));
+          return r.length ? [h('optgroup', { label: 'Connected boxes (simulated signaller)' }, ...r)] : [];
+        })(),
+      );
       els.push(
         h(
           'div',
@@ -1404,10 +1867,11 @@ export function trackPlanScreen(ctx: Ctx): Screen {
               type: 'button',
               on: {
                 click: () => {
-                  const boxId = giveSel.value;
-                  const count = edit((pl) => giveBranch(pl, c.id, boxId));
+                  const to = parseOwner(giveSel.value);
+                  if (to.kind !== 'box' && to.kind !== 'remote') return;
+                  const count = edit((pl) => giveBranch(pl, c.id, to));
                   renderAll();
-                  toast(`${count} piece${count === 1 ? '' : 's'} given to ${boxName(boxId)}.`);
+                  toast(`${count} piece${count === 1 ? '' : 's'} given to ${to.kind === 'box' ? boxName(to.boxId) : remoteName(to.boxId, to.connectionId)}.`);
                 },
               },
             },
@@ -1636,7 +2100,7 @@ export function trackPlanScreen(ctx: Ctx): Screen {
   const junctionCase = (j: Junction) => {
     const def = JUNCTIONS[j.kind];
     const els: Array<HTMLElement | null> = [];
-    els.push(h('div', { class: 'tp-plate-row' }, h('span', { class: 'plate' }, junctionName(j)), h('small', { class: 'help' }, `${def.name}${j.kind === 'joint' ? '' : ` · ${j.boxId ? `worked by ${boxName(j.boxId)}` : 'not worked by a box yet'}`}`)));
+    els.push(h('div', { class: 'tp-plate-row' }, h('span', { class: 'plate' }, junctionName(j)), h('small', { class: 'help' }, `${def.name}${j.kind === 'joint' ? '' : ` · ${j.boxId ? `worked by ${workerText(j)}` : 'not worked by a box yet'}`}`)));
     if (j.kind !== 'joint') {
       els.push(
         h(
@@ -1678,19 +2142,21 @@ export function trackPlanScreen(ctx: Ctx): Screen {
             {
               on: {
                 change: (ev: Event) => {
-                  const v = (ev.target as HTMLSelectElement).value;
+                  const o = parseOwner((ev.target as HTMLSelectElement).value);
                   edit((pl) => {
                     const x = findJunction(pl, j.id);
-                    if (x) x.boxId = v;
+                    if (!x) return;
+                    if (o.kind === 'box') setJunctionWorker(x, { boxId: o.boxId });
+                    else if (o.kind === 'remote') setJunctionWorker(x, { boxId: o.boxId, connectionId: o.connectionId });
+                    else setJunctionWorker(x, { boxId: '' });
                   });
                   renderAll();
                 },
               },
             },
-            option('', 'Not assigned', !j.boxId),
-            ...store.state.boxes.map((b) => option(b.id, b.name, b.id === j.boxId)),
+            ...ownerOptions(ownerKey(junctionWorker(j)), workerText(j), true),
           ),
-          j.kind === 'turntable' ? 'Turntables are usually worked on the spot: leave this unassigned unless a box controls it.' : 'The signal box whose levers work it.',
+          j.kind === 'turntable' ? 'Turntables are usually worked on the spot: leave this unassigned unless a box controls it.' : 'The signal box whose levers work it, or a connected box: its points are then worked by the simulated signaller.',
         ),
       );
     }
@@ -1867,6 +2333,92 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     return els;
   };
 
+  const markerCase = (m: BoxMarker) => {
+    const p = plan();
+    const name = markerBoxName(m.box);
+    const remote = m.box.kind === 'remote';
+    const els: Array<HTMLElement | null> = [];
+    const attached = m.circuitId ? findCircuit(p, m.circuitId) : undefined;
+    els.push(h('div', { class: 'tp-plate-row' }, h('span', { class: 'plate' }, name), h('small', { class: 'help' }, `Signal box${remote ? ' worked by the simulated signaller' : ''} · ${attached ? `beside ${circuitLabel(attached)}` : 'not attached to a track'}`)));
+    const placed = new Set((p.markers ?? []).filter((x) => x.id !== m.id).map((x) => markerKey(x.box)));
+    els.push(
+      selectField(
+        'tp_mbox',
+        'Box',
+        h(
+          'select',
+          {
+            on: {
+              change: (ev: Event) => {
+                const ch = markerChoices().find((x) => x.key === (ev.target as HTMLSelectElement).value);
+                if (!ch) return;
+                edit((pl) => {
+                  const x = findMarker(pl, m.id);
+                  if (x) x.box = structuredClone(ch.box);
+                });
+                renderAll();
+              },
+            },
+          },
+          ...markerChoices()
+            .filter((ch) => !placed.has(ch.key))
+            .map((ch) => option(ch.key, ch.label, ch.key === markerKey(m.box))),
+          ...(markerChoices().some((ch) => ch.key === markerKey(m.box)) ? [] : [option(markerKey(m.box), `${name} (not on this layout)`, true)]),
+        ),
+        'Which box this is. Each box appears on the plan once.',
+      ),
+    );
+    els.push(
+      selectField(
+        'tp_mtrack',
+        'Stands beside',
+        h(
+          'select',
+          {
+            on: {
+              change: (ev: Event) => {
+                const v = (ev.target as HTMLSelectElement).value;
+                edit((pl) => attachMarker(pl, m.id, v));
+                renderAll();
+              },
+            },
+          },
+          option('', 'No track (stands on its own)', !m.circuitId),
+          ...p.circuits
+            .slice()
+            .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
+            .map((c) => option(c.id, circuitLabel(c), c.id === m.circuitId)),
+        ),
+        'Attached to a track circuit, the box follows that track when it moves, and is drawn with a dashed lead to it.',
+      ),
+    );
+    els.push(
+      h(
+        'div',
+        { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', on: { click: () => ((ui.pick = { kind: 'attachMarker', id: m.id }), renderAll()) } }, 'Tap a track to attach'),
+        confirmButton('Remove from the plan', 'Press again to remove', () => {
+          edit((pl) => deleteMarker(pl, m.id));
+          ui.sel = null;
+          renderAll();
+        }, 'btn danger small'),
+      ),
+    );
+    els.push(
+      nudgePad(
+        'Move it',
+        (dx, dy) => {
+          const pos = markerPos(plan(), m);
+          edit((pl) => moveMarker(pl, m.id, pos.x + dx, pos.y + dy));
+          renderAll();
+        },
+        'Or drag it on the plan.',
+        'signal box',
+      ),
+    );
+    return els;
+  };
+
   const renderSideNow = () => {
     const p = plan();
     let content: Array<HTMLElement | null>;
@@ -1876,15 +2428,34 @@ export function trackPlanScreen(ctx: Ctx): Screen {
     } else if (ui.sel?.kind === 'junction') {
       const j = findJunction(p, ui.sel.id);
       content = j ? junctionCase(j) : summaryCase();
+    } else if (ui.sel?.kind === 'marker') {
+      const m = findMarker(p, ui.sel.id);
+      content = m ? markerCase(m) : summaryCase();
     } else content = summaryCase();
     sideEl.replaceChildren(...content.filter((x): x is HTMLElement => !!x));
   };
   const renderSide = safeRerender(() => sideEl, renderSideNow);
 
   // ---------------------------------------------------------------- everything
+  const renderDetails = safeRerender(() => detailsEl, () => detailsEl.replaceChildren(layoutDetails(ctx, layoutId)));
   const renderAll = () => {
+    // The layout may just have been deleted (the screen is about to be left).
+    if (!findLayout(store.state, layoutId)) return;
+    const title = top.querySelector('.page-board');
+    if (title) title.textContent = layout().name;
+    const details = ui.tab === 'details';
+    shelfEl.hidden = details;
+    detailsEl.hidden = !details;
+    if (details) {
+      ui.menu = null;
+      ui.pick = null;
+      renderTabs();
+      renderDetails();
+      return;
+    }
     if (ui.sel?.kind === 'circuit' && !findCircuit(plan(), ui.sel.id)) ui.sel = null;
     if (ui.sel?.kind === 'junction' && !findJunction(plan(), ui.sel.id)) ui.sel = null;
+    if (ui.sel?.kind === 'marker' && !findMarker(plan(), ui.sel.id)) ui.sel = null;
     renderTabs();
     renderToolbar();
     renderPickbar();
@@ -1905,32 +2476,25 @@ export function trackPlanScreen(ctx: Ctx): Screen {
   });
 
   renderTabs();
+  if (ui.tab === 'details') {
+    shelfEl.hidden = true;
+    detailsEl.hidden = false;
+    detailsEl.replaceChildren(layoutDetails(ctx, layoutId));
+  }
   renderToolbar();
   renderPickbar();
   renderStatus();
   renderSideNow();
   // The board needs its width, so draw it once the page is on screen.
   window.setTimeout(() => {
-    // Phones start further out so more of the plan fits; pinch or the buttons change it.
-    if (!ui.zoomChosen) {
-      ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
-      ui.zoomChosen = true;
-    }
+    if (ui.tab === 'details') return;
     renderBoard();
     if (ui.sel) scrollToSel();
   }, 0);
-  const onResize = () => renderBoard();
+  const onResize = () => ui.tab !== 'details' && renderBoard();
   window.addEventListener('resize', onResize);
   ctx.onLeave(() => window.removeEventListener('resize', onResize));
 
-  return { title: 'Layout configurator', el: root, live: true };
-}
-
-/** One-line summary for the main menu. */
-export function trackPlanSummary(state: AppState): string {
-  const p = state.trackPlan;
-  if (!p.circuits.length) return 'Draw your track plan and give it to your signal boxes';
-  const n = p.junctions.filter((j) => j.kind !== 'joint').length;
-  return `${p.circuits.length} track circuit${p.circuits.length === 1 ? '' : 's'}, ${junctions(n)}`;
+  return { title: `${layout().name} · Layout configurator`, el: root, live: true };
 }
 
