@@ -1,0 +1,33 @@
+# Signal Box Simulator — .gitignore
+
+# Dependencies (reinstalled from package.json / lockfile)
+node_modules/
+
+# Build output (rebuilt with `bun scripts/build.mjs`)
+# Remove this line if you later publish dist/ straight from the repo.
+dist/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Logs and caches
+*.log
+npm-debug.log*
+.cache/
+coverage/
+tmp/
+temp/
+
+# Local environment / secrets
+.env
+.env.*
+
+# Editor settings (keep shared extension recommendations)
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS clutter
+Thumbs.db
+desktop.ini
+.DS_Store
