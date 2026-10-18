@@ -1,10 +1,13 @@
 import { DEFAULT_CODE_SETS, DEFAULT_TRAIN_TYPES } from './bellcodes';
 import type { AppState, Settings } from './types';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+
+/** Name given to the layout made from a save that predates layouts, when it had no layout name. */
+export const FALLBACK_LAYOUT_NAME = 'My layout';
 
 export const DEFAULT_SETTINGS: Settings = {
-  layoutName: 'Becton and Tansley Spa Steam Railway',
+  activeLayoutId: 'layout1',
   theme: 'device',
   strictness: 'learner',
   codeSetId: 'br1960',
@@ -35,6 +38,7 @@ export function createDefaultState(): AppState {
         id: 'becton',
         name: 'Becton',
         shortName: 'BEC',
+        layoutId: 'layout1',
         description: 'Terminus of the Becton and Tansley Spa Steam Railway. Single line to the fiddle yard.',
         stationNotes:
           'P1: longest, loco release at the end; tender engine + 3–4 coaches. Coaches may need to be drawn off by the station pilot.\n' +
@@ -55,13 +59,20 @@ export function createDefaultState(): AppState {
         ],
       },
     ],
-    // The track plan starts empty: each layout builds its own in the layout configurator.
-    trackPlan: { circuits: [], junctions: [] },
-    fiddleYards: [
+    layouts: [
       {
-        id: 'fy1',
-        name: 'Fiddle Yard',
-        roads: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `road${n}`, name: `Road ${n}`, notes: '' })),
+        id: 'layout1',
+        name: 'Becton and Tansley Spa Steam Railway',
+        running: 'left',
+        fiddleYards: [
+          {
+            id: 'fy1',
+            name: 'Fiddle Yard',
+            roads: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `road${n}`, name: `Road ${n}`, notes: '' })),
+          },
+        ],
+        // The track plan starts empty: each layout builds its own in the layout configurator.
+        trackPlan: { circuits: [], junctions: [] },
       },
     ],
     roster: [

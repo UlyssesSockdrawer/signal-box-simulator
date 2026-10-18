@@ -437,11 +437,13 @@ describe('user boxes and connections', () => {
 
   it('adds connections in free positions and grows a full shelf', () => {
     const s = createDefaultState();
-    const box = addBox(s);
+    const box = addBox(s, 'layout1');
     box.shelfPositions = 1;
     const c1 = addConnection(s, box)!;
     expect(c1.shelfPosition).toBe(0);
+    // The first fiddle yard on the box's layout; none for a box not on a layout.
     expect(c1.fiddleYardId).toBe('fy1');
+    expect(addConnection(s, addBox(s))!.fiddleYardId).toBe('');
     const c2 = addConnection(s, box)!;
     expect(box.shelfPositions).toBe(2);
     expect(c2.shelfPosition).toBe(1);
@@ -519,7 +521,8 @@ describe('trains on layout register', () => {
     const far = addConnection(s, becton)!;
     far.neighbourName = 'Sidings';
     far.fiddleYardId = '';
-    const other = addBox(s);
+    const other = addBox(s, 'layout1');
+    addBox(s); // not on the layout: not listed
     s.roster[0].location = { kind: 'farBox', boxId: becton.id, connectionId: far.id, note: 'Road A' };
     s.roster[1].location = { kind: 'section', connectionId: 'becton-fy' };
     const reg = trainsOnLayout(s, becton.id);

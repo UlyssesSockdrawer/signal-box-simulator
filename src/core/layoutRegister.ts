@@ -1,11 +1,13 @@
+import { findYard, layoutOfBox } from './layouts';
 import type { AppState, BoxDef, ConnectionDef, FiddleYard, FiddleYardRoad, Loco } from './types';
 
 /*
  * "Trains on layout": every place a train can stand on the layout and what is
  * there, for the register on the signal box desk. Locations come from the data
  * (fiddle yards, each box's station, the locations served by far boxes); no
- * names are built in. When the layout configurator arrives, it will supply this
- * list instead.
+ * names are built in. Only the box's own layout is listed (boxes not on a layout
+ * see the other boxes not on a layout). When the layout configurator defines
+ * locations, it will supply this list instead.
  */
 
 export type RegisterLocation =
@@ -56,9 +58,11 @@ export function trainsOnLayout(state: AppState, boxId: string): RegisterLocation
 
   // This box first: yards it serves, its own station, the far-box locations it works to.
   const home = state.boxes.find((b) => b.id === boxId);
+  const layoutId = home?.layoutId ?? '';
+  const sameLayout = state.boxes.filter((b) => b.layoutId === layoutId);
   if (home) {
     for (const c of byShelf(home)) {
-      const y = state.fiddleYards.find((yy) => yy.id === c.fiddleYardId);
+      const y = findYard(state, c.fiddleYardId);
       if (y) push(yardLoc(y));
     }
     push(stationLoc(home));
@@ -67,20 +71,21 @@ export function trainsOnLayout(state: AppState, boxId: string): RegisterLocation
     }
   }
   // Then the rest of the layout.
-  for (const b of state.boxes) {
+  for (const b of sameLayout) {
     if (b.id === boxId) continue;
     push(stationLoc(b));
     for (const c of byShelf(b)) if (!c.fiddleYardId) push(farLoc(b, c));
   }
-  for (const y of state.fiddleYards) push(yardLoc(y));
+  for (const y of layoutOfBox(state, home)?.fiddleYards ?? []) push(yardLoc(y));
   // Locations left behind by a line that has since been given a fiddle yard, if trains still stand there.
-  for (const b of state.boxes) {
+  for (const b of sameLayout) {
     for (const c of b.connections) {
       if (c.fiddleYardId && state.roster.some((l) => l.location.kind === 'farBox' && l.location.connectionId === c.id)) push(farLoc(b, c));
     }
   }
   // Trains out on a line between two boxes.
-  const inSection = state.roster.filter((l) => l.location.kind === 'section');
+  const sameConns = new Set(sameLayout.flatMap((b) => b.connections.map((c) => c.id)));
+  const inSection = state.roster.filter((l) => l.location.kind === 'section' && sameConns.has(l.location.connectionId));
   if (inSection.length) {
     push({
       kind: 'section',

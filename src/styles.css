@@ -1305,3 +1305,61 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .tp-roads .check input { accent-color: var(--brass); }
 .tp-bend { cursor: grab; }
 .tp-roads .check input { flex: 0 0 auto; }
+/* v0.3.12: layouts, signal boxes on the plan, track worked by connected boxes */
+.layout-intro { max-width: 640px; margin-inline: auto; text-align: center; }
+.active-tag, .unassigned-tag {
+  font-family: var(--font-plate);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  align-self: center;
+}
+.active-tag { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border: 1px solid var(--ink); }
+.unassigned-tag { border: 1px dashed var(--btn-muted); color: var(--btn-fg); }
+.layout-tile.is-active { border-color: var(--btn-primary-bg); }
+.box-tile.unassigned { border-style: dashed; }
+.box-group-board { align-self: center; margin: 0; }
+.box-group-note { text-align: center; margin-inline: auto; color: var(--btn-muted); }
+.box-group-loose { margin-top: 8px; }
+.box-elsewhere { max-width: 640px; margin-inline: auto; text-align: center; }
+.layout-switch { align-self: center; width: min(100%, 360px); }
+.layout-switch label { color: var(--btn-fg); font-weight: 600; font-size: 0.9rem; }
+.layout-switch select { background: var(--btn-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); width: 100%; }
+.yard-layout { align-self: center; }
+.ld-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; align-items: start; }
+.ld-boxes { display: flex; flex-direction: column; }
+.ld-box { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--btn-border); }
+.ld-box .check { color: var(--btn-fg); min-height: 36px; }
+.ld-box .check input { accent-color: var(--brass); flex: 0 0 auto; }
+.ld-yard { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 12px; }
+.ld-yard .form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 7rem); }
+.ld-add { min-height: 120px; }
+.tp-markers, .tp-boxhere { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.tp-markers .shelf-label { margin: 0; }
+.tp-marker-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.tp-marker { cursor: grab; }
+.tp-pickbar select { max-width: min(100%, 320px); }
+.tp-pick-place { font-weight: 700; }
+/* v0.3.12: confirmation dialog (a mahogany case over a dimmed page) */
+.confirm-dialog { max-width: min(92vw, 480px); padding: 18px; border: 2px solid var(--btn-border); }
+.confirm-dialog::backdrop { background: rgba(12, 10, 8, 0.6); }
+.confirm-dialog p, .confirm-dialog li { color: var(--btn-fg); }
+.confirm-dialog ul { margin: 0; padding-left: 1.2em; }
+.confirm-dialog .plate { margin: 0; align-self: flex-start; }
+.confirm-dialog .row.end { gap: 10px; }
+.confirm-dialog .btn.danger.armed { background: var(--signal-red); color: #fff; border-color: var(--ink); }
+/* v0.3.12: platform roads */
+.tp-platform-case { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.tp-platform-case .check { color: var(--btn-fg); min-height: 36px; }
+.tp-platform-case .check input { accent-color: var(--brass); flex: 0 0 auto; }
+.tp-platform-case .seg .btn { min-width: 64px; }
+/* v0.3.12: up and down lines */
+.tp-traffic { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.tp-traffic .check { color: var(--btn-fg); font-size: 0.9rem; }
+.tp-traffic .check input { accent-color: var(--brass); flex: 0 0 auto; }
+.tp-traffic > .btn { align-self: flex-start; white-space: normal; text-align: left; }
+.tp-seg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tp-seg3 .btn { min-width: 0; white-space: normal; line-height: 1.15; }

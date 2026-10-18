@@ -171,6 +171,56 @@ joined by junctions. The plan starts empty: build your own.
 * Track that runs mostly up or down the plan is now drawn upright with a 45° section, like level
   track, rather than as a steep straight line.
 
+## Layouts (v0.3.12)
+
+* **Several layouts:** each layout has its own name, fiddle yards and track plan. The locomotive
+  roster is shared by every layout (a loco's location names the layout when it is on another one).
+* **Layout configurator** opens on a list of layouts (or a prompt to create the first). **Open
+  layout** to edit it; **+ Create a new layout** opens its **Details** tab.
+* **Details** tab: the layout's name, **Make this the active layout**, which signal boxes stand on
+  it (a box is on one layout at a time; **+ Add a signal box** adds one to this layout), and its
+  fiddle yards: **+ Add a fiddle yard**, its name and its number of roads (e.g. an Up and a Down
+  yard of four roads each). Removing a yard or road, or cutting the number of roads, sends any
+  trains standing there off the layout (they stay in the roster); you are shown which trains and
+  asked to confirm first.
+* **Active layout:** its name is on the main menu (the layout name is no longer in Settings), and
+  **Open a signal box** lists its boxes, then any boxes **not on a layout** in their own group.
+  Boxes on other layouts are listed by name only; change the active layout (switcher at the top
+  of the box list when there is more than one layout) to work them. A box with no layout can
+  still be opened.
+* **Moving a box to another layout** (Box configurator, Details tick boxes, or Put on <layout>)
+  clears its track assignments on the layout it leaves: its track, its lines, track given to its
+  connected boxes, its points, exits to its lines and its signal box on the plan. When it has any,
+  a dialog lists what will be cleared and asks you to confirm. Its connections move to the new
+  layout's first fiddle yard (or serve a location on the layout if it has none).
+* **Box configurator:** each box has a **Layout** choice. A connection's fiddle yard is chosen from
+  the box's own layout. Fiddle yard & station shows the active layout.
+* **Track worked by connected boxes:** track circuits and points can be given to the far box of a
+  connection (worked by the simulated signaller), e.g. sidings it controls. Box areas colours them
+  and lists them in the key; Give this branch to works for them too.
+* **Signal boxes on the plan:** **+ Signal box** places a signal box (yours, or a connected box)
+  beside a track circuit — it then follows that track, with a dashed lead — or on its own. Drag it,
+  nudge it, choose the track it stands beside, or remove it from the plan in its case.
+* **Platform roads:** select a track circuit and tick **This track is a platform road**, then give
+  its platform number (e.g. 1, 2, 3 bay) and the side the platform is on. The platform is drawn
+  beside the track's straight stretch with its number. New platforms get the next free number for
+  their box; the same number twice for one box is listed as something to fix. (The signal box will
+  use these later to say where an arriving train stands.)
+* **Up and down lines:** a track circuit's **Traffic** is Both ways (the default: single lines,
+  sidings), Up line or Down line, with the end trains run towards. Changes apply along the whole
+  running line (straight on through joints, points and crossings), unless you tick "Change this
+  track circuit only". Arrows on the track show the way trains run; with Codes + names the label
+  says Up or Down. On double track, **Double line with T2** sets both lines and their directions
+  at once from the layout's running side (Details tab: trains keep to the **Left (British)** or
+  **Right**). Tracks running straight on into each other with opposite directions are listed as
+  something to fix.
+* Exit names on tracks that leave the scene upwards or downwards now run along the line, so exits
+  side by side no longer print over each other.
+* Joints left with no track on either side (after deleting or unjoining the tracks) are removed
+  automatically, including any already in saved plans.
+* Saves from earlier versions become one layout (named from the old layout name) holding all the
+  boxes, the fiddle yard and the track plan, and it is the active layout.
+
 ## What's in v0.1
 
 * Main menu, box select (Becton), signal box screen, roster, fiddle yard & station, settings,

@@ -203,3 +203,44 @@ export function safeRerender(root: () => Element | null, render: () => void, scr
     window.setTimeout(run, 0);
   };
 }
+
+/**
+ * Ask the user to confirm an action that cannot be undone, in a modal dialog styled as a
+ * mahogany case. `onDone(true)` runs when they confirm, `onDone(false)` when they cancel
+ * (Cancel, Escape or a click outside).
+ */
+export function confirmDialog(opts: { title: string; body: Array<string | HTMLElement>; confirmLabel: string; cancelLabel?: string; onDone: (ok: boolean) => void }): void {
+  const dlg = h('dialog', { class: 'config-case confirm-dialog', 'aria-labelledby': 'cd_title' });
+  let done = false;
+  const finish = (ok: boolean) => {
+    if (done) return;
+    done = true;
+    dlg.close();
+    dlg.remove();
+    opts.onDone(ok);
+  };
+  dlg.append(
+    h('h2', { class: 'plate', id: 'cd_title' }, opts.title),
+    ...opts.body.map((b) => (typeof b === 'string' ? h('p', null, b) : b)),
+    h(
+      'div',
+      { class: 'row end' },
+      h('button', { class: 'btn', type: 'button', on: { click: () => finish(false) } }, opts.cancelLabel ?? 'Cancel'),
+      h('button', { class: 'btn danger armed', type: 'button', on: { click: () => finish(true) } }, opts.confirmLabel),
+    ),
+  );
+  dlg.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    finish(false);
+  });
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) {
+      const r = dlg.getBoundingClientRect();
+      const ev = e as MouseEvent;
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) finish(false);
+    }
+  });
+  document.body.append(dlg);
+  dlg.showModal();
+  (dlg.querySelector('.btn') as HTMLButtonElement | null)?.focus();
+}

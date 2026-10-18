@@ -1,3 +1,4 @@
+import { findLayout, yardsForBox } from './layouts';
 import { layoutShelf } from './shelf';
 import { newId } from './store';
 import { sanitiseTrackPlan } from './trackPlan';
@@ -93,10 +94,11 @@ export function checkConnShort(box: BoxDef, short: string, connId: string | null
 
 // ---------------------------------------------------------------- changes
 
-/** Add a new user-operated box with safe default names. Returns it. */
-export function addBox(state: AppState): BoxDef {
+/** Add a new user-operated box with safe default names, on a layout ('' = none). Returns it. */
+export function addBox(state: AppState, layoutId = ''): BoxDef {
   const box: BoxDef = {
     id: newId('box'),
+    layoutId: findLayout(state, layoutId) ? layoutId : '',
     name: uniqueName('New box', state.boxes.map((b) => b.name)),
     shortName: uniqueName('NEW', state.boxes.map((b) => b.shortName), '', SHORT_NAME_MAX),
     description: '',
@@ -127,7 +129,7 @@ export function addConnection(state: AppState, box: BoxDef): ConnectionDef | nul
     neighbourName: uniqueName('Connected box', [box.name, ...box.connections.map((c) => c.neighbourName)]),
     neighbourShort: uniqueName('CB', [box.shortName, ...box.connections.map((c) => c.neighbourShort)], '', SHORT_NAME_MAX),
     lineType: 'single',
-    fiddleYardId: state.fiddleYards[0]?.id ?? '',
+    fiddleYardId: yardsForBox(state, box)[0]?.id ?? '',
     defaultWorking: 'ab',
     shelfPosition: free,
   };

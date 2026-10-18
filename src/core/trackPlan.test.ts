@@ -36,6 +36,16 @@ import {
   portAnchor,
   setJunctionKind,
   splitCircuit,
+  checkPlatformNumber,
+  platformPath,
+  platformsOf,
+  setPlatform,
+  deleteCircuit,
+  detachEnd,
+  lineRun,
+  setDoubleLine,
+  setTraffic,
+  tracksAlongside,
 } from './trackPlan';
 import type { AppState, TrackPlan } from './types';
 
@@ -43,10 +53,12 @@ const plan = (): TrackPlan => ({ circuits: [], junctions: [] });
 
 describe('track plan: starting out', () => {
   it('ships with an empty plan, and old saves get one', () => {
-    expect(createDefaultState().trackPlan).toEqual({ circuits: [], junctions: [] });
-    const old = createDefaultState() as Partial<AppState>;
-    delete old.trackPlan;
-    expect(migrate(old).trackPlan).toEqual({ circuits: [], junctions: [] });
+    expect(migrate(createDefaultState()).layouts[0].trackPlan).toEqual({ circuits: [], junctions: [], markers: [] });
+    // A save from before layouts, with no track plan.
+    const old = createDefaultState() as unknown as Record<string, unknown>;
+    old.fiddleYards = (old.layouts as AppState['layouts'])[0].fiddleYards;
+    delete old.layouts;
+    expect(migrate(old).layouts[0].trackPlan).toEqual({ circuits: [], junctions: [], markers: [] });
   });
 
   it('lays a first track with two unfinished ends, then more tracks below it', () => {
@@ -436,12 +448,12 @@ describe('track plan: editing junctions', () => {
 
   it('reads v0.3.6 turned-round points as the same drawing, with the right hand', () => {
     const st = createDefaultState();
-    st.trackPlan = {
+    st.layouts[0].trackPlan = {
       circuits: [],
       junctions: [{ id: 'j1', number: '1', kind: 'pointsRight', boxId: '', x: 10, y: 4, flip: true } as never],
     };
     const m = migrate(st);
-    const j = m.trackPlan.junctions[0];
+    const j = m.layouts[0].trackPlan.junctions[0];
     // Old "flipped right-hand" drew the turnout down and to the left: that is left-hand points facing left.
     expect(j.kind).toBe('pointsLeft');
     expect(j.rotate).toBe(true);
@@ -453,7 +465,7 @@ describe('track plan: editing junctions', () => {
 describe('track plan: boxes', () => {
   it('gives a branch to a box, stopping at lines and other boxes', () => {
     const st = createDefaultState();
-    const p = st.trackPlan;
+    const p = st.layouts[0].trackPlan;
     const line = addTrack(p);
     line.owner = { kind: 'line', boxId: 'becton', connectionId: 'becton-fy' };
     const r = grow(p, { kind: 'end', circuitId: line.id, end: 1 }, 'pointsRight')!;
@@ -473,7 +485,7 @@ describe('track plan: boxes', () => {
     const st = createDefaultState();
     const nb = addBox(st);
     const conn = addConnection(st, nb)!;
-    const p = st.trackPlan;
+    const p = st.layouts[0].trackPlan;
     const a = addTrack(p, { kind: 'line', boxId: nb.id, connectionId: conn.id });
     const b = addTrack(p, { kind: 'box', boxId: nb.id });
     grow(p, { kind: 'end', circuitId: b.id, end: 0 }, 'exit');
@@ -487,9 +499,9 @@ describe('track plan: boxes', () => {
 
   it('lists what still needs doing', () => {
     const st = createDefaultState();
-    const a = addTrack(st.trackPlan);
-    grow(st.trackPlan, { kind: 'end', circuitId: a.id, end: 1 }, 'pointsRight');
-    const kinds = planIssues(st).map((i) => i.kind);
+    const a = addTrack(st.layouts[0].trackPlan);
+    grow(st.layouts[0].trackPlan, { kind: 'end', circuitId: a.id, end: 1 }, 'pointsRight');
+    const kinds = planIssues(st, st.layouts[0]).map((i) => i.kind);
     expect(kinds.filter((k) => k === 'openEnd')).toHaveLength(3);
     expect(kinds).toContain('unassignedCircuit');
     expect(kinds).toContain('unassignedJunction');
@@ -590,8 +602,8 @@ describe('track plan: curves, double track and turntables', () => {
     expect(path[0].x).toBe(path[1].x);
     // Turntables are not worked from a signal box, so they are not listed as unassigned.
     const st = createDefaultState();
-    st.trackPlan = p;
-    expect(planIssues(st).some((i) => i.kind === 'unassignedJunction' && i.junctionId === j.id)).toBe(false);
+    st.layouts[0].trackPlan = p;
+    expect(planIssues(st, st.layouts[0]).some((i) => i.kind === 'unassignedJunction' && i.junctionId === j.id)).toBe(false);
   });
 
   it('turns points a quarter turn, keeping a single joined road in place', () => {
@@ -617,5 +629,107 @@ describe('track plan: curves, double track and turntables', () => {
     const after = pathOf(p, a);
     for (const q of after) expect(before.some((b) => b.x === q.x && b.y === q.y)).toBe(true);
     expect(after[after.length - 1].y).toBeGreaterThan(after[0].y);
+  });
+});
+
+describe('track plan: tidy joints and platforms', () => {
+  it('removes a joint once neither side has track, but keeps one with track on one side', () => {
+    const p = plan();
+    const a = addTrack(p);
+    const n = grow(p, { kind: 'end', circuitId: a.id, end: 1 }, 'track')!;
+    const joint = p.junctions[0];
+    expect(joint.kind).toBe('joint');
+    deleteCircuit(p, n.circuitId!);
+    expect(findJunction(p, joint.id)).toBeDefined(); // a's end still joins it: an unfinished end
+    deleteCircuit(p, a.id);
+    expect(p.junctions).toHaveLength(0);
+    // Unjoining the last track from a joint also removes it.
+    const b = addTrack(p);
+    grow(p, { kind: 'end', circuitId: b.id, end: 1 }, 'track');
+    const c2 = p.circuits.find((c) => c.id !== b.id)!;
+    deleteCircuit(p, c2.id);
+    detachEnd(p, b.id, 1);
+    expect(p.junctions).toHaveLength(0);
+  });
+
+  it('cleans up orphaned joints in saved plans', () => {
+    const st = createDefaultState();
+    st.layouts[0].trackPlan = { circuits: [], junctions: [{ id: 'j1', number: '', kind: 'joint', boxId: '', x: 4, y: 4, rotate: false, mirror: false }] };
+    expect(migrate(st).layouts[0].trackPlan.junctions).toHaveLength(0);
+  });
+
+  it('marks platform roads, numbers them per box and flags duplicates', () => {
+    const st = createDefaultState();
+    const p = st.layouts[0].trackPlan;
+    const a = addTrack(p, { kind: 'box', boxId: 'becton' });
+    const b = addTrack(p, { kind: 'box', boxId: 'becton' });
+    setPlatform(p, a.id, {});
+    setPlatform(p, b.id, {});
+    expect(a.platform).toEqual({ number: '1', side: 1 });
+    expect(b.platform!.number).toBe('2');
+    expect(platformPath(p, a).length).toBeGreaterThan(1);
+    setPlatform(p, b.id, { number: '1', side: -1 });
+    expect(b.platform).toEqual({ number: '1', side: -1 });
+    expect(planIssues(st, st.layouts[0]).filter((i) => i.kind === 'duplicatePlatform')).toHaveLength(1);
+    expect(platformsOf(p, 'box|becton').map((x) => x.number)).toEqual(['1', '1']);
+    setPlatform(p, b.id, null);
+    expect(b.platform).toBeUndefined();
+    expect(checkPlatformNumber('')).not.toBeNull();
+    expect(checkPlatformNumber('3 bay')).toBeNull();
+  });
+
+  it('keeps the platform when merging track circuits at a joint', () => {
+    const p = plan();
+    const a = addTrack(p);
+    const n = grow(p, { kind: 'end', circuitId: a.id, end: 1 }, 'track')!;
+    setPlatform(p, n.circuitId!, { number: '2' });
+    const r = mergeAtJoint(p, p.junctions[0].id, a.id);
+    expect(findCircuit(p, r.circuitId!)!.platform!.number).toBe('2');
+  });
+});
+
+describe('track plan: up and down lines', () => {
+  /** An oval-ish double track: two parallel lines, each in two circuits joined at a joint, curving up at both ends. */
+  function doubleLine() {
+    const p = plan();
+    const r = addDoubleTrack(p);
+    const [a, b] = r.circuitIds.map((id) => findCircuit(p, id)!);
+    const a2 = grow(p, { kind: 'end', circuitId: a.id, end: 1 }, 'track')!;
+    const b2 = grow(p, { kind: 'end', circuitId: b.id, end: 1 }, 'track')!;
+    return { p, a, b, a2: findCircuit(p, a2.circuitId!)!, b2: findCircuit(p, b2.circuitId!)! };
+  }
+
+  it('single lines run both ways until told otherwise, and a direction carries along the whole line', () => {
+    const { p, a, a2 } = doubleLine();
+    expect(a.traffic).toBeUndefined();
+    expect(lineRun(p, a.id).map((c) => c.id).sort()).toEqual([a.id, a2.id].sort());
+    expect(setTraffic(p, a.id, { line: 'up', toward: 1 }, true)).toBe(2);
+    // a2 joins a's end 1 by its end 0, so its trains run on towards its end 1.
+    expect(a2.traffic).toEqual({ line: 'up', toward: 1 });
+    setTraffic(p, a2.id, null, true);
+    expect(a.traffic).toBeUndefined();
+  });
+
+  it('makes a double line from two tracks alongside, following left- or right-hand running', () => {
+    const { p, a, b, a2, b2 } = doubleLine();
+    const along = tracksAlongside(p, a.id);
+    expect(along[0].circuit.id).toBe(b.id);
+    const st = createDefaultState();
+    st.layouts[0].trackPlan = p;
+    // a is drawn above b and runs left to right (end 0 → end 1). Left-hand running: an eastbound
+    // train keeps to the north (upper) line, with the other line on its right.
+    setDoubleLine(p, a.id, b.id, 'up', 'left');
+    expect(a.traffic).toEqual({ line: 'up', toward: 1 });
+    expect(b.traffic).toEqual({ line: 'down', toward: 0 });
+    expect(a2.traffic).toEqual({ line: 'up', toward: 1 });
+    expect(b2.traffic).toEqual({ line: 'down', toward: 0 });
+    expect(planIssues(st, st.layouts[0]).some((i) => i.kind === 'flowClash')).toBe(false);
+    // Turning one circuit round is caught.
+    a2.traffic = { line: 'up', toward: a2.traffic!.toward === 1 ? 0 : 1 };
+    expect(planIssues(st, st.layouts[0]).some((i) => i.kind === 'flowClash')).toBe(true);
+    // Right-hand running swaps the directions.
+    const before = a.traffic!.toward;
+    setDoubleLine(p, a.id, b.id, 'up', 'right');
+    expect(a.traffic!.toward).toBe(1 - before);
   });
 });

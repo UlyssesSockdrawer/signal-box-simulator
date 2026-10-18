@@ -36,11 +36,6 @@ export function settingsScreen(ctx: Ctx): Screen {
     { class: 'panel' },
     h('h2', null, 'Signalling'),
     field(
-      'Layout name',
-      h('input', { id: 'set_layout', type: 'text', value: s.layoutName, on: { change: (e: Event) => set((x) => (x.layoutName = (e.target as HTMLInputElement).value.trim() || x.layoutName)) } }),
-      'Shown on the main menu.',
-    ),
-    field(
       'Mode',
       h('select', { id: 'set_strict', on: { change: (e: Event) => set((x) => (x.strictness = (e.target as HTMLSelectElement).value as Settings['strictness'])) } },
         option('learner', 'Learner: shows the next step and explains mistakes', s.strictness === 'learner'),
