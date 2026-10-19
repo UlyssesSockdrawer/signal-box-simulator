@@ -16,7 +16,7 @@ import { trackPlanScreen } from './screens/trackPlan';
 import { tutorialScreen } from './screens/tutorial';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.15';
+export const APP_VERSION = '0.3.16';
 
 export interface Ctx {
   store: Store;

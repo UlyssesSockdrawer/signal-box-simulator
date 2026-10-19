@@ -503,6 +503,8 @@ describe('user boxes and connections', () => {
     const ts = addPlace(s, 'layout1', 'station', { name: 'Tansley Spa' })!;
     setConnectionPlace(s, box, conn, ts.id);
     expect(ts.workedBy).toEqual([{ kind: 'remote', boxId: box.id, connectionId: conn.id }]);
+    // It ran to the fiddle yard when it was added: its far box no longer works the yard.
+    expect(s.layouts[0].places[0].workedBy.some((w) => w.kind === 'remote' && w.connectionId === conn.id)).toBe(false);
     s.roster[0].location = { kind: 'place', placeId: ts.id, roadId: '' };
     expect(incomingCandidates(s, conn).map((l) => l.id)).toEqual([s.roster[0].id]);
     expect(incomingCandidates(s, box.connections[0]).some((l) => l.id === s.roster[0].id)).toBe(false);

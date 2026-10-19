@@ -46,7 +46,9 @@ export interface ControllerEvents extends Record<string, unknown> {
   hint: { text: string; level: 'info' | 'warn' };
   locoMoved: { locoId: string; location: Location };
   /** Points gained or lost, as judged by the far box. */
-  score: { rule: ScoreRuleId; detail: string };
+  score: { rule: ScoreRuleId; detail: string; locoId: string | null };
+  /** A train movement on this line has finished, judged clean or not by the far box. */
+  movementJudged: { locoId: string | null; clean: boolean };
 }
 
 export interface ControllerOptions {
@@ -307,8 +309,11 @@ export class SectionController {
       case 'status':
         this.addLog('status', m.text);
         break;
+      case 'movementJudged':
+        this.events.emit('movementJudged', { locoId: m.locoId ?? null, clean: m.clean });
+        break;
       case 'score':
-        this.events.emit('score', { rule: m.rule, detail: m.detail ?? '' });
+        this.events.emit('score', { rule: m.rule, detail: m.detail ?? '', locoId: m.locoId ?? null });
         break;
       default:
         break;

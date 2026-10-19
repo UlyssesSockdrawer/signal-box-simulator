@@ -84,6 +84,8 @@ export class SimulatedNeighbour {
   private awaitingLB = false;
   /** Train On Line has been scored for the incoming train. */
   private tolScored = false;
+  /** The last incoming train cleared out of section (for scoring while the instrument goes back to Line Blocked). */
+  private lastLoco: string | null = null;
   private timers = new Set<number>();
   private releaseTimer: number | null = null;
   private busyUntil = 0;
@@ -140,15 +142,22 @@ export class SimulatedNeighbour {
   private irregular(text: string, rule: ScoreRuleId): void {
     this.faults++;
     this.send({ type: 'irregularity', text });
-    this.send({ type: 'score', rule });
+    this.send({ type: 'score', rule, locoId: this.currentLoco() ?? undefined });
   }
   /** Points for something done by the book. */
   private award(rule: ScoreRuleId): void {
-    this.send({ type: 'score', rule });
+    this.send({ type: 'score', rule, locoId: this.currentLoco() ?? undefined });
   }
-  /** A train movement has finished: a bonus if nothing went wrong since the line was last clear. */
-  private movementDone(): void {
-    if (this.faults === 0) this.award('clean_working');
+  /** The train being worked on this line (or just finished, while the instrument is still to go back to Line Blocked). */
+  private currentLoco(): string | null {
+    return this.incoming?.locoId ?? this.outgoing?.locoId ?? (this.awaitingLB ? this.lastLoco : null);
+  }
+  /**
+   * A train movement has finished on this line: was it clean (nothing went wrong on this line since
+   * it was last clear)? The box gives the clean working bonus, judging a through train once over all its lines.
+   */
+  private movementDone(locoId: string | null): void {
+    this.send({ type: 'movementJudged', locoId: locoId ?? undefined, clean: this.faults === 0 });
     this.faults = 0;
   }
   private status(text: string): void {
@@ -206,7 +215,7 @@ export class SimulatedNeighbour {
         // Scored once per exchange, so a box left unattended does not drain the score.
         if (aw.attempts === 1) {
           this.faults++;
-          this.send({ type: 'score', rule: 'no_reply', detail: `${code} (${label})` });
+          this.send({ type: 'score', rule: 'no_reply', detail: `${code} (${label})`, locoId: this.currentLoco() ?? undefined });
         }
         fire();
       });
@@ -553,7 +562,7 @@ export class SimulatedNeighbour {
             this.declaredOutgoing = null;
             this.send({ type: 'movementComplete', direction: 'outgoing', locoId: out.locoId, roadId });
             this.award('out_cleared');
-            this.movementDone();
+            this.movementDone(out.locoId);
             this.status('section clear.');
             this.guide();
           });
@@ -743,10 +752,11 @@ export class SimulatedNeighbour {
     this.attentionAt = null;
     this.after(this.reactionDelay(), () => {
       this.ring(this.sig('train_out_of_section'));
+      this.lastLoco = mv.locoId;
+      if (!early) this.award('in_cleared');
       this.incoming = null;
       this.tokenOut = null;
       this.send({ type: 'movementComplete', direction: 'incoming', locoId: mv.locoId });
-      if (!early) this.award('in_cleared');
       if (!this.token && this.localInstrument !== 'LB') {
         this.awaitingLB = true;
         this.guide('Train out of section acknowledged. Return your block instrument to LINE BLOCKED.');
@@ -755,11 +765,11 @@ export class SimulatedNeighbour {
             this.awaitingLB = false;
             this.hint('Your instrument should be returned to LINE BLOCKED once 2-1 has been sent.');
             this.irregular('Block instrument not returned to Line Blocked after Train out of section.', 'lb_late');
-            this.movementDone();
+            this.movementDone(this.lastLoco);
           } else if (!this.incoming && !this.outgoing) this.guide();
         });
       } else {
-        this.movementDone();
+        this.movementDone(mv.locoId);
         this.guide();
       }
     });
@@ -833,9 +843,9 @@ export class SimulatedNeighbour {
         this.hint('A train is in (or about to enter) the section! The instrument must stay at LINE CLEAR or TRAIN ON LINE until Train out of section has been sent.');
         this.irregular('Instrument returned to Line Blocked with a train in or approaching the section.', 'lb_with_train');
       } else if (this.awaitingLB) {
-        this.awaitingLB = false;
         this.award('in_blocked');
-        this.movementDone();
+        this.awaitingLB = false;
+        this.movementDone(this.lastLoco);
         if (!mv && !this.outgoing) this.guide();
       } else if (!mv && !this.outgoing) {
         this.guide();

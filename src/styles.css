@@ -1558,7 +1558,7 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 .shelf-help { color: var(--btn-muted); max-width: 80ch; margin: 0; }
 .pl-group { display: flex; flex-direction: column; gap: 10px; }
 .pl-group-head { margin: 0; }
-.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; align-items: start; }
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 14px; align-items: start; }
 .pl-case { gap: 12px; }
 .pl-case .panel-head { align-items: center; }
 .pl-kind-tag { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--btn-muted); border: 1px solid var(--btn-border); border-radius: 99px; padding: 2px 10px; }
@@ -1571,13 +1571,6 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 .pl-checks .check { color: var(--btn-fg); min-height: 36px; }
 .pl-checks .check input { accent-color: var(--brass); flex: 0 0 auto; }
 .pl-roads { display: flex; flex-direction: column; gap: 8px; }
-.pl-road { background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
-.pl-road-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 8px; }
-.pl-road-notes { grid-column: 1 / -1; }
-.pl-road .field label { color: var(--btn-fg); font-size: 0.85rem; }
-.pl-road input[type='text'], .pl-road select { background: var(--btn-bg); }
-.pl-road-foot { justify-content: space-between; }
-.pl-road .btn.danger { background: var(--btn-bg); }
 .pl-count { max-width: 14rem; }
 .pl-count input { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); }
 .pl-foot { justify-content: space-between; border-top: 1px solid var(--btn-border); padding-top: 10px; }
@@ -1598,3 +1591,52 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 /* Where an arriving train is put, beside the "arrived complete" button on the case */
 .case-action select { flex: 0 1 200px; min-width: 0; background: var(--wood-dark); color: var(--case-text); border-color: var(--wood-edge); }
 .desk-panel .reg-loc.mine .reg-loc-name::after { content: ' · yours'; font-weight: 600; font-size: 0.8rem; color: var(--btn-muted); }
+
+/* v0.3.16 Places tab: collapsible place cases and road lists, compact road rows, full width on big screens */
+body.wide-page #app { max-width: none; }
+body.wide-page .tp-page, body.wide-page .config-page { max-width: min(100%, 2200px); }
+.pl-intro { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; }
+.pl-intro .shelf-help { flex: 1 1 420px; }
+.pl-tools { gap: 8px; }
+.pl-tools .btn { background: var(--btn-bg); }
+.pl-case { container-type: inline-size; gap: 0; padding: 0; }
+.pl-toggle {
+  font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; text-align: left;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 14px 16px; width: 100%; border-radius: 8px;
+}
+.pl-toggle:hover .pl-chev, .pl-roads-toggle:hover .pl-chev { border-color: var(--btn-hover); }
+.pl-toggle .nameboard { margin: 0; }
+.pl-summary { flex: 1 1 100%; color: var(--btn-muted); font-size: 0.85rem; }
+.pl-chev { flex: 0 0 auto; width: 26px; height: 26px; border: 1px solid var(--btn-border); border-radius: 50%; display: inline-grid; place-items: center; background: var(--shelf-bg); }
+.pl-chev::before { content: ''; width: 7px; height: 7px; border-right: 2px solid var(--btn-fg); border-bottom: 2px solid var(--btn-fg); transform: translateY(-2px) rotate(45deg); transition: transform 0.15s; }
+[aria-expanded='false'] > .pl-chev::before { transform: translateX(-2px) rotate(-45deg); }
+.pl-body { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; }
+.pl-body[hidden] { display: none; }
+.pl-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 0 18px; }
+.pl-roads-toggle { font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 2px 0; text-align: left; width: 100%; }
+.pl-roads-toggle .shelf-label { margin: 0; flex: 0 0 auto; }
+.pl-roads-summary { color: var(--btn-muted); font-size: 0.82rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-roads-toggle[aria-expanded='true'] .pl-roads-summary { display: none; }
+.pl-roads-body { display: flex; flex-direction: column; gap: 8px; }
+.pl-roads-body[hidden] { display: none; }
+.pl-roads-body > .btn { align-self: flex-start; }
+.pl-roads { display: flex; flex-direction: column; gap: 4px; }
+.pl-road { display: grid; grid-template-columns: minmax(5.5rem, 0.7fr) minmax(0, 1.1fr) minmax(0, 1.3fr) auto; gap: 6px; align-items: start; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 6px; }
+.pl-road input[type='text'], .pl-road select { background: var(--btn-bg); min-height: 38px; padding-block: 4px; font-size: 0.92rem; }
+.pl-road .field { gap: 2px; }
+.pl-road-heads { background: transparent; border: 0; padding: 0 7px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--btn-muted); }
+.pl-road-end { display: flex; align-items: center; gap: 6px; min-height: 38px; }
+.pl-road-trains { color: var(--btn-muted); white-space: nowrap; font-size: 0.8rem; }
+.pl-road-trains.occ { color: #9be3b4; font-weight: 600; }
+.pl-road .pl-road-x { min-width: 38px; min-height: 38px; padding: 0 8px; background: var(--btn-bg); }
+.pl-road .pl-road-x.armed { background: var(--signal-red); color: #fff; }
+@container (max-width: 520px) {
+  .pl-road { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; }
+  .pl-road > .field:nth-child(3) { grid-column: 1 / 3; grid-row: 2; }
+  .pl-road > .pl-road-end { grid-column: 3; grid-row: 1 / span 2; flex-direction: column; align-items: flex-end; }
+  .pl-road-heads { display: none; }
+}
+
+.pl-columns { column-width: 540px; column-gap: 14px; }
+.pl-columns > * { break-inside: avoid; margin-bottom: 14px; width: 100%; }
+.pl-columns > .add-tile { display: flex; }

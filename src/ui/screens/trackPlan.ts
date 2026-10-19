@@ -2512,6 +2512,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     const title = top.querySelector('.page-board');
     if (title) title.textContent = layout().name;
     const details = pageTab();
+    // The Places tab can use the whole width of a big screen.
+    document.body.classList.toggle('wide-page', ui.tab === 'places');
     shelfEl.hidden = details;
     detailsEl.hidden = !details;
     if (details) {
@@ -2538,12 +2540,14 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     renderAll();
   });
   ctx.onLeave(() => {
+    document.body.classList.remove('wide-page');
     unsub();
     ui.menu = null;
     ui.pick = null;
   });
 
   renderTabs();
+  document.body.classList.toggle('wide-page', ui.tab === 'places');
   if (pageTab()) {
     shelfEl.hidden = true;
     detailsEl.hidden = false;

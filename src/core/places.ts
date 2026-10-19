@@ -241,13 +241,19 @@ export function setWorker(place: Place, w: PlaceWorker, on: boolean): void {
 }
 
 /**
- * The place a connection's trains run to and come from. The far box is recorded as working it.
+ * The place a connection's trains run to and come from. The far box is recorded as working it
+ * (and no longer as working the place the line ran to before).
  * '' = none (trains come from and go back to the roster).
  */
 export function setConnectionPlace(state: AppState, box: BoxDef, conn: ConnectionDef, placeId: string): void {
-  const place = placesForBox(state, box).find((p) => p.id === placeId);
+  const places = placesForBox(state, box);
+  const place = places.find((p) => p.id === placeId);
+  const far: PlaceWorker = { kind: 'remote', boxId: box.id, connectionId: conn.id };
+  // The far box worked the old place because the line ran there: it no longer does.
+  const old = places.find((p) => p.id === conn.placeId);
+  if (old && old !== place) setWorker(old, far, false);
   conn.placeId = place ? place.id : '';
-  if (place) setWorker(place, { kind: 'remote', boxId: box.id, connectionId: conn.id }, true);
+  if (place) setWorker(place, far, true);
 }
 
 /** Tie a road to a track circuit ('' to untie). A circuit is one road at most: it is untied from any other road on the layout. */

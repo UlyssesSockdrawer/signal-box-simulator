@@ -33,7 +33,9 @@ export type LinkMessage =
   | { type: 'hint'; text: string; level: 'info' | 'warn' }
   | { type: 'irregularity'; text: string }
   /** Points gained or lost by the signaller (the far box referees). */
-  | { type: 'score'; rule: ScoreRuleId; detail?: string }
+  | { type: 'score'; rule: ScoreRuleId; detail?: string; locoId?: string }
+  /** A train movement on this line has finished; clean = no irregularity on the line since it was last clear. */
+  | { type: 'movementJudged'; locoId?: string; clean: boolean }
   | { type: 'status'; text: string };
 
 export interface LinkEnd {

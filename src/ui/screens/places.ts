@@ -41,6 +41,9 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** Places this session has just added, to focus their name field once drawn. */
 let focusNext = '';
+/** Which place cases are expanded, and which places' road lists are shown (kept for the app session). */
+const placeOpen = new Map<string, boolean>();
+const roadsOpen = new Map<string, boolean>();
 
 export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
   const st = ctx.store.state;
@@ -91,40 +94,56 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
     ];
   };
 
+  /** A text input checked as you type, saved on change when valid (no visible label: the road list has column heads). */
+  const compactInput = (id: string, ariaLabel: string, value: string, max: number, check: (v: string) => string | null, apply: (v: string) => void, placeholder = '') => {
+    const input = h('input', { type: 'text', id, value, maxlength: max, autocomplete: 'off', 'aria-label': ariaLabel, placeholder });
+    const err = h('small', { class: 'field-error', id: `${id}_err`, role: 'alert', hidden: true });
+    input.setAttribute('aria-describedby', `${id}_err`);
+    const show = (msg: string | null) => {
+      err.textContent = msg ?? '';
+      err.hidden = !msg;
+      input.classList.toggle('invalid', !!msg);
+    };
+    input.addEventListener('input', () => show(check(input.value)));
+    input.addEventListener('change', () => {
+      const msg = check(input.value);
+      show(msg);
+      if (!msg && input.value.trim() !== value) apply(input.value.trim());
+    });
+    return h('div', { class: 'field' }, input, err);
+  };
+
+  /** One road: a single compact row (it wraps on narrow cases). */
   const roadRow = (p: Place, r: PlaceRoad) => {
     const trains = placeOccupants(st, p.id, r.id);
-    const tid = `pl_rc_${r.id}`;
     return h(
       'li',
       { class: 'pl-road' },
+      compactInput(`pl_rn_${r.id}`, `Name of road ${r.name}`, r.name, 30, (v) => checkRoadName(p, v, r.id), (v) => upd(p.id, (pp) => {
+        const x = pp.roads.find((y) => y.id === r.id);
+        if (x) x.name = v;
+      })),
       h(
         'div',
-        { class: 'pl-road-grid' },
-        checked(`pl_rn_${r.id}`, 'Road', r.name, 30, (v) => checkRoadName(p, v, r.id), (v) => upd(p.id, (pp) => {
-          const x = pp.roads.find((y) => y.id === r.id);
-          if (x) x.name = v;
-        })),
-        h('div', { class: 'field' }, h('label', { for: tid }, 'Track circuit'), h('select', { id: tid, disabled: !layout.trackPlan.circuits.length, on: { change: (e: Event) => upd(p.id, (_pp, l) => tieRoad(l, p.id, r.id, (e.target as HTMLSelectElement).value)) } }, ...circuitOptions(r))),
-        h(
-          'div',
-          { class: 'field pl-road-notes' },
-          h('label', { for: `pl_rnote_${r.id}` }, 'Notes'),
-          h('input', {
-            id: `pl_rnote_${r.id}`,
-            type: 'text',
-            value: r.notes,
-            placeholder: 'Length, what it is used for…',
-            on: { change: (e: Event) => upd(p.id, (pp) => { const x = pp.roads.find((y) => y.id === r.id); if (x) x.notes = (e.target as HTMLInputElement).value.trim(); }) },
-          }),
-        ),
+        { class: 'field' },
+        h('select', { id: `pl_rc_${r.id}`, 'aria-label': `Track circuit for ${r.name}`, disabled: !layout.trackPlan.circuits.length, on: { change: (e: Event) => upd(p.id, (_pp, l) => tieRoad(l, p.id, r.id, (e.target as HTMLSelectElement).value)) } }, ...circuitOptions(r)),
       ),
+      compactInput(`pl_rnote_${r.id}`, `Notes for ${r.name}`, r.notes, 200, () => null, (v) => upd(p.id, (pp) => {
+        const x = pp.roads.find((y) => y.id === r.id);
+        if (x) x.notes = v;
+      }), 'Length, use…'),
       h(
         'div',
-        { class: 'row pl-road-foot' },
-        h('small', { class: 'help' }, trains.length ? `${plural(trains.length, 'train')} standing here` : 'Empty'),
+        { class: 'pl-road-end' },
+        h('small', { class: `pl-road-trains${trains.length ? ' occ' : ''}`, title: trains.length ? `${plural(trains.length, 'train')} standing here` : 'Empty' }, trains.length ? plural(trains.length, 'train') : 'empty'),
         p.kind === 'fiddleYard' && p.roads.length <= 1
           ? null
-          : confirmButton(`Remove ${r.name}`, trains.length ? 'Press again (its trains stay in the place)' : 'Press again to remove', () => ctx.store.update((a) => removeRoad(a, p.id, r.id)), 'btn danger small'),
+          : (() => {
+              const x = confirmButton('✕', `Remove ${r.name}?`, () => ctx.store.update((a) => removeRoad(a, p.id, r.id)), 'btn danger small pl-road-x');
+              x.setAttribute('aria-label', `Remove ${r.name}${trains.length ? ' (its trains stay in the place)' : ''}`);
+              x.title = x.getAttribute('aria-label')!;
+              return x;
+            })(),
       ),
     );
   };
@@ -221,10 +240,90 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
       toast(`${p.name} removed.${n ? ` ${plural(n, 'train')} moved off the layout.` : ''}`);
     };
 
-    return h(
-      'article',
-      { class: 'config-case pl-case', 'aria-labelledby': `pl_board_${p.id}`, 'data-kind': p.kind },
-      h('div', { class: 'panel-head' }, board, h('span', { class: 'pl-kind-tag' }, kindInfo(p.kind).name)),
+    const open = placeOpen.get(p.id) ?? layout.places.length <= 2;
+    const rOpen = roadsOpen.get(p.id) ?? (p.kind !== 'fiddleYard' && p.roads.length <= 6);
+    const workerNames = [...boxes.filter((b) => worksPlace(p, { kind: 'box', boxId: b.id })).map((b) => b.name), ...conns.filter(({ b, c }) => worksPlace(p, { kind: 'remote', boxId: b.id, connectionId: c.id })).map(({ c }) => c.neighbourName)];
+    const summary = [plural(p.roads.length, 'road'), plural(trains.length, 'train'), workerNames.length ? `worked by ${workerNames.join(', ')}` : 'not worked by a box'].join(' · ');
+    const bodyId = `pl_body_${p.id}`;
+    const body = h('div', { class: 'pl-body', id: bodyId, hidden: !open });
+    const toggle = h(
+      'button',
+      {
+        class: 'pl-toggle',
+        type: 'button',
+        'aria-expanded': String(open),
+        'aria-controls': bodyId,
+        title: open ? `Collapse ${p.name}` : `Expand ${p.name}`,
+        on: {
+          click: () => {
+            const now = body.hasAttribute('hidden');
+            body.hidden = !now;
+            placeOpen.set(p.id, now);
+            toggle.setAttribute('aria-expanded', String(now));
+            toggle.title = now ? `Collapse ${p.name}` : `Expand ${p.name}`;
+          },
+        },
+      },
+      h('span', { class: 'pl-chev', 'aria-hidden': 'true' }),
+      board,
+      h('span', { class: 'pl-kind-tag' }, kindInfo(p.kind).name),
+      h('span', { class: 'pl-summary' }, summary),
+    );
+
+    const roadsBodyId = `pl_roads_${p.id}`;
+    const roadsBody = h(
+      'div',
+      { class: 'pl-roads-body', id: roadsBodyId, hidden: !rOpen },
+      p.kind === 'fiddleYard' ? roadCount() : null,
+      p.roads.length
+        ? h(
+            'div',
+            { class: 'pl-roads-wrap' },
+            h('div', { class: 'pl-road pl-road-heads', 'aria-hidden': 'true' }, h('span', null, 'Road'), h('span', null, 'Track circuit'), h('span', null, 'Notes'), h('span', null, '')),
+            h('ul', { class: 'plain pl-roads' }, ...p.roads.map((r) => roadRow(p, r))),
+          )
+        : h('p', { class: 'help' }, `No roads: trains stand somewhere in ${p.name}.`),
+      h(
+        'button',
+        {
+          class: 'btn small',
+          type: 'button',
+          disabled: p.roads.length >= MAX_ROADS,
+          on: {
+            click: () => {
+              let id = '';
+              roadsOpen.set(p.id, true);
+              upd(p.id, (pp) => (id = addRoad(pp)?.id ?? ''));
+              if (id) focusNext = `pl_rn_${id}`;
+            },
+          },
+        },
+        `+ Add a road to ${p.name}`,
+      ),
+    );
+    const roadNames = p.roads.map((r) => r.name);
+    const roadsToggle = h(
+      'button',
+      {
+        class: 'pl-roads-toggle',
+        type: 'button',
+        'aria-expanded': String(rOpen),
+        'aria-controls': roadsBodyId,
+        on: {
+          click: () => {
+            const now = roadsBody.hasAttribute('hidden');
+            roadsBody.hidden = !now;
+            roadsOpen.set(p.id, now);
+            roadsToggle.setAttribute('aria-expanded', String(now));
+          },
+        },
+      },
+      h('span', { class: 'pl-chev', 'aria-hidden': 'true' }),
+      h('span', { class: 'shelf-label' }, `Roads (${p.roads.length})`),
+      h('span', { class: 'pl-roads-summary' }, roadNames.length > 8 ? `${roadNames.slice(0, 8).join(' · ')} …` : roadNames.join(' · ')),
+    );
+
+    body.append(
       h(
         'div',
         { class: 'form-grid tight' },
@@ -245,50 +344,32 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
       ),
       h(
         'div',
-        { class: 'pl-section' },
-        h('h3', { class: 'shelf-label' }, 'Worked by'),
-        boxes.length
-          ? h(
-              'ul',
-              { class: 'plain pl-checks' },
-              ...boxes.map((b) => workerRow({ kind: 'box', boxId: b.id }, b.name, 'signal box you work')),
-              ...conns.map(({ b, c }) => workerRow({ kind: 'remote', boxId: b.id, connectionId: c.id }, c.neighbourName, `simulated, at the far end of the line from ${b.name}`)),
-            )
-          : h('p', { class: 'help' }, `No signal boxes on ${layout.name} yet (Details tab).`),
-        h('small', { class: 'help' }, 'Trains arriving at a box you work can be put on the roads of the places it works. A station can be worked by more than one box.'),
-      ),
-      conns.length
-        ? h(
-            'div',
-            { class: 'pl-section' },
-            h('h3', { class: 'shelf-label' }, 'Lines that run here'),
-            h('ul', { class: 'plain pl-checks' }, ...conns.map(lineRow)),
-            h('small', { class: 'help' }, 'Trains sent along these lines arrive here, and trains standing here can be offered back along them.'),
-          )
-        : null,
-      h(
-        'div',
-        { class: 'pl-section' },
-        h('h3', { class: 'shelf-label' }, `Roads (${p.roads.length})`),
-        p.kind === 'fiddleYard' ? roadCount() : null,
-        p.roads.length ? h('ul', { class: 'plain pl-roads' }, ...p.roads.map((r) => roadRow(p, r))) : h('p', { class: 'help' }, `No roads: trains stand somewhere in ${p.name}.`),
+        { class: 'pl-two' },
         h(
-          'button',
-          {
-            class: 'btn small',
-            type: 'button',
-            disabled: p.roads.length >= MAX_ROADS,
-            on: {
-              click: () => {
-                let id = '';
-                upd(p.id, (pp) => (id = addRoad(pp)?.id ?? ''));
-                if (id) focusNext = `pl_rn_${id}`;
-              },
-            },
-          },
-          `+ Add a road to ${p.name}`,
+          'div',
+          { class: 'pl-section' },
+          h('h3', { class: 'shelf-label' }, 'Worked by'),
+          boxes.length
+            ? h(
+                'ul',
+                { class: 'plain pl-checks' },
+                ...boxes.map((b) => workerRow({ kind: 'box', boxId: b.id }, b.name, 'signal box you work')),
+                ...conns.map(({ b, c }) => workerRow({ kind: 'remote', boxId: b.id, connectionId: c.id }, c.neighbourName, `simulated, at the far end of the line from ${b.name}`)),
+              )
+            : h('p', { class: 'help' }, `No signal boxes on ${layout.name} yet (Details tab).`),
+          h('small', { class: 'help' }, 'Trains arriving at a box you work can be put on the roads of the places it works. A station can be worked by more than one box.'),
         ),
+        conns.length
+          ? h(
+              'div',
+              { class: 'pl-section' },
+              h('h3', { class: 'shelf-label' }, 'Lines that run here'),
+              h('ul', { class: 'plain pl-checks' }, ...conns.map(lineRow)),
+              h('small', { class: 'help' }, 'Trains sent along these lines arrive here, and trains standing here can be offered back along them.'),
+            )
+          : null,
       ),
+      h('div', { class: 'pl-section' }, roadsToggle, roadsBody),
       h(
         'div',
         { class: 'row end pl-foot' },
@@ -298,6 +379,8 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
           : confirmButton(`Remove ${p.name}`, 'Press again to remove', remove, 'btn danger small'),
       ),
     );
+
+    return h('article', { class: `config-case pl-case${open ? '' : ' collapsed'}`, 'aria-labelledby': `pl_board_${p.id}`, 'data-kind': p.kind }, toggle, body);
   };
 
   // ---------------------------------------------------------------- adding
@@ -322,7 +405,10 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
             on: {
               click: () => {
                 let id = '';
-                ctx.store.update((a) => (id = addPlace(a, layout.id, k.kind)?.id ?? ''));
+                ctx.store.update((a) => {
+                  id = addPlace(a, layout.id, k.kind)?.id ?? '';
+                  if (id) placeOpen.set(id, true);
+                });
                 if (id) focusNext = `pl_name_${id}`;
               },
             },
@@ -342,18 +428,39 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
     'Say which signal boxes work each one and which lines run to it, and give it its roads (platforms, siding roads, yard roads). ',
     'Roads can be tied to track circuits on the track plan.',
   );
+  const setAll = (open: boolean) => {
+    for (const p of layout.places) placeOpen.set(p.id, open);
+    for (const el2 of document.querySelectorAll<HTMLElement>('.pl-case')) {
+      const t = el2.querySelector<HTMLButtonElement>('.pl-toggle');
+      const b = el2.querySelector<HTMLElement>('.pl-body');
+      if (!t || !b) continue;
+      b.hidden = !open;
+      t.setAttribute('aria-expanded', String(open));
+    }
+  };
+  const tools = layout.places.length
+    ? h(
+        'div',
+        { class: 'row pl-tools' },
+        h('button', { class: 'btn small', type: 'button', on: { click: () => setAll(true) } }, 'Expand all'),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => setAll(false) } }, 'Collapse all'),
+      )
+    : null;
   const el = h(
     'div',
     { class: 'pl-page' },
-    intro,
-    ...groups.map((g) => h('section', { class: 'pl-group', 'aria-label': g.k.plural }, h('h2', { class: 'shelf-label pl-group-head' }, g.k.plural), h('div', { class: 'pl-grid' }, ...g.places.map(placeCase)))),
-    h('div', { class: 'pl-grid' }, addCase),
+    h('div', { class: 'pl-intro' }, intro, tools),
+    // One flowing set of columns (as many as the screen allows), places grouped by kind in order.
+    h('div', { class: 'pl-columns' }, ...groups.flatMap((g) => g.places.map(placeCase)), addCase),
   );
   if (focusNext) {
     const id = focusNext;
     focusNext = '';
     window.setTimeout(() => {
       const f = document.getElementById(id) as HTMLInputElement | null;
+      // Make sure what is being focused is showing.
+      f?.closest<HTMLElement>('.pl-body')?.removeAttribute('hidden');
+      f?.closest<HTMLElement>('.pl-roads-body')?.removeAttribute('hidden');
       f?.focus();
       f?.select();
       f?.scrollIntoView({ block: 'center', behavior: 'smooth' });

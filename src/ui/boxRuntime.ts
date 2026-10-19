@@ -2,6 +2,7 @@ import { realScheduler } from '../core/scheduler';
 import { Scorecard } from '../core/score';
 import { placesWorkedBy } from '../core/places';
 import { ThroughWorkings } from '../core/throughTrains';
+import { BoxReferee } from '../core/referee';
 import { createBoxSession, locoLabel, type SectionSession } from '../core/session';
 import type { BoxDef, Location } from '../core/types';
 import type { Ctx } from './app';
@@ -82,8 +83,6 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
         });
       }),
     );
-    // The far box referees: points gained and lost go on the box's scorecard.
-    offs.push(c.events.on('score', ({ rule, detail }) => score.add(rule, session.connection.neighbourName, detail)));
     // The bell rings wherever you are in the app.
     offs.push(
       c.events.on('bellIn', ({ code, holdLast }) => {
@@ -115,6 +114,8 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
     return cr;
   });
 
+  // The far boxes referee their lines; the box's referee puts it all on the scorecard (clean working judged per train).
+  const referee = new BoxReferee(sessions, score);
   const workings = new ThroughWorkings(sessions, {
     worksPlaces: () => placesWorkedBy(store.state, box.id).length > 0,
     codeSet: () => store.state.codeSets.find((c) => c.id === store.state.settings.codeSetId) ?? store.state.codeSets[0],
@@ -136,6 +137,7 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
       resetTimer = null;
       for (const off of offs) off();
       workings.dispose();
+      referee.dispose();
       for (const s of sessions) s.neighbour?.dispose();
       if (cache.get(box.id) === runtime) cache.delete(box.id);
       // Any train left "in section" goes back where it started.

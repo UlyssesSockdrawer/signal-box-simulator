@@ -220,6 +220,20 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Fixes and a roomier Places tab (v0.3.16)
+
+* **Clean working bonus is judged per train.** A through train worked on two lines gets one bonus
+  for its whole journey through the box, and only if neither line had an irregularity while it
+  was being worked (before, a mistake on the line in rear still left the bonus on the line ahead).
+  The far boxes report each finished movement as clean or not; the box's referee
+  (`src/core/referee.ts`) decides.
+* **Places tab:** each place collapses to one line (name, kind, roads, trains, who works it) and
+  expands again; **Expand all / Collapse all**. Road lists collapse too (fiddle yards start
+  collapsed), and each road is one compact row (name, track circuit, notes, trains, remove). The
+  tab uses the full width of a big monitor or landscape tablet, with places flowing into as many
+  columns as fit.
+* Choosing another place for a line now stops its far box being listed as working the old place.
+
 ## Through trains: offering on (v0.3.15)
 
 * A box with more than one line can **offer on** a train it accepts, instead of keeping it.
@@ -317,6 +331,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
   throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
+  referee.ts           Puts each line's points on the box's scorecard; clean working judged per train
   simulatedNeighbour.ts The far signaller: replies, offers trains, coaches you
   selection.ts         Next-train strategies (manual, random; timetable can be added)
   session.ts           Wires controllers + simulated neighbours for a box

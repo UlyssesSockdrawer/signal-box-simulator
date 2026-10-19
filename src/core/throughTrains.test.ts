@@ -5,6 +5,8 @@ import { addPlace, placesWorkedBy, setConnectionPlace, setWorker } from './place
 import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
 import { ThroughWorkings } from './throughTrains';
+import { BoxReferee } from './referee';
+import { Scorecard } from './score';
 import type { AppState } from './types';
 
 /** Box A (Fiddle Yard, simulated) ── Becton (you) ── C (Tansley Spa, simulated). */
@@ -33,6 +35,8 @@ function setup(opts: { worksPlaces?: boolean } = {}) {
     s.neighbour!.start();
   }
   const tick = (ms = 4000) => sched.advance(ms);
+  const card = new Scorecard(() => sched.now());
+  new BoxReferee(sessions, card);
   const w = new ThroughWorkings(sessions, {
     worksPlaces: () => placesWorkedBy(state, box.id).length > 0,
     codeSet: () => state.codeSets[0],
@@ -48,7 +52,7 @@ function setup(opts: { worksPlaces?: boolean } = {}) {
   }
   bells.a.length = 0;
   bells.c.length = 0;
-  return { state, a: sa.controller, c: sc.controller, w, bells, tick, ts, sessions };
+  return { state, a: sa.controller, c: sc.controller, w, bells, tick, ts, sessions, card };
 }
 
 describe('through trains (offering on)', () => {
@@ -122,6 +126,30 @@ describe('through trains (offering on)', () => {
     expect(t.w.guidance()).toBeNull();
   });
 
+  it('gives one clean working bonus for a whole through journey', () => {
+    const t = setup();
+    runThrough(t, false);
+    expect(t.card.entries.filter((e) => e.rule === 'clean_working')).toHaveLength(1);
+    expect(t.card.entries.filter((e) => e.points < 0)).toEqual([]);
+  });
+
+  it('a mistake on the line in rear costs the through train its bonus, though the line ahead was clean', () => {
+    const t = setup();
+    runThrough(t, true);
+    expect(t.card.entries.map((e) => e.rule)).toContain('lc_without_accept');
+    expect(t.card.entries.filter((e) => e.rule === 'clean_working')).toHaveLength(0);
+    // A mistake on a quiet line before the train is offered also counts against it…
+    const t2 = setup();
+    t2.a.setInstrument('LC');
+    t2.tick();
+    t2.a.setInstrument('LB');
+    runThrough(t2, false);
+    expect(t2.card.entries.filter((e) => e.rule === 'clean_working')).toHaveLength(0);
+    // …and the next train starts with a clean record.
+    runThrough(t, false, 'ex2');
+    expect(t.card.entries.filter((e) => e.rule === 'clean_working')).toHaveLength(1);
+  });
+
   it('a train stopped at the box can still go on later; re-routing to stop here withdraws it from the line ahead', () => {
     const t = setup();
     t.a.requestIncoming('ex1', 'express_passenger');
@@ -164,3 +192,40 @@ describe('through trains (offering on)', () => {
     expect(t.w.guidance()?.text).toMatch(/another train is chosen/);
   });
 });
+
+/** A through train A → B → C, worked by the book (optionally turning Line Clear too early on A's line). */
+function runThrough(t: ReturnType<typeof setup>, earlyLineClear: boolean, loco = 'ex1') {
+  t.a.requestIncoming(loco, 'express_passenger');
+  t.tick();
+  // The mistake in the report: Line Clear while the train is only being offered.
+  if (earlyLineClear) t.a.setInstrument('LC');
+  t.a.sendBell('1');
+  t.tick();
+  t.a.sendBell('4');
+  if (!earlyLineClear) t.a.setInstrument('LC');
+  t.tick(500);
+  t.c.sendBell('1');
+  t.tick();
+  t.c.sendBell('4');
+  t.tick(8000);
+  t.a.sendBell('2');
+  t.a.setInstrument('TOL');
+  t.tick();
+  t.c.sendBell('2');
+  t.tick();
+  t.a.confirmIncomingArrived(null, { moveLoco: !t.w.keepLocoWhereItIs('becton-fy') });
+  t.a.sendBell('1');
+  t.tick();
+  t.a.sendBell('2-1');
+  t.tick();
+  t.a.setInstrument('LB');
+  t.tick();
+  t.c.confirmOutgoingArrived(t.ts.roads[0].id, loco);
+  t.tick(5000);
+  t.c.sendBell('1');
+  t.tick();
+  t.c.sendBell('2-1');
+  t.tick();
+  expect(t.c.view.outgoing).toBeNull();
+  expect(t.a.view.incoming).toBeNull();
+}

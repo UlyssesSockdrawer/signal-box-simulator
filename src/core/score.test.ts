@@ -3,6 +3,7 @@ import { createDefaultState } from './defaults';
 import { FakeScheduler } from './scheduler';
 import { pointsText, SCORE_RULES, Scorecard, type ScoreRuleId } from './score';
 import { createBoxSession } from './session';
+import { BoxReferee } from './referee';
 import type { AppState, WorkingMode } from './types';
 
 function setup(mode: WorkingMode = 'ab') {
@@ -15,10 +16,8 @@ function setup(mode: WorkingMode = 'ab') {
   const c = sess.controller;
   const card = new Scorecard(() => sched.now());
   const rules: ScoreRuleId[] = [];
-  c.events.on('score', ({ rule, detail }) => {
-    rules.push(rule);
-    card.add(rule, 'Fiddle Yard', detail);
-  });
+  new BoxReferee([sess], card);
+  card.onChange((e) => e && rules.push(e.rule));
   c.events.on('locoMoved', (m) => {
     const l = state.roster.find((x) => x.id === m.locoId);
     if (l) l.location = m.location;
