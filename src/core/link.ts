@@ -1,3 +1,4 @@
+import type { ScoreRuleId } from './score';
 import type { BellCode, InstrumentState } from './types';
 
 /**
@@ -31,6 +32,8 @@ export type LinkMessage =
   | { type: 'guidance'; text: string }
   | { type: 'hint'; text: string; level: 'info' | 'warn' }
   | { type: 'irregularity'; text: string }
+  /** Points gained or lost by the signaller (the far box referees). */
+  | { type: 'score'; rule: ScoreRuleId; detail?: string }
   | { type: 'status'; text: string };
 
 export interface LinkEnd {

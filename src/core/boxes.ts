@@ -1,4 +1,5 @@
-import { findLayout, yardsForBox } from './layouts';
+import { findLayout } from './layouts';
+import { placesForBox, sanitisePlaces, setConnectionPlace } from './places';
 import { layoutShelf } from './shelf';
 import { newId } from './store';
 import { sanitiseTrackPlan } from './trackPlan';
@@ -29,26 +30,6 @@ export function uniqueName(base: string, taken: string[], joiner = ' ', maxLen =
 /** True when a box connects to at least one other box, so it can be opened. */
 export function canOpenBox(box: BoxDef): boolean {
   return box.connections.length > 0;
-}
-
-/** Does this connection run to a fiddle yard? ('' means its far box serves a location on the layout instead.) */
-export function servesFiddleYard(c: ConnectionDef): boolean {
-  return !!c.fiddleYardId;
-}
-
-/**
- * Layout locations served by far boxes: every connection with no fiddle yard, plus any
- * connection that still has trains standing at its location (e.g. after being switched to a yard).
- */
-export function farBoxLocations(state: AppState): Array<{ box: BoxDef; conn: ConnectionDef }> {
-  const out: Array<{ box: BoxDef; conn: ConnectionDef }> = [];
-  for (const box of state.boxes) {
-    for (const conn of box.connections) {
-      const occupied = state.roster.some((l) => l.location.kind === 'farBox' && l.location.connectionId === conn.id);
-      if (!servesFiddleYard(conn) || occupied) out.push({ box, conn });
-    }
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------- validation
@@ -102,7 +83,6 @@ export function addBox(state: AppState, layoutId = ''): BoxDef {
     name: uniqueName('New box', state.boxes.map((b) => b.name)),
     shortName: uniqueName('NEW', state.boxes.map((b) => b.shortName), '', SHORT_NAME_MAX),
     description: '',
-    stationNotes: '',
     shelfPositions: 3,
     connections: [],
   };
@@ -129,11 +109,13 @@ export function addConnection(state: AppState, box: BoxDef): ConnectionDef | nul
     neighbourName: uniqueName('Connected box', [box.name, ...box.connections.map((c) => c.neighbourName)]),
     neighbourShort: uniqueName('CB', [box.shortName, ...box.connections.map((c) => c.neighbourShort)], '', SHORT_NAME_MAX),
     lineType: 'single',
-    fiddleYardId: yardsForBox(state, box)[0]?.id ?? '',
+    placeId: '',
     defaultWorking: 'ab',
     shelfPosition: free,
   };
   box.connections.push(conn);
+  // New lines run to the layout's first fiddle yard, if it has one.
+  setConnectionPlace(state, box, conn, placesForBox(state, box).find((p) => p.kind === 'fiddleYard')?.id ?? '');
   return conn;
 }
 
@@ -142,23 +124,22 @@ export function removeConnection(state: AppState, boxId: string, connId: string)
   if (!box) return;
   box.connections = box.connections.filter((c) => c.id !== connId);
   delete state.settings.workingModes[connId];
-  // Trains standing at the location that connection served have nowhere left on the layout.
-  for (const l of state.roster) if (l.location.kind === 'farBox' && l.location.connectionId === connId) l.location = { kind: 'offLayout' };
-  // Track that was the line to that box, or left the scene towards it, no longer has anywhere to go.
+  // Track that was the line to that box, or left the scene towards it, no longer has anywhere to go;
+  // its far box no longer works any place.
   sanitiseTrackPlan(state);
+  sanitisePlaces(state);
 }
 
-/** Remove a box. The last box cannot be removed. Locos in its station, or at locations only it connects to, go off the layout. */
+/** Remove a box. The last box cannot be removed. Locos standing at the box itself go off the layout; its places stay (worked by nobody until given to another box). */
 export function deleteBox(state: AppState, boxId: string): boolean {
   if (state.boxes.length <= 1) return false;
   const box = state.boxes.find((b) => b.id === boxId);
   if (!box) return false;
   for (const c of box.connections) delete state.settings.workingModes[c.id];
   state.boxes = state.boxes.filter((b) => b.id !== boxId);
-  for (const l of state.roster) {
-    if ((l.location.kind === 'station' || l.location.kind === 'farBox') && l.location.boxId === boxId) l.location = { kind: 'offLayout' };
-  }
+  for (const l of state.roster) if (l.location.kind === 'atBox' && l.location.boxId === boxId) l.location = { kind: 'offLayout' };
   sanitiseTrackPlan(state);
+  sanitisePlaces(state);
   return true;
 }
 

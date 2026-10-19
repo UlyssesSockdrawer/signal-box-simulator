@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CODE_SETS, DEFAULT_TRAIN_TYPES, normaliseCode } from './bellcodes';
-import { addBox, addConnection, canOpenBox, farBoxLocations, checkBoxName, checkBoxShort, checkConnName, checkShelfPositions, deleteBox, moveConnection, removeConnection, setShelfPositions } from './boxes';
+import { addBox, addConnection, canOpenBox, checkBoxName, checkBoxShort, checkConnName, checkShelfPositions, deleteBox, moveConnection, removeConnection, setShelfPositions } from './boxes';
 import { createLinkPair } from './link';
 import { trainsOnLayout } from './layoutRegister';
+import { addPlace, addRoad, arrivalChoices, boxLocos, checkPlaceName, checkPlaceShort, checkRoadName, placesWorkedBy, removePlace, removeRoad, roadOfCircuit, sanitisePlaces, setConnectionPlace, setRoadCount, setWorker, tieRoad } from './places';
 import { incomingCandidates } from './selection';
 import { SectionController } from './sectionController';
 import { createDefaultState } from './defaults';
@@ -91,7 +92,7 @@ describe('Simplified absolute block, single line', () => {
     t.c.setInstrument('TOL');
     t.tick();
     expect(t.state.roster.find((l) => l.id === 'ex1')!.location.kind).toBe('section');
-    t.c.confirmIncomingArrived('P1');
+    t.c.confirmIncomingArrived({ placeId: 'becton-station', roadId: 'becton-p1' });
     t.c.sendBell('1');
     t.tick();
     t.c.sendBell('2-1');
@@ -100,7 +101,7 @@ describe('Simplified absolute block, single line', () => {
     t.c.setInstrument('LB');
     t.tick();
     expect(t.c.view.incoming).toBeNull();
-    expect(t.state.roster.find((l) => l.id === 'ex1')!.location).toEqual({ kind: 'station', boxId: 'becton', note: 'P1' });
+    expect(t.state.roster.find((l) => l.id === 'ex1')!.location).toEqual({ kind: 'place', placeId: 'becton-station', roadId: 'becton-p1' });
     expect(t.c.irregularities).toEqual([]);
   });
 
@@ -127,7 +128,7 @@ describe('Simplified absolute block, single line', () => {
     t.tick();
     expect(t.c.view.remoteInstrument).toBe('LB');
     expect(t.c.view.outgoing).toBeNull();
-    expect(t.state.roster.find((l) => l.id === 'ex4')!.location).toEqual({ kind: 'fiddleYard', yardId: 'fy1', roadId: 'road5' });
+    expect(t.state.roster.find((l) => l.id === 'ex4')!.location).toEqual({ kind: 'place', placeId: 'fy1', roadId: 'road5' });
     expect(t.c.irregularities).toEqual([]);
   });
 
@@ -163,13 +164,13 @@ describe('Simplified absolute block, single line', () => {
     t.c.sendBell('2');
     t.c.setInstrument('TOL');
     t.tick();
-    t.c.confirmIncomingArrived('P1');
-    t.c.confirmIncomingArrived('P1');
+    t.c.confirmIncomingArrived({ placeId: 'becton-station', roadId: 'becton-p1' });
+    t.c.confirmIncomingArrived({ placeId: 'becton-station', roadId: 'becton-p1' });
     t.c.sendBell('1');
     t.tick();
     t.c.sendBell('2-1');
     t.tick();
-    t.c.confirmIncomingArrived('P1');
+    t.c.confirmIncomingArrived({ placeId: 'becton-station', roadId: 'becton-p1' });
     t.c.setInstrument('LB');
     t.tick(5000);
     expect(t.c.view.incoming).toBeNull();
@@ -247,7 +248,7 @@ describe('Electric key token, single line', () => {
     expect(t.bellsIn.at(-1)).toBe('2');
     t.c.sendBell('2');
     t.tick();
-    t.c.confirmIncomingArrived('P3');
+    t.c.confirmIncomingArrived({ placeId: 'becton-station', roadId: 'becton-p3' });
     expect(t.c.view.tokenInHand).toBe(true);
     // 2-1 before replacing token is refused
     t.c.sendBell('1');
@@ -442,8 +443,10 @@ describe('user boxes and connections', () => {
     const c1 = addConnection(s, box)!;
     expect(c1.shelfPosition).toBe(0);
     // The first fiddle yard on the box's layout; none for a box not on a layout.
-    expect(c1.fiddleYardId).toBe('fy1');
-    expect(addConnection(s, addBox(s))!.fiddleYardId).toBe('');
+    expect(c1.placeId).toBe('fy1');
+    // …and its far box is recorded as working the yard.
+    expect(s.layouts[0].places[0].workedBy).toContainEqual({ kind: 'remote', boxId: box.id, connectionId: c1.id });
+    expect(addConnection(s, addBox(s))!.placeId).toBe('');
     const c2 = addConnection(s, box)!;
     expect(box.shelfPositions).toBe(2);
     expect(c2.shelfPosition).toBe(1);
@@ -470,72 +473,192 @@ describe('user boxes and connections', () => {
     const s = createDefaultState();
     expect(deleteBox(s, 'becton')).toBe(false);
     const nb = addBox(s);
-    s.roster[0].location = { kind: 'station', boxId: nb.id, note: '' };
+    s.roster[0].location = { kind: 'atBox', boxId: nb.id };
     expect(deleteBox(s, nb.id)).toBe(true);
     expect(s.boxes).toHaveLength(1);
     expect(s.roster[0].location.kind).toBe('offLayout');
   });
 
-  it('a connection with no fiddle yard keeps departures on the layout, at the far box', () => {
+  it('a line to a place puts arriving departures on the chosen road; a line with no place sends them to the roster', () => {
     const sch = new FakeScheduler();
-    const [a, b] = createLinkPair();
-    const moved: Location[] = [];
-    const ctl = new SectionController({
-      link: a, scheduler: sch, boxId: 'x', connectionId: 'c', fiddleYardId: '', mode: 'ab', lineType: 'single',
-      neighbourName: 'Tansley Spa', neighbourShort: 'TS', localShort: 'BEC', codeSet: () => DEFAULT_CODE_SETS[0], trainTypes: () => DEFAULT_TRAIN_TYPES,
-    });
-    ctl.events.on('locoMoved', ({ location }) => moved.push(location));
-    b.send({ type: 'movementComplete', direction: 'outgoing', locoId: 'ex1', roadId: '' });
-    expect(moved).toEqual([{ kind: 'farBox', boxId: 'x', connectionId: 'c', note: '' }]);
+    const run = (farPlaceId: string) => {
+      const [a, b] = createLinkPair();
+      const moved: Location[] = [];
+      const ctl = new SectionController({
+        link: a, scheduler: sch, boxId: 'x', connectionId: 'c', farPlaceId, mode: 'ab', lineType: 'single',
+        neighbourName: 'Tansley Spa', neighbourShort: 'TS', localShort: 'BEC', codeSet: () => DEFAULT_CODE_SETS[0], trainTypes: () => DEFAULT_TRAIN_TYPES,
+      });
+      ctl.events.on('locoMoved', ({ location }) => moved.push(location));
+      b.send({ type: 'movementComplete', direction: 'outgoing', locoId: 'ex1', roadId: 'r2' });
+      return moved;
+    };
+    expect(run('tansley')).toEqual([{ kind: 'place', placeId: 'tansley', roadId: 'r2' }]);
+    expect(run('')).toEqual([{ kind: 'offLayout' }]);
   });
 
-  it('offers trains standing at the far box back over a line with no fiddle yard', () => {
+  it('offers trains standing in the place at the far end of a line, or from the roster when it has none', () => {
     const s = createDefaultState();
     const box = s.boxes[0];
     const conn = addConnection(s, box)!;
-    conn.fiddleYardId = '';
-    s.roster[0].location = { kind: 'farBox', boxId: box.id, connectionId: conn.id, note: '' };
+    const ts = addPlace(s, 'layout1', 'station', { name: 'Tansley Spa' })!;
+    setConnectionPlace(s, box, conn, ts.id);
+    expect(ts.workedBy).toEqual([{ kind: 'remote', boxId: box.id, connectionId: conn.id }]);
+    s.roster[0].location = { kind: 'place', placeId: ts.id, roadId: '' };
     expect(incomingCandidates(s, conn).map((l) => l.id)).toEqual([s.roster[0].id]);
     expect(incomingCandidates(s, box.connections[0]).some((l) => l.id === s.roster[0].id)).toBe(false);
-    expect(farBoxLocations(s).map((x) => x.conn.id)).toEqual([conn.id]);
+    setConnectionPlace(s, box, conn, '');
+    s.roster[1].location = { kind: 'offLayout' };
+    expect(incomingCandidates(s, conn).map((l) => l.id)).toEqual([s.roster[1].id]);
   });
 
-  it('trains at a removed far box location go off the layout, also when loading old data', () => {
+  it('removing a connection stops its far box working places; removing a place sends its trains off the layout', () => {
     const s = createDefaultState();
     const box = s.boxes[0];
     const conn = addConnection(s, box)!;
-    conn.fiddleYardId = '';
-    s.roster[0].location = { kind: 'farBox', boxId: box.id, connectionId: conn.id, note: '' };
-    const saved = JSON.parse(JSON.stringify(s));
-    saved.boxes[0].connections = saved.boxes[0].connections.filter((c: { id: string }) => c.id !== conn.id);
-    expect(migrate(saved).roster[0].location.kind).toBe('offLayout');
+    const ts = addPlace(s, 'layout1', 'station', { name: 'Tansley Spa' })!;
+    setConnectionPlace(s, box, conn, ts.id);
+    s.roster[0].location = { kind: 'place', placeId: ts.id, roadId: ts.roads[0].id };
     removeConnection(s, box.id, conn.id);
+    expect(ts.workedBy).toEqual([]);
+    expect(s.roster[0].location.kind).toBe('place');
+    expect(removePlace(s, ts.id)).toBe(1);
     expect(s.roster[0].location.kind).toBe('offLayout');
   });
 });
 
+describe('places', () => {
+  it('a station can be worked by two boxes; a junction box works none', () => {
+    const s = createDefaultState();
+    const york = addPlace(s, 'layout1', 'station', { name: 'York', roads: 3 })!;
+    const north = addBox(s, 'layout1');
+    const south = addBox(s, 'layout1');
+    const junction = addBox(s, 'layout1');
+    setWorker(york, { kind: 'box', boxId: north.id }, true);
+    setWorker(york, { kind: 'box', boxId: south.id }, true);
+    expect(placesWorkedBy(s, north.id).map((p) => p.name)).toEqual(['York']);
+    expect(placesWorkedBy(s, south.id).map((p) => p.name)).toEqual(['York']);
+    expect(placesWorkedBy(s, junction.id)).toEqual([]);
+    expect(arrivalChoices(s, north.id).map((c) => c.label)).toEqual(['York · P1', 'York · P2', 'York · P3']);
+    s.roster[0].location = { kind: 'place', placeId: york.id, roadId: york.roads[1].id };
+    expect(boxLocos(s, north.id).map((l) => l.id)).toEqual([s.roster[0].id]);
+    expect(boxLocos(s, south.id).map((l) => l.id)).toEqual([s.roster[0].id]);
+    s.roster[1].location = { kind: 'atBox', boxId: junction.id };
+    expect(boxLocos(s, junction.id).map((l) => l.id)).toEqual([s.roster[1].id]);
+  });
+
+  it('names places and roads uniquely, and keeps trains in the place when a road goes', () => {
+    const s = createDefaultState();
+    const layout = s.layouts[0];
+    const p = addPlace(s, 'layout1', 'sidings')!;
+    expect(p.name).toBe('New sidings');
+    expect(checkPlaceName(layout, 'becton', p.id)).toMatch(/already/);
+    expect(checkPlaceShort(layout, 'fy', p.id)).toMatch(/already/);
+    expect(checkPlaceShort(layout, '', p.id)).toBeNull();
+    const r2 = addRoad(p)!;
+    expect(r2.name).toBe('Road 2');
+    expect(checkRoadName(p, 'road 2', p.roads[0].id)).toMatch(/already/);
+    s.roster[0].location = { kind: 'place', placeId: p.id, roadId: r2.id };
+    expect(removeRoad(s, p.id, r2.id)).toBe(1);
+    expect(s.roster[0].location).toEqual({ kind: 'place', placeId: p.id, roadId: '' });
+    expect(setRoadCount(s, 'fy1', 0)).toMatch(/at least one/);
+    expect(setRoadCount(s, p.id, 4)).toBeNull();
+    expect(p.roads.map((r) => r.name)).toEqual(['Road 1', 'Road 2', 'Road 3', 'Road 4']);
+  });
+
+  it('ties a road to one track circuit at a time, and unties it when the track goes', () => {
+    const s = createDefaultState();
+    const layout = s.layouts[0];
+    layout.trackPlan.circuits.push({ id: 'c1', code: 'T1', name: '', owner: { kind: 'none' }, ends: [{ kind: 'open', x: 0, y: 0 }, { kind: 'open', x: 4, y: 0 }] });
+    tieRoad(layout, 'becton-station', 'becton-p1', 'c1');
+    tieRoad(layout, 'becton-station', 'becton-p2', 'c1');
+    expect(roadOfCircuit(layout, 'c1')?.road.name).toBe('P2');
+    expect(layout.places[1].roads[0].circuitId).toBeUndefined();
+    layout.trackPlan.circuits = [];
+    sanitisePlaces(s);
+    expect(layout.places[1].roads[1].circuitId).toBeUndefined();
+  });
+
+  it('migrates a save from before places: yards, each box\'s station (platforms from its notes) and far-box locations', () => {
+    const old = {
+      schemaVersion: 2,
+      settings: { activeLayoutId: 'layout1' },
+      boxes: [
+        {
+          id: 'becton', name: 'Becton', shortName: 'BEC', layoutId: 'layout1', description: '', shelfPositions: 3,
+          stationNotes: 'P1: longest, loco release.\nP2: shorter.\nP3: bay.\nCoal siding: not used for arrivals.',
+          connections: [
+            { id: 'becton-fy', neighbourName: 'Fiddle Yard', neighbourShort: 'FY', lineType: 'single', fiddleYardId: 'fy1', defaultWorking: 'ab', shelfPosition: 2 },
+            { id: 'c2', neighbourName: 'Tansley Spa', neighbourShort: 'TS', lineType: 'single', fiddleYardId: '', defaultWorking: 'ab', shelfPosition: 0 },
+          ],
+        },
+      ],
+      layouts: [
+        {
+          id: 'layout1', name: 'BTS', running: 'left',
+          fiddleYards: [{ id: 'fy1', name: 'Fiddle Yard', roads: [{ id: 'road1', name: 'Road 1', notes: '' }] }],
+          trackPlan: { circuits: [{ id: 'x', code: 'T1', name: '', owner: { kind: 'none' }, ends: [{ kind: 'exit', x: 0, y: 0, to: { kind: 'fiddleYard', yardId: 'fy1' } }, { kind: 'open', x: 5, y: 0 }] }], junctions: [] },
+        },
+      ],
+      roster: [
+        { id: 'a', number: '1', name: '', locoClass: '', powerType: '', dccAddress: '', notes: '', working: { trainTypeId: 'light_engine', consist: '', headcode: '' }, location: { kind: 'fiddleYard', yardId: 'fy1', roadId: 'road1' } },
+        { id: 'b', number: '2', name: '', locoClass: '', powerType: '', dccAddress: '', notes: '', working: { trainTypeId: 'light_engine', consist: '', headcode: '' }, location: { kind: 'station', boxId: 'becton', note: 'Platform 2' } },
+        { id: 'c', number: '3', name: '', locoClass: '', powerType: '', dccAddress: '', notes: '', working: { trainTypeId: 'light_engine', consist: '', headcode: '' }, location: { kind: 'station', boxId: 'becton', note: 'Pilot' } },
+        { id: 'd', number: '4', name: '', locoClass: '', powerType: '', dccAddress: '', notes: '', working: { trainTypeId: 'light_engine', consist: '', headcode: '' }, location: { kind: 'farBox', boxId: 'becton', connectionId: 'c2', note: '' } },
+      ],
+    };
+    const s = migrate(old);
+    const places = s.layouts[0].places;
+    expect(places.map((p) => `${p.kind}:${p.name}`)).toEqual(['fiddleYard:Fiddle Yard', 'station:Becton', 'station:Tansley Spa']);
+    const becton = places[1];
+    expect(becton.roads.map((r) => r.name)).toEqual(['P1', 'P2', 'P3']);
+    expect(becton.roads[0].notes).toBe('Longest, loco release.');
+    expect(becton.notes).toBe('Coal siding: not used for arrivals.');
+    expect(becton.workedBy).toEqual([{ kind: 'box', boxId: 'becton' }]);
+    expect(places[0].workedBy).toEqual([{ kind: 'remote', boxId: 'becton', connectionId: 'becton-fy' }]);
+    expect(s.boxes[0].connections.map((c) => c.placeId)).toEqual(['fy1', places[2].id]);
+    expect(s.roster.map((l) => l.location)).toEqual([
+      { kind: 'place', placeId: 'fy1', roadId: 'road1' },
+      { kind: 'place', placeId: becton.id, roadId: becton.roads[1].id },
+      { kind: 'place', placeId: becton.id, roadId: '' },
+      { kind: 'place', placeId: places[2].id, roadId: '' },
+    ]);
+    expect(s.layouts[0].trackPlan.circuits[0].ends[0]).toMatchObject({ kind: 'exit', to: { kind: 'place', placeId: 'fy1' } });
+    expect('stationNotes' in s.boxes[0]).toBe(false);
+    expect('fiddleYards' in s.layouts[0]).toBe(false);
+    // Loading it again changes nothing.
+    expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+});
+
 describe('trains on layout register', () => {
-  it("lists the box's yards, its station, its far-box locations, then the rest of the layout", () => {
+  it('lists the places the box works, the places at the far end of its lines, then the rest of the layout', () => {
     const s = createDefaultState();
     const becton = s.boxes[0];
     const far = addConnection(s, becton)!;
-    far.neighbourName = 'Sidings';
-    far.fiddleYardId = '';
-    const other = addBox(s, 'layout1');
+    const sid = addPlace(s, 'layout1', 'sidings', { name: 'Exchange sidings' })!;
+    setConnectionPlace(s, becton, far, sid.id);
+    const goods = addPlace(s, 'layout1', 'goods', { name: 'Goods shed' })!;
+    const junction = addBox(s, 'layout1');
     addBox(s); // not on the layout: not listed
-    s.roster[0].location = { kind: 'farBox', boxId: becton.id, connectionId: far.id, note: 'Road A' };
+    s.roster[0].location = { kind: 'place', placeId: sid.id, roadId: '' };
     s.roster[1].location = { kind: 'section', connectionId: 'becton-fy' };
+    s.roster[2].location = { kind: 'atBox', boxId: junction.id };
     const reg = trainsOnLayout(s, becton.id);
     expect(reg.map((r) => r.kind + ':' + r.name)).toEqual([
-      'yard:Fiddle Yard',
-      'station:Becton station',
-      'farBox:Sidings',
-      `station:${other.name} station`,
+      'place:Becton',
+      'place:Becton sidings',
+      'place:Exchange sidings',
+      'place:Fiddle Yard',
+      `place:${goods.name}`,
+      `atBox:At ${junction.name}`,
       'section:On the line',
     ]);
-    const yard = reg[0];
-    expect(yard.kind === 'yard' && yard.roads.length).toBe(6);
-    const sid = reg[2];
-    expect(sid.kind === 'farBox' && sid.locos.map((l) => l.id)).toEqual([s.roster[0].id]);
+    const yard = reg[3];
+    expect(yard.kind === 'place' && yard.roads.length).toBe(6);
+    const ex = reg[2];
+    expect(ex.kind === 'place' && ex.loose.map((l) => l.id)).toEqual([s.roster[0].id]);
+    expect(reg[0].kind === 'place' && reg[0].mine).toBe(true);
+    // A box that works no place lists itself first, where its arrivals stand.
+    expect(trainsOnLayout(s, junction.id)[0].name).toBe(`At ${junction.name}`);
   });
 });

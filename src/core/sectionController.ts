@@ -1,5 +1,6 @@
 import { describeCode } from './bellcodes';
 import type { LinkEnd, LinkMessage } from './link';
+import type { ScoreRuleId } from './score';
 import { Emitter, type Scheduler } from './scheduler';
 import type { BellCode, CodeSet, InstrumentState, LineType, Location, TrainType, WorkingMode } from './types';
 
@@ -44,6 +45,8 @@ export interface ControllerEvents extends Record<string, unknown> {
   log: LogEntry;
   hint: { text: string; level: 'info' | 'warn' };
   locoMoved: { locoId: string; location: Location };
+  /** Points gained or lost, as judged by the far box. */
+  score: { rule: ScoreRuleId; detail: string };
 }
 
 export interface ControllerOptions {
@@ -52,7 +55,9 @@ export interface ControllerOptions {
   boxId: string;
   connectionId: string;
   /** Fiddle yard at the far end, or '' when the far box serves a location on the layout. */
-  fiddleYardId: string;
+  farPlaceId: string;
+  /** Words for the log: where trains sent along this line go ("Fiddle Yard", "Tansley Spa"). */
+  farPlaceName?: string;
   mode: WorkingMode;
   lineType: LineType;
   neighbourName: string;
@@ -188,15 +193,20 @@ export class SectionController {
     this.changed();
   }
 
-  /** Operator has seen the incoming train arrive complete with tail lamp. */
-  confirmIncomingArrived(note = ''): void {
+  /**
+   * Operator has seen the incoming train arrive complete with tail lamp. `at` is where it now
+   * stands: a road (or '' for anywhere) in a place this box works; null = at the box itself
+   * (a box that works no place, or a through train standing at the box before it is sent on).
+   */
+  confirmIncomingArrived(at: { placeId: string; roadId: string } | null = null, opts: { moveLoco?: boolean } = {}): void {
     const inc = this.v.incoming;
     if (!inc || inc.arrived) return;
     inc.arrived = true;
     if (this.v.mode === 'token' && this.v.tokenIndicator === 'coming') this.v.tokenInHand = true;
     this.addLog('action', 'Incoming train arrived complete with tail lamp');
     this.o.link.send({ type: 'operator', action: 'arrivedLocal', locoId: inc.locoId });
-    this.events.emit('locoMoved', { locoId: inc.locoId, location: { kind: 'station', boxId: this.o.boxId, note } });
+    // A through train already sent on into the section ahead stays there (moveLoco false).
+    if (opts.moveLoco !== false) this.events.emit('locoMoved', { locoId: inc.locoId, location: at?.placeId ? { kind: 'place', placeId: at.placeId, roadId: at.roadId } : { kind: 'atBox', boxId: this.o.boxId } });
     this.changed();
   }
 
@@ -213,7 +223,7 @@ export class SectionController {
     if (!this.v.outgoing || this.v.outgoing.arrived) return;
     this.v.outgoing.arrived = true;
     const id = locoId ?? this.v.outgoing?.locoId ?? null;
-    this.addLog('action', this.o.fiddleYardId ? 'Outgoing train arrived in fiddle yard' : `Outgoing train arrived at ${this.o.neighbourName}`);
+    this.addLog('action', `Outgoing train arrived ${this.o.farPlaceId ? `at ${this.o.farPlaceName ?? 'its place'}` : `at ${this.o.neighbourName}`}`);
     this.o.link.send({ type: 'operator', action: 'arrivedRemote', locoId: id, roadId });
     this.changed();
   }
@@ -270,11 +280,12 @@ export class SectionController {
           this.v.incoming = null;
           this.addLog('status', 'Incoming train complete: section clear of it.');
         } else {
-          if (m.locoId && this.o.fiddleYardId && m.roadId) {
-            this.events.emit('locoMoved', { locoId: m.locoId, location: { kind: 'fiddleYard', yardId: this.o.fiddleYardId, roadId: m.roadId } });
-          } else if (m.locoId && !this.o.fiddleYardId) {
-            // No fiddle yard on this line: the train stays on the layout, at the location the far box serves.
-            this.events.emit('locoMoved', { locoId: m.locoId, location: { kind: 'farBox', boxId: this.o.boxId, connectionId: this.o.connectionId, note: '' } });
+          if (m.locoId) {
+            // Into the place at the far end of the line (on the road chosen), or back to the roster when the line has none.
+            this.events.emit('locoMoved', {
+              locoId: m.locoId,
+              location: this.o.farPlaceId ? { kind: 'place', placeId: this.o.farPlaceId, roadId: m.roadId ?? '' } : { kind: 'offLayout' },
+            });
           }
           this.v.outgoing = null;
           this.addLog('status', 'Outgoing train complete: section clear of it.');
@@ -295,6 +306,9 @@ export class SectionController {
         break;
       case 'status':
         this.addLog('status', m.text);
+        break;
+      case 'score':
+        this.events.emit('score', { rule: m.rule, detail: m.detail ?? '' });
         break;
       default:
         break;

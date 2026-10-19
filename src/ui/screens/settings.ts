@@ -46,6 +46,7 @@ export function settingsScreen(ctx: Ctx): Screen {
       'Bell code set',
       h('select', { id: 'set_cs', on: { change: (e: Event) => set((x) => (x.codeSetId = (e.target as HTMLSelectElement).value)) } }, ...st.codeSets.map((c) => option(c.id, c.name, c.id === s.codeSetId))),
     ),
+    check('set_scoring', 'Keep score: points for working trains by the book, points lost for irregularities (for have-a-go sessions)', s.scoring, (v) => (s.scoring = v)),
   );
 
   // ---------------------------------------------------------------- appearance

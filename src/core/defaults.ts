@@ -1,7 +1,8 @@
 import { DEFAULT_CODE_SETS, DEFAULT_TRAIN_TYPES } from './bellcodes';
 import type { AppState, Settings } from './types';
 
-export const SCHEMA_VERSION = 2;
+/** 3: places (stations, sidings, goods, depots, fiddle yards) on layouts (v0.3.14). */
+export const SCHEMA_VERSION = 3;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';
@@ -25,6 +26,9 @@ export const DEFAULT_SETTINGS: Settings = {
   bellGroupPauseMs: 750,
   bellSoundDataUrl: '',
   bellSynth: false,
+  scoring: true,
+  boxDiagram: false,
+  diagramLabels: 'codes',
 };
 
 export function createDefaultState(): AppState {
@@ -40,11 +44,6 @@ export function createDefaultState(): AppState {
         shortName: 'BEC',
         layoutId: 'layout1',
         description: 'Terminus of the Becton and Tansley Spa Steam Railway. Single line to the fiddle yard.',
-        stationNotes:
-          'P1: longest, loco release at the end; tender engine + 3–4 coaches. Coaches may need to be drawn off by the station pilot.\n' +
-          'P2: shorter. A train in P2 blocks the P1 loco release; the pilot must draw off the coaches to release the loco.\n' +
-          'P3: bay. Single car DMU or push-pull tank engine service.\n' +
-          'Coal siding: not used for arrivals. Goods demonstrators go into P1–P3 and are broken up by the pilot.',
         shelfPositions: 3,
         connections: [
           {
@@ -52,7 +51,7 @@ export function createDefaultState(): AppState {
             neighbourName: 'Fiddle Yard',
             neighbourShort: 'FY',
             lineType: 'single',
-            fiddleYardId: 'fy1',
+            placeId: 'fy1',
             defaultWorking: 'ab',
             shelfPosition: 2,
           },
@@ -64,11 +63,37 @@ export function createDefaultState(): AppState {
         id: 'layout1',
         name: 'Becton and Tansley Spa Steam Railway',
         running: 'left',
-        fiddleYards: [
+        places: [
           {
             id: 'fy1',
+            kind: 'fiddleYard',
             name: 'Fiddle Yard',
+            shortName: 'FY',
+            notes: '',
             roads: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `road${n}`, name: `Road ${n}`, notes: '' })),
+            workedBy: [{ kind: 'remote', boxId: 'becton', connectionId: 'becton-fy' }],
+          },
+          {
+            id: 'becton-station',
+            kind: 'station',
+            name: 'Becton',
+            shortName: 'BEC',
+            notes: 'Goods demonstrators go into P1–P3 and are broken up by the station pilot.',
+            roads: [
+              { id: 'becton-p1', name: 'P1', notes: 'Longest, loco release at the end; tender engine + 3–4 coaches. Coaches may need to be drawn off by the station pilot.' },
+              { id: 'becton-p2', name: 'P2', notes: 'Shorter. A train in P2 blocks the P1 loco release; the pilot must draw off the coaches to release the loco.' },
+              { id: 'becton-p3', name: 'P3', notes: 'Bay. Single car DMU or push-pull tank engine service.' },
+            ],
+            workedBy: [{ kind: 'box', boxId: 'becton' }],
+          },
+          {
+            id: 'becton-sidings',
+            kind: 'sidings',
+            name: 'Becton sidings',
+            shortName: '',
+            notes: 'Not used for arrivals.',
+            roads: [{ id: 'becton-coal', name: 'Coal siding', notes: '' }],
+            workedBy: [{ kind: 'box', boxId: 'becton' }],
           },
         ],
         // The track plan starts empty: each layout builds its own in the layout configurator.
@@ -85,7 +110,7 @@ export function createDefaultState(): AppState {
         dccAddress: '7812',
         notes: 'Example entry: edit or delete.',
         working: { trainTypeId: 'ordinary_passenger', consist: '3 coaches', headcode: '' },
-        location: { kind: 'fiddleYard', yardId: 'fy1', roadId: 'road1' },
+        location: { kind: 'place', placeId: 'fy1', roadId: 'road1' },
       },
       {
         id: 'ex2',
@@ -96,7 +121,7 @@ export function createDefaultState(): AppState {
         dccAddress: '6435',
         notes: 'Example entry: push-pull with auto-coach.',
         working: { trainTypeId: 'branch_passenger', consist: 'Auto-coach', headcode: '' },
-        location: { kind: 'fiddleYard', yardId: 'fy1', roadId: 'road2' },
+        location: { kind: 'place', placeId: 'fy1', roadId: 'road2' },
       },
       {
         id: 'ex3',
@@ -107,7 +132,7 @@ export function createDefaultState(): AppState {
         dccAddress: '5028',
         notes: 'Example entry.',
         working: { trainTypeId: 'railcar', consist: 'Single car', headcode: '2B12' },
-        location: { kind: 'fiddleYard', yardId: 'fy1', roadId: 'road3' },
+        location: { kind: 'place', placeId: 'fy1', roadId: 'road3' },
       },
       {
         id: 'ex4',
@@ -118,7 +143,7 @@ export function createDefaultState(): AppState {
         dccAddress: '3022',
         notes: 'Example entry: station pilot.',
         working: { trainTypeId: 'light_engine', consist: '', headcode: '' },
-        location: { kind: 'station', boxId: 'becton', note: 'Pilot' },
+        location: { kind: 'place', placeId: 'becton-sidings', roadId: 'becton-coal' },
       },
     ],
   };

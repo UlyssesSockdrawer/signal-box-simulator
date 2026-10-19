@@ -1987,7 +1987,7 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
         if (!j || !portsOf(j).some((p) => p.id === e.port)) c.ends[i] = { kind: 'open', x: 0, y: 0 };
       } else if (e.kind === 'exit') {
         const t = e.to;
-        if (!t || (t.kind === 'fiddleYard' && !layout.fiddleYards.some((y) => y.id === t.yardId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
+        if (!t || (t.kind === 'place' && !layout.places.some((y) => y.id === t.placeId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
       }
     });
   }

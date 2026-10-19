@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { addBox, addConnection, deleteBox, removeConnection } from './boxes';
 import { createDefaultState } from './defaults';
-import { activeLayout, addLayout, addYard, deleteLayout, moveBoxImpact, removeRoad, removeYard, setBoxLayout, setYardRoadCount, trainsBeyondRoad, unassignedBoxes } from './layouts';
+import { activeLayout, addLayout, deleteLayout, moveBoxImpact, setBoxLayout, unassignedBoxes } from './layouts';
+import { addPlace, removePlace, removeRoad, setRoadCount, trainsBeyondRoad } from './places';
 import { trainsOnLayout } from './layoutRegister';
 import { migrate } from './store';
 import {
@@ -24,14 +25,25 @@ import {
 function oldSave() {
   const s = createDefaultState() as unknown as Record<string, unknown>;
   const layouts = s.layouts as ReturnType<typeof createDefaultState>['layouts'];
-  s.fiddleYards = layouts[0].fiddleYards;
+  s.fiddleYards = layouts[0].places.filter((p) => p.kind === 'fiddleYard').map((y) => ({ id: y.id, name: y.name, roads: y.roads }));
   s.trackPlan = { circuits: [], junctions: [] };
   addTrack(s.trackPlan as never);
   delete s.layouts;
   const settings = s.settings as Record<string, unknown>;
   delete settings.activeLayoutId;
   settings.layoutName = 'Becton and Tansley Spa Steam Railway';
-  for (const b of s.boxes as Array<Record<string, unknown>>) delete b.layoutId;
+  for (const b of s.boxes as Array<Record<string, unknown>>) {
+    delete b.layoutId;
+    b.stationNotes = '';
+    for (const c of b.connections as Array<Record<string, unknown>>) {
+      c.fiddleYardId = c.placeId;
+      delete c.placeId;
+    }
+  }
+  for (const l of s.roster as Array<{ location: Record<string, unknown> }>) {
+    if (l.location.kind === 'place' && l.location.placeId === 'fy1') l.location = { kind: 'fiddleYard', yardId: 'fy1', roadId: l.location.roadId };
+    else l.location = { kind: 'station', boxId: 'becton', note: '' };
+  }
   return s;
 }
 
@@ -41,19 +53,20 @@ describe('layouts: saved data', () => {
     expect(st.layouts).toHaveLength(1);
     const l = st.layouts[0];
     expect(l.name).toBe('Becton and Tansley Spa Steam Railway');
-    expect(l.fiddleYards.map((y) => y.id)).toEqual(['fy1']);
+    expect(l.places.map((y) => `${y.kind}:${y.id}`)).toEqual(['fiddleYard:fy1', 'station:stn_becton']);
     expect(l.trackPlan.circuits).toHaveLength(1);
     expect(st.boxes.every((b) => b.layoutId === l.id)).toBe(true);
     expect(activeLayout(st)?.id).toBe(l.id);
     expect('layoutName' in st.settings).toBe(false);
-    expect(st.roster[0].location).toEqual({ kind: 'fiddleYard', yardId: 'fy1', roadId: 'road1' });
+    expect(st.roster[0].location).toEqual({ kind: 'place', placeId: 'fy1', roadId: 'road1' });
+    expect(st.roster[3].location).toEqual({ kind: 'place', placeId: 'stn_becton', roadId: '' });
   });
 
-  it('repairs references to layouts and yards that do not exist', () => {
+  it('repairs references to layouts and places that do not exist', () => {
     const st = createDefaultState();
     st.boxes[0].layoutId = 'gone';
     st.settings.activeLayoutId = 'gone';
-    st.roster[0].location = { kind: 'fiddleYard', yardId: 'nope', roadId: 'r' };
+    st.roster[0].location = { kind: 'place', placeId: 'nope', roadId: 'r' };
     const m = migrate(st);
     expect(m.boxes[0].layoutId).toBe('');
     expect(m.settings.activeLayoutId).toBe('layout1');
@@ -68,7 +81,7 @@ describe('layouts: changes', () => {
     expect(st.layouts).toHaveLength(0);
     expect(st.settings.activeLayoutId).toBe('');
     expect(st.boxes[0].layoutId).toBe('');
-    expect(st.boxes[0].connections[0].fiddleYardId).toBe('');
+    expect(st.boxes[0].connections[0].placeId).toBe('');
     expect(st.roster[0].location.kind).toBe('offLayout');
     expect(unassignedBoxes(st)).toHaveLength(1);
     const a = addLayout(st);
@@ -79,48 +92,46 @@ describe('layouts: changes', () => {
     expect(activeLayout(st)?.id).toBe(a.id);
   });
 
-  it('sets the number of fiddle yards and roads; trains on removed roads go off the layout', () => {
+  it('sets the number of roads in a fiddle yard; trains on removed roads stay in the yard, and go off the layout with it', () => {
     const st = createDefaultState();
-    const up = addYard(st, 'layout1')!;
+    const up = addPlace(st, 'layout1', 'fiddleYard')!;
     expect(up.roads).toHaveLength(4);
-    expect(setYardRoadCount(st, up.id, 6)).toBeNull();
+    expect(setRoadCount(st, up.id, 6)).toBeNull();
     expect(up.roads.map((r) => r.name)).toEqual(['Road 1', 'Road 2', 'Road 3', 'Road 4', 'Road 5', 'Road 6']);
-    st.roster[0].location = { kind: 'fiddleYard', yardId: up.id, roadId: up.roads[4].id };
-    st.roster[1].location = { kind: 'fiddleYard', yardId: up.id, roadId: up.roads[0].id };
+    st.roster[0].location = { kind: 'place', placeId: up.id, roadId: up.roads[4].id };
+    st.roster[1].location = { kind: 'place', placeId: up.id, roadId: up.roads[0].id };
     expect(trainsBeyondRoad(st, up.id, 3).map((l) => l.id)).toEqual([st.roster[0].id]);
-    expect(setYardRoadCount(st, up.id, 3)).toBeNull();
+    expect(setRoadCount(st, up.id, 3)).toBeNull();
     expect(up.roads).toHaveLength(3);
-    expect(st.roster[0].location.kind).toBe('offLayout');
-    expect(st.roster[1].location.kind).toBe('fiddleYard');
-    expect(setYardRoadCount(st, up.id, 0)).toMatch(/at least one/);
-    // Removing one road, then the whole yard.
-    st.roster[2].location = { kind: 'fiddleYard', yardId: up.id, roadId: up.roads[2].id };
+    expect(st.roster[0].location).toEqual({ kind: 'place', placeId: up.id, roadId: '' });
+    expect(setRoadCount(st, up.id, 0)).toMatch(/at least one/);
+    st.roster[2].location = { kind: 'place', placeId: up.id, roadId: up.roads[2].id };
     expect(removeRoad(st, up.id, up.roads[2].id)).toBe(1);
-    expect(st.roster[2].location.kind).toBe('offLayout');
     expect(up.roads).toHaveLength(2);
-    expect(removeYard(st, up.id)).toBe(1);
+    expect(removePlace(st, up.id)).toBe(3);
     expect(st.roster[1].location.kind).toBe('offLayout');
-    expect(st.layouts[0].fiddleYards).toHaveLength(1);
+    expect(st.layouts[0].places.filter((p) => p.kind === 'fiddleYard')).toHaveLength(1);
   });
 
-  it('new connections run to a yard on the box\'s own layout', () => {
+  it('new connections run to a fiddle yard on the box\'s own layout', () => {
     const st = createDefaultState();
     const other = addLayout(st);
-    const yard = addYard(st, other.id)!;
+    const yard = addPlace(st, other.id, 'fiddleYard')!;
     const box = addBox(st, other.id);
-    expect(addConnection(st, box)!.fiddleYardId).toBe(yard.id);
+    expect(addConnection(st, box)!.placeId).toBe(yard.id);
     setBoxLayout(st, box.id, '');
     expect(box.layoutId).toBe('');
+    expect(box.connections[0].placeId).toBe('');
+    expect(yard.workedBy).toEqual([]);
   });
 
   it('the trains-on-layout register only lists the box\'s own layout', () => {
     const st = createDefaultState();
     const other = addLayout(st);
-    addYard(st, other.id);
-    const away = addBox(st, other.id);
+    addPlace(st, other.id, 'fiddleYard');
+    addPlace(st, other.id, 'station', { name: 'Elsewhere' });
     const reg = trainsOnLayout(st, st.boxes[0].id);
-    expect(reg.some((r) => r.kind === 'station' && r.box.id === away.id)).toBe(false);
-    expect(reg.filter((r) => r.kind === 'yard').map((r) => r.name)).toEqual(['Fiddle Yard']);
+    expect(reg.map((r) => r.name)).toEqual(['Becton', 'Becton sidings', 'Fiddle Yard']);
   });
 });
 
@@ -160,7 +171,7 @@ describe('track owned by connected (simulated) boxes', () => {
     const other = addTrack(p, { kind: 'box', boxId: 'elsewhere' });
     placeMarker(p, { kind: 'box', boxId: 'becton' }, a.id);
     const dest = addLayout(st);
-    const yard = addYard(st, dest.id)!;
+    const yard = addPlace(st, dest.id, 'fiddleYard')!;
     const impact = moveBoxImpact(st, 'becton', dest.id);
     expect(impact).toHaveLength(1);
     expect(impact[0].usage).toEqual({ circuits: 3, junctions: 1, exits: 1, markers: 1 });
@@ -171,7 +182,7 @@ describe('track owned by connected (simulated) boxes', () => {
     expect((line.ends[0] as { to: { kind: string } }).to.kind).toBe('offScene');
     expect(p.markers).toHaveLength(0);
     // Its connection now runs to the new layout's yard.
-    expect(st.boxes[0].connections[0].fiddleYardId).toBe(yard.id);
+    expect(st.boxes[0].connections[0].placeId).toBe(yard.id);
     expect(moveBoxImpact(st, 'becton', 'layout1')).toHaveLength(0);
   });
 

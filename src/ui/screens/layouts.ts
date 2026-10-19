@@ -1,25 +1,7 @@
 import { addBox } from '../../core/boxes';
-import {
-  activeLayout,
-  addLayout,
-  addYard,
-  boxesOn,
-  checkLayoutName,
-  checkYardName,
-  deleteLayout,
-  findLayout,
-  MAX_ROADS,
-  MAX_YARDS,
-  moveBoxImpact,
-  removeYard,
-  setActiveLayout,
-  setBoxLayout,
-  setYardRoadCount,
-  trainsBeyondRoad,
-  yardOccupants,
-  type PlanUsage,
-} from '../../core/layouts';
-import type { AppState, FiddleYard, Layout, Loco } from '../../core/types';
+import { activeLayout, addLayout, boxesOn, checkLayoutName, deleteLayout, findLayout, moveBoxImpact, setActiveLayout, setBoxLayout, type PlanUsage } from '../../core/layouts';
+import { kindInfo, PLACE_KINDS, placeOccupants } from '../../core/places';
+import type { AppState, Layout, Loco } from '../../core/types';
 import { locoFullName, topBar, type Ctx, type Screen } from '../app';
 import { disposeBoxRuntime } from '../boxRuntime';
 import { confirmButton, confirmDialog, h, toast } from '../dom';
@@ -28,7 +10,8 @@ import { plusIcon } from './boxConfig';
 /*
  * Layouts: the layout configurator opens on a list of the layouts set up in the
  * app (or a prompt to create the first one). Each layout's Details tab holds its
- * name, whether it is the active layout, its signal boxes and its fiddle yards.
+ * name, whether it is the active layout and its signal boxes; its Places tab holds
+ * its stations, sidings, goods yards, depots and fiddle yards (places.ts).
  */
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -42,12 +25,17 @@ export function planCounts(l: Layout): string {
 /** One line for the main menu's Layout configurator item. */
 export function layoutMenuSummary(state: AppState): string {
   const a = activeLayout(state);
-  if (!a) return 'Create a layout: its track plan, fiddle yards and signal boxes';
+  if (!a) return 'Create a layout: its track plan, places and signal boxes';
   const others = state.layouts.length - 1;
   return `${a.name}: ${planCounts(a).replace('No track plan yet', 'no track plan yet')}${others > 0 ? ` · ${plural(others, 'other layout')}` : ''}`;
 }
 
-const yardText = (y: FiddleYard) => `${y.name} (${plural(y.roads.length, 'road')})`;
+/** "2 stations, 1 fiddle yard" */
+export const placesText = (l: Layout) =>
+  PLACE_KINDS.map((k) => ({ k, n: l.places.filter((p) => p.kind === k.kind).length }))
+    .filter((x) => x.n)
+    .map((x) => `${x.n} ${(x.n === 1 ? x.k.name : x.k.plural).toLowerCase()}`)
+    .join(', ') || 'none yet';
 
 const usageText = (u: PlanUsage) =>
   [
@@ -102,8 +90,8 @@ export function confirmTrainsOff(trains: Loco[], title: string, what: string, co
   });
 }
 
-/** Route for a layout in the editor. `tab` = 'details' opens its Details tab first. */
-export const layoutRoute = (id: string, tab?: 'details') => `plan/${id}${tab ? `/${tab}` : ''}`;
+/** Route for a layout in the editor. `tab` opens its Details or Places tab first. */
+export const layoutRoute = (id: string, tab?: 'details' | 'places') => `plan/${id}${tab ? `/${tab}` : ''}`;
 
 export function layoutListScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;
@@ -121,7 +109,7 @@ export function layoutListScreen(ctx: Ctx): Screen {
         'ul',
         { class: 'plain bt-conns' },
         h('li', null, h('strong', null, 'Signal boxes: '), boxes.length ? boxes.map((b) => b.name).join(', ') : 'none yet'),
-        h('li', null, h('strong', null, 'Fiddle yards: '), l.fiddleYards.length ? l.fiddleYards.map(yardText).join(', ') : 'none'),
+        h('li', null, h('strong', null, 'Places: '), placesText(l)),
         h('li', null, h('strong', null, 'Track plan: '), planCounts(l)),
       ),
       h(
@@ -164,7 +152,7 @@ export function layoutListScreen(ctx: Ctx): Screen {
     },
     plusIcon(),
     h('span', { class: 'mi-label' }, st.layouts.length ? 'Create a new layout' : 'Create your first layout'),
-    h('span', { class: 'mi-sub' }, 'Name it, set up its fiddle yards and signal boxes, then draw its track plan.'),
+    h('span', { class: 'mi-sub' }, 'Name it, set up its signal boxes and places, then draw its track plan.'),
   );
 
   return {
@@ -178,14 +166,14 @@ export function layoutListScreen(ctx: Ctx): Screen {
         { class: 'muted layout-intro' },
         st.layouts.length
           ? 'Open a layout to work on it, or create a new one. The active layout decides which signal boxes Open a signal box offers.'
-          : 'There are no layouts yet. A layout has its own track plan, fiddle yards and signal boxes. Your locomotive roster is shared by every layout.',
+          : 'There are no layouts yet. A layout has its own track plan, places (stations, sidings, fiddle yards…) and signal boxes. Your locomotive roster is shared by every layout.',
       ),
       h('nav', { class: 'menu-shelf box-shelf', 'aria-label': 'Layouts' }, ...st.layouts.map(tile), addTile),
     ),
   };
 }
 
-/** The Details tab: name, active, signal boxes and fiddle yards of one layout. */
+/** The Details tab: name, active and signal boxes of one layout, and a summary of its places. */
 export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
   const st = ctx.store.state;
   const layout = findLayout(st, layoutId)!;
@@ -334,107 +322,17 @@ export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
     addBoxTile,
   );
 
-  // ---------------------------------------------------------------- fiddle yards
-  const yardCase = (y: FiddleYard) => {
-    const occ = yardOccupants(st, y.id).length;
-    const roadsId = `ld_roads_${y.id}`;
-    const roadsErr = h('small', { class: 'field-error', id: `${roadsId}_err`, role: 'alert', hidden: true });
-    const roadsInput = h('input', {
-      id: roadsId,
-      type: 'number',
-      min: 1,
-      max: MAX_ROADS,
-      step: 1,
-      inputmode: 'numeric',
-      value: y.roads.length,
-      'aria-describedby': `${roadsId}_err`,
-      on: {
-        keydown: (e: KeyboardEvent) => {
-          if (['-', '+', 'e', 'E', '.', ','].includes(e.key)) e.preventDefault();
-        },
-        change: (e: Event) => {
-          const input = e.target as HTMLInputElement;
-          const n = Number(input.value);
-          const apply = () => {
-            let err: string | null = null;
-            ctx.store.update((a) => (err = setYardRoadCount(a, y.id, n)));
-            if (err) {
-              roadsErr.textContent = err;
-              roadsErr.hidden = false;
-              input.value = String(y.roads.length);
-              toast(err);
-            }
-          };
-          const lost = Number.isInteger(n) && n >= 1 ? trainsBeyondRoad(ctx.store.state, y.id, n) : [];
-          confirmTrainsOff(lost, `Cut ${y.name} to ${plural(n, 'road')}?`, 'on the roads being removed', 'Remove the roads', () => {
-            apply();
-            if (lost.length) toast(`${plural(lost.length, 'train')} moved off the layout.`);
-          }, () => (input.value = String(y.roads.length)));
-        },
-      },
-    });
-    return h(
-      'div',
-      { class: 'ld-yard' },
-      h(
-        'div',
-        { class: 'form-grid tight' },
-        checked(`ld_yname_${y.id}`, 'Fiddle yard name', y.name, 40, (v) => checkYardName(layout, v, y.id), (v) => upd((l) => {
-          const yy = l.fiddleYards.find((x) => x.id === y.id);
-          if (yy) yy.name = v;
-        }), 'e.g. Up yard, Down yard'),
-        h('div', { class: 'field' }, h('label', { for: roadsId }, 'Roads'), roadsInput, roadsErr, h('small', { class: 'help' }, `1 to ${MAX_ROADS}`)),
-      ),
-      h('p', { class: 'help' }, `${y.roads.map((r) => r.name).join(' · ')}${occ ? ` — ${plural(occ, 'train')} standing here` : ''}. Rename roads and place trains in Fiddle yard & station.`),
-      h(
-        'div',
-        { class: 'row end' },
-        (() => {
-          const remove = () => {
-            let n = 0;
-            ctx.store.update((a) => (n = removeYard(a, y.id)));
-            toast(`${y.name} removed.${n ? ` ${plural(n, 'train')} moved off the layout.` : ''}`);
-          };
-          const trains = yardOccupants(st, y.id);
-          return trains.length
-            ? h('button', { class: 'btn danger small', type: 'button', on: { click: () => confirmTrainsOff(yardOccupants(ctx.store.state, y.id), `Remove ${y.name}?`, `in ${y.name}`, 'Remove the yard', remove) } }, `Remove ${y.name}`)
-            : confirmButton(`Remove ${y.name}`, 'Press again to remove', remove, 'btn danger small');
-        })(),
-      ),
-    );
-  };
-  const addYardTile = h(
-    'button',
-    {
-      class: 'add-tile ld-add',
-      type: 'button',
-      id: 'ld_add_yard',
-      disabled: layout.fiddleYards.length >= MAX_YARDS,
-      on: {
-        click: () => {
-          let y: FiddleYard | null = null;
-          ctx.store.update((a) => (y = addYard(a, layout.id)));
-          if (y)
-            window.setTimeout(() => {
-              const el = document.getElementById(`ld_yname_${(y as FiddleYard).id}`) as HTMLInputElement | null;
-              el?.focus();
-              el?.select();
-            }, 0);
-        },
-      },
-    },
-    plusIcon(),
-    h('span', { class: 'mi-label' }, 'Add a fiddle yard'),
-    h('span', { class: 'mi-sub' }, layout.fiddleYards.length >= MAX_YARDS ? `No more than ${MAX_YARDS} fiddle yards.` : 'Starts with four roads; change the number to suit.'),
-  );
-  const yardsCase = h(
+  // ---------------------------------------------------------------- places (edited in their own tab)
+  const placesCase = h(
     'article',
     { class: 'config-case' },
-    h('span', { class: 'plate' }, 'Fiddle yards'),
-    h('p', { class: 'help' }, `${layout.name} has ${plural(layout.fiddleYards.length, 'fiddle yard')}. For example, an up and a down fiddle yard of four roads each. Connections in the box configurator choose which yard they run to.`),
-    ...layout.fiddleYards.map(yardCase),
-    addYardTile,
+    h('span', { class: 'plate' }, 'Places'),
+    h('p', { class: 'help' }, `Stations, sidings, goods yards and sheds, loco depots and fiddle yards on ${layout.name}: ${placesText(layout)}.`),
+    layout.places.length
+      ? h('ul', { class: 'plain ld-places' }, ...layout.places.map((p) => h('li', null, h('strong', null, p.name), h('small', { class: 'help' }, ` · ${kindInfo(p.kind).name.toLowerCase()} · ${plural(p.roads.length, 'road')}${placeOccupants(st, p.id).length ? ` · ${plural(placeOccupants(st, p.id).length, 'train')}` : ''}`))))
+      : null,
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.go(layoutRoute(layout.id, 'places')) } }, 'Set up places')),
   );
 
-  return h('div', { class: 'ld-grid' }, layoutCase, boxesCase, yardsCase);
+  return h('div', { class: 'ld-grid' }, layoutCase, boxesCase, placesCase);
 }

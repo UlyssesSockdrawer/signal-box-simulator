@@ -1,5 +1,5 @@
-import { farBoxLocations } from '../../core/boxes';
 import { activeLayout, findLayout } from '../../core/layouts';
+import { placesWorkedBy } from '../../core/places';
 import { newId } from '../../core/store';
 import type { AppState, Location, Loco } from '../../core/types';
 import { activeCodeSet, locationText, topBar, trainTypeName, type Ctx, type Screen } from '../app';
@@ -11,26 +11,29 @@ let openId: string | null = null;
 
 /** Encode a Location as a select value. */
 export function locValue(l: Location): string {
-  if (l.kind === 'fiddleYard') return `fy|${l.yardId}|${l.roadId}`;
-  if (l.kind === 'station') return `st|${l.boxId}`;
-  if (l.kind === 'farBox') return `fb|${l.boxId}|${l.connectionId}`;
+  if (l.kind === 'place') return `pl|${l.placeId}|${l.roadId}`;
+  if (l.kind === 'atBox') return `bx|${l.boxId}`;
   return 'off';
 }
 
 /**
- * Every place a loco can be put, grouped by layout (the active layout first). The roster is
- * shared by every layout, so a loco can be moved to another layout's yard or station.
+ * Every place a loco can be put, grouped by layout (the active layout first): each road of each
+ * place (or the place itself when it has no roads), and boxes that work no place. The roster is
+ * shared by every layout, so a loco can be moved to another layout's places.
  */
 export function locOptions(state: AppState, current: Location): Array<HTMLOptionElement | HTMLOptGroupElement> {
   const cur = locValue(current);
-  const far = farBoxLocations(state);
   const groupFor = (layoutId: string, label: string) => {
     const opts: HTMLOptionElement[] = [];
-    for (const y of findLayout(state, layoutId)?.fiddleYards ?? []) for (const r of y.roads) opts.push(option(`fy|${y.id}|${r.id}`, `${y.name}: ${r.name}`, cur === `fy|${y.id}|${r.id}`));
-    for (const b of state.boxes.filter((x) => (layoutId ? x.layoutId === layoutId : !findLayout(state, x.layoutId)))) opts.push(option(`st|${b.id}`, `${b.name} station`, cur === `st|${b.id}`));
-    for (const { box, conn } of far.filter((f) => (layoutId ? f.box.layoutId === layoutId : !findLayout(state, f.box.layoutId)))) {
-      const v = `fb|${box.id}|${conn.id}`;
-      opts.push(option(v, `At ${conn.neighbourName} (line from ${box.name})`, cur === v));
+    for (const p of findLayout(state, layoutId)?.places ?? []) {
+      const loose = `pl|${p.id}|`;
+      // A train somewhere in a place with roads (no road chosen) keeps that choice.
+      if (!p.roads.length || cur === loose) opts.push(option(loose, p.roads.length ? `${p.name} (no road)` : p.name, cur === loose));
+      for (const r of p.roads) opts.push(option(`pl|${p.id}|${r.id}`, `${p.name} · ${r.name}`, cur === `pl|${p.id}|${r.id}`));
+    }
+    for (const b of state.boxes.filter((x) => (layoutId ? x.layoutId === layoutId : !findLayout(state, x.layoutId)))) {
+      const v = `bx|${b.id}`;
+      if (!placesWorkedBy(state, b.id).length || cur === v) opts.push(option(v, `At ${b.name} box`, cur === v));
     }
     return { label, opts };
   };
@@ -45,11 +48,10 @@ export function locOptions(state: AppState, current: Location): Array<HTMLOption
   return [...groups.map((g) => h('optgroup', { label: g.label }, ...g.opts)), off];
 }
 
-export function parseLoc(v: string, prev: Location): Location {
+export function parseLoc(v: string): Location {
   const [k, a, b] = v.split('|');
-  if (k === 'fy') return { kind: 'fiddleYard', yardId: a, roadId: b };
-  if (k === 'st') return { kind: 'station', boxId: a, note: prev.kind === 'station' ? prev.note : '' };
-  if (k === 'fb') return { kind: 'farBox', boxId: a, connectionId: b, note: prev.kind === 'farBox' ? prev.note : '' };
+  if (k === 'pl') return { kind: 'place', placeId: a, roadId: b ?? '' };
+  if (k === 'bx') return { kind: 'atBox', boxId: a };
   return { kind: 'offLayout' };
 }
 
@@ -101,7 +103,7 @@ export function rosterScreen(ctx: Ctx): Screen {
         ),
         field('Consist', h('input', { id: `r_${l.id}_consist`, type: 'text', value: l.working.consist, placeholder: 'e.g. 4 coaches', on: { change: (e: Event) => upd(l.id, (x) => (x.working.consist = (e.target as HTMLInputElement).value)) } })),
         field('Headcode', h('input', { id: `r_${l.id}_hc`, type: 'text', value: l.working.headcode, on: { change: (e: Event) => upd(l.id, (x) => (x.working.headcode = (e.target as HTMLInputElement).value)) } })),
-        field('Where it is', h('select', { id: `r_${l.id}_loc`, on: { change: (e: Event) => upd(l.id, (x) => (x.location = parseLoc((e.target as HTMLSelectElement).value, x.location))) } }, ...locOptions(st, l.location))),
+        field('Where it is', h('select', { id: `r_${l.id}_loc`, on: { change: (e: Event) => upd(l.id, (x) => (x.location = parseLoc((e.target as HTMLSelectElement).value))) } }, ...locOptions(st, l.location))),
         text(l, 'notes', 'Notes'),
       ),
       h('div', { class: 'row end' }, confirmButton('Delete locomotive', 'Press again to delete', () => ctx.store.update((s) => (s.roster = s.roster.filter((x) => x.id !== l.id))))),

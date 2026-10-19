@@ -1363,3 +1363,238 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .tp-traffic > .btn { align-self: flex-start; white-space: normal; text-align: left; }
 .tp-seg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tp-seg3 .btn { min-width: 0; white-space: normal; line-height: 1.15; }
+
+/* =====================================================================
+   v0.3.13 Signal box console: desk panels as mahogany cases on a teak
+   shelf (like the configurators), so the Big Four themes recolour them;
+   the track diagram board; the score chip and score sheet.
+   ===================================================================== */
+.desk { background: var(--shelf-bg); }
+.desk-panel {
+  background: var(--btn-bg);
+  border: 2px solid var(--btn-border);
+  border-radius: 10px;
+  color: var(--btn-fg);
+  box-shadow: 0 4px 0 var(--ink);
+  padding: 14px;
+}
+.desk-panel .label, .desk-panel .muted, .desk-panel .reg-loc-meta, .desk-panel .log time { color: var(--btn-muted); }
+.desk-panel h2.label { color: var(--btn-fg); }
+.desk-panel .field label, .desk-panel .quick-row label, .desk-panel .line-bar label { color: var(--btn-fg); }
+.desk-panel input[type='text'], .desk-panel input[type='number'], .desk-panel select {
+  background: var(--shelf-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-border);
+}
+.desk-panel input:hover, .desk-panel select:hover { border-color: var(--btn-hover); }
+.desk-panel select option { background: var(--shelf-bg); color: var(--btn-fg); }
+.desk-panel input::placeholder { color: var(--btn-muted); opacity: 0.8; }
+.desk-panel .btn:not(.primary) { background: var(--shelf-bg); }
+.desk-panel .btn.danger.armed { background: var(--signal-red); color: #fff; }
+.desk-panel .status.go { color: #9be3b4; }
+.desk-panel .train-card { border-color: var(--btn-border); background: var(--shelf-bg); }
+.desk-panel .dcc { background: var(--ink); color: #f5f3ec; border: 1px solid var(--btn-border); }
+.desk-panel .working-editor { border-color: var(--btn-border); }
+.desk-panel .reg-loc { border-top-color: var(--btn-border); }
+.desk-panel .yard-list dd.muted, .desk-panel .yard-list dt.muted { color: var(--btn-muted); }
+.desk-panel .log li { border-bottom: 1px solid color-mix(in srgb, var(--btn-border) 60%, transparent); border-radius: 0; }
+.desk-panel .log-bellOut span { color: #e9cf8a; }
+.desk-panel .log-hint { background: rgba(230, 180, 80, 0.16); border-radius: 4px; }
+.desk-panel .log-irregularity span { color: var(--btn-danger-fg); }
+.desk-panel .log-status span, .desk-panel .log-action span { color: var(--btn-muted); }
+.desk-panel :focus-visible { outline-color: var(--btn-hover); }
+@media (max-width: 999px) {
+  .desk { padding-top: 6px; }
+  .desk-tabs { border-bottom-color: var(--btn-border); }
+  .desk-tab { color: var(--btn-muted); }
+  .desk-tab[aria-selected='true'] { color: var(--btn-fg); border-bottom-color: var(--btn-primary-bg); }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  .desk { background: var(--shelf-bg); padding-inline: 8px; }
+  .desk-tabs { border-bottom-color: var(--btn-border); }
+  .desk-tab { color: var(--btn-muted); }
+  .desk-tab[aria-selected='true'] { color: var(--btn-fg); border-bottom-color: var(--btn-primary-bg); }
+  .desk-panel { border-radius: 0 0 10px 10px; box-shadow: none; }
+}
+
+/* Track diagram board: enamel in a wooden frame above the block shelf (the same in every theme, like the instruments). */
+.diagram-shelf {
+  flex: 0 0 auto;
+  background: var(--wood-shelf);
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+  border-bottom: 3px solid var(--ink);
+}
+.dg-board {
+  position: relative;
+  background: var(--enamel);
+  border: 8px solid var(--wood-dark);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 2px #c9bfa6, 0 4px 0 var(--ink);
+  padding: 6px 10px;
+}
+.dg-svg { display: block; width: 100%; height: auto; max-height: clamp(80px, 22vh, 260px); }
+/* With the diagram showing, a short screen scrolls the shelf and desk rather than squashing the desk away. */
+@media (min-width: 1000px) {
+  .console-main { overflow-y: auto; }
+  .desk { min-height: 260px; }
+}
+.dg-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--enamel); stroke-width: 4px; stroke-linejoin: round; }
+.dg-tag { font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
+/* Ready for simulated running: an occupied track circuit shows red. */
+.dg-circuit .dg-line { transition: stroke 0.2s; }
+.dg-circuit.occupied .dg-line { stroke: var(--signal-red); }
+.dg-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; opacity: 0.55; transition: opacity 0.15s; }
+.dg-board:hover .dg-tools, .dg-tools:focus-within { opacity: 1; }
+.dg-tool {
+  font: inherit; font-size: 0.72rem; font-weight: 700; min-height: 28px; padding: 2px 8px; cursor: pointer;
+  border: 1px solid #0c0a08; background: #f6f1e3; color: var(--enamel-ink); border-radius: 3px;
+}
+.dg-tool[aria-pressed='true'] { background: var(--enamel-ink); color: var(--enamel); }
+.dg-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; color: var(--enamel-ink); font-weight: 600; padding: 12px 14px; }
+.dg-empty .btn { background: var(--wood-case); color: var(--case-text); border-color: var(--wood-edge); }
+.head-tools .btn[aria-pressed='true'] { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border-color: var(--ink); }
+@media (max-width: 999px) {
+  /* Phones: keep the diagram readable and let it scroll sideways. */
+  .dg-board { overflow-x: auto; overscroll-behavior-x: contain; }
+  .dg-svg { width: max(100%, 640px); max-height: none; }
+  .dg-tools { position: static; justify-content: flex-end; opacity: 1; margin-top: 4px; }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  .diagram-shelf { padding-block: 4px; }
+  .dg-board { border-width: 5px; padding: 2px 6px; }
+  .dg-svg { max-height: 22vh; }
+  .dg-tools { display: none; }
+  .score-word { display: none; }
+  .score-chip { min-height: 36px; padding: 2px 10px; }
+  .head-tools { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+}
+
+/* Score chip on the top ribbon: a brass plate with the running total. */
+.score-chip {
+  position: relative;
+  display: inline-flex; align-items: baseline; gap: 8px;
+  min-height: 34px; padding: 3px 12px;
+  font: inherit; cursor: pointer;
+  background: var(--brass); color: var(--brass-ink);
+  border: 2px solid var(--ink); border-radius: 6px;
+  box-shadow: 0 2px 0 var(--ink);
+}
+.score-chip:hover { filter: brightness(1.07); }
+.score-word { font-family: var(--font-plate); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.score-num { font-family: var(--font-mono); font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.score-delta {
+  position: absolute; left: 50%; top: 100%; transform: translate(-50%, -4px); opacity: 0; pointer-events: none;
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--ink); z-index: 3;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.score-delta.show { opacity: 1; transform: translate(-50%, 4px); }
+.score-delta.pos { background: var(--lever-green); color: #fff; }
+.score-delta.neg { background: var(--signal-red); color: #fff; }
+@media (prefers-reduced-motion: reduce) { .score-delta { transition: none; } }
+
+/* Score sheet: a mahogany case over the dimmed console. */
+.score-sheet { width: min(94vw, 760px); max-height: 92vh; max-height: calc(100dvh - 24px); padding: 18px; overscroll-behavior: contain; border: 2px solid var(--btn-border); overflow: hidden; display: flex; flex-direction: column; gap: 14px; }
+.score-sheet:not([open]) { display: none; }
+.score-sheet::backdrop { background: rgba(12, 10, 8, 0.65); }
+.ss-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.ss-head .plate { margin: 0; }
+.ss-when { color: var(--btn-muted); font-size: 0.85rem; }
+.ss-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: none; }
+.ss-total { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 8px; text-align: center; }
+.ss-total-label { font-family: var(--font-plate); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--btn-muted); }
+.ss-total-num { font-family: var(--font-mono); font-size: clamp(2.6rem, 9vw, 4rem); line-height: 1.05; color: #e9cf8a; font-variant-numeric: tabular-nums; }
+.ss-verdict { font-weight: 600; color: var(--btn-fg); }
+.ss-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.ss-stat { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 6px; border: 1px solid var(--btn-border); border-radius: 6px; }
+.ss-stat strong { font-family: var(--font-mono); font-size: 1.35rem; color: var(--btn-fg); }
+.ss-stat span { font-size: 0.8rem; color: var(--btn-muted); }
+.ss-cats { display: flex; flex-direction: column; gap: 4px; }
+.ss-cat { display: grid; grid-template-columns: minmax(0, 1fr) auto 5ch; gap: 12px; align-items: baseline; padding: 4px 2px; border-bottom: 1px solid var(--btn-border); }
+.ss-cat-name { font-weight: 700; color: var(--btn-fg); }
+.ss-cat-count { font-size: 0.82rem; color: var(--btn-muted); }
+.ss-pts { font-family: var(--font-mono); font-weight: 700; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ss-pts.pos { color: #9be3b4; }
+.ss-pts.neg { color: var(--btn-danger-fg); }
+.ss-log-head { font-family: var(--font-body); font-size: 0.95rem; color: var(--btn-fg); margin-top: 4px; }
+.ss-log-wrap { overflow-x: auto; width: 100%; }
+.ss-log-wrap .ss-log { width: 100%; }
+.ss-log { font-size: 0.88rem; }
+.ss-log th { color: var(--btn-muted); border-bottom-color: var(--btn-border); position: sticky; top: 0; background: var(--btn-bg); }
+.ss-log td { color: var(--btn-fg); border-bottom-color: color-mix(in srgb, var(--btn-border) 70%, transparent); padding: 5px 8px; }
+.ss-log tfoot td { font-weight: 700; border-bottom: 0; border-top: 2px solid var(--btn-border); }
+.ss-time { font-family: var(--font-mono); font-size: 0.8rem; color: var(--btn-muted) !important; white-space: nowrap; }
+.ss-line { white-space: nowrap; }
+.ss-detail { color: var(--btn-muted); }
+.ss-row.ss-safety td:nth-child(3) { font-weight: 700; }
+.ss-empty { color: var(--btn-muted); }
+.score-sheet .row.end { gap: 10px; flex: 0 0 auto; }
+.score-sheet .btn:not(.primary):not(.armed) { background: var(--shelf-bg); }
+.score-sheet .btn.danger.armed { background: var(--signal-red); color: #fff; border-color: var(--ink); }
+@media (max-width: 520px) {
+  /* Phones: the whole sheet scrolls as one (its buttons stay at the bottom), filling the visible screen. */
+  .score-sheet { padding: 12px; width: calc(100vw - 16px); max-width: none; max-height: calc(100dvh - 16px); margin: auto; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+  .ss-body { flex: 0 0 auto; overflow: visible; }
+  .score-sheet .row.end { position: sticky; bottom: -12px; background: var(--btn-bg); padding-block: 10px 12px; border-top: 1px solid var(--btn-border); flex-wrap: wrap; }
+  .ss-log th { position: static; }
+  .ss-line { display: none; }
+  .ss-log th:nth-child(2) { display: none; }
+}
+
+/* Printing the score sheet (e.g. a certificate for a visitor): only the sheet, on white. */
+@media print {
+  body:has(.score-sheet[open]) > *:not(.score-sheet) { display: none !important; }
+  .score-sheet { position: static; width: 100%; max-height: none; overflow: visible; border: 0; background: #fff; color: #000; box-shadow: none; }
+  .score-sheet *, .score-sheet .ss-log th { color: #000 !important; background: transparent !important; border-color: #999 !important; }
+  .score-sheet .row.end { display: none; }
+  .ss-body { overflow: visible; }
+}
+
+/* =====================================================================
+   v0.3.14 Places: the layout configurator's Places tab (mahogany cases
+   on the teak shelf, grouped by kind), Trains in places, and arrivals.
+   ===================================================================== */
+.pl-page { display: flex; flex-direction: column; gap: 18px; }
+.shelf-help { color: var(--btn-muted); max-width: 80ch; margin: 0; }
+.pl-group { display: flex; flex-direction: column; gap: 10px; }
+.pl-group-head { margin: 0; }
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; align-items: start; }
+.pl-case { gap: 12px; }
+.pl-case .panel-head { align-items: center; }
+.pl-kind-tag { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--btn-muted); border: 1px solid var(--btn-border); border-radius: 99px; padding: 2px 10px; }
+.pl-case .form-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+.pl-case textarea { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); border-radius: var(--radius); padding: 8px 10px; font: inherit; resize: vertical; }
+.pl-section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.pl-section .shelf-label { margin: 0; }
+.pl-section > .btn { align-self: flex-start; }
+.pl-checks { display: flex; flex-direction: column; gap: 2px; }
+.pl-checks .check { color: var(--btn-fg); min-height: 36px; }
+.pl-checks .check input { accent-color: var(--brass); flex: 0 0 auto; }
+.pl-roads { display: flex; flex-direction: column; gap: 8px; }
+.pl-road { background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.pl-road-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 8px; }
+.pl-road-notes { grid-column: 1 / -1; }
+.pl-road .field label { color: var(--btn-fg); font-size: 0.85rem; }
+.pl-road input[type='text'], .pl-road select { background: var(--btn-bg); }
+.pl-road-foot { justify-content: space-between; }
+.pl-road .btn.danger { background: var(--btn-bg); }
+.pl-count { max-width: 14rem; }
+.pl-count input { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); }
+.pl-foot { justify-content: space-between; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.pl-add { cursor: default; padding: 18px; }
+.pl-add-kinds { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.pl-add-kinds .btn { background: var(--shelf-bg); }
+.ld-places { display: flex; flex-direction: column; gap: 4px; }
+.ld-places li { color: var(--btn-fg); }
+.bc-places { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.bc-places .help { margin: 0; flex: 1 1 260px; }
+.tp-placeroad { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
+.tp-placeroad select { width: 100%; }
+/* Trains in places */
+.place-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.road-title { font-weight: 700; flex: 0 0 auto; margin-right: 8px; }
+.road .road-head { align-items: baseline; }
+.put-select { max-width: 100%; }
+/* Where an arriving train is put, beside the "arrived complete" button on the case */
+.case-action select { flex: 0 1 200px; min-width: 0; background: var(--wood-dark); color: var(--case-text); border-color: var(--wood-edge); }
+.desk-panel .reg-loc.mine .reg-loc-name::after { content: ' · yours'; font-weight: 600; font-size: 0.8rem; color: var(--btn-muted); }
