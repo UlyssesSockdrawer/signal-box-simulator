@@ -76,6 +76,116 @@ export interface Loco {
   notes: string;
   working: Working;
   location: Location;
+  /** Target timetable jobs: the kinds of work this loco is given in timetables (and by the timetable generator). */
+  jobs?: LocoJob[];
+  /** Where it stables between jobs ('' or absent = wherever it is). */
+  homePlaceId?: string;
+}
+
+/**
+ * A target timetable job for a loco: a kind of train it works (between the places listed), or
+ * station pilot / shunter duty in the places listed. Used to find "any loco for …" in a timetable
+ * and, later, to build timetables automatically.
+ */
+export interface LocoJob {
+  id: string;
+  kind: 'working' | 'pilot';
+  /** The kind of train it works on this job (TrainType id). Pilots shunt as light engine. */
+  trainTypeId: string;
+  /** Places it runs to and from on this job (or shunts, for a pilot). Empty = anywhere. */
+  placeIds: string[];
+  /** How often it gets this job: 1 sometimes, 2 often, 3 mostly. */
+  weight: 1 | 2 | 3;
+}
+
+// ---------------------------------------------------------------------------
+// Timetables (v0.3.24)
+// ---------------------------------------------------------------------------
+// A timetable belongs to one layout (it names that layout's places and roads). It is a list of
+// ENTRIES in order, each one move or action, and each entry belongs to a TRAIN: a chain of moves
+// worked by one loco (e.g. ordinary passenger into a terminus platform, then light engine to the
+// sidings, light engine back on to its coaches, then ordinary passenger to the fiddle yard).
+
+/**
+ * How a timetable runs: an operations SEQUENCE (no times: each move is released when the one before
+ * it has finished), REAL time (by the system clock), or a SESSION clock (started when the session
+ * starts, optionally from a chosen time and as a fast clock).
+ */
+export type TimetableTiming = 'sequence' | 'clock' | 'session';
+
+/**
+ * run: a signalled move from one place to another (over the lines between boxes);
+ * enter: comes on to the layout from off layout (e.g. into a fiddle yard road);
+ * leave: goes off the layout (back to storage);
+ * shunt: a move (or a change of working where it stands) within a box's area, no block signalling;
+ * note: an instruction or reminder, no move.
+ */
+export type TimetableEntryKind = 'run' | 'enter' | 'leave' | 'shunt' | 'note';
+
+/** A place on a layout and one of its roads ('' = any road, the signaller's choice). */
+export interface PlaceRef {
+  placeId: string;
+  roadId: string;
+}
+
+/** A place a run calls at (stops) or passes on its way. Times in minutes on the timetable's clock, or null. */
+export interface TimetableCall extends PlaceRef {
+  stop: boolean;
+  arr: number | null;
+  dep: number | null;
+}
+
+export interface TimetableEntry {
+  id: string;
+  /** The train it belongs to ('' for a note that is not about one train). */
+  trainId: string;
+  kind: TimetableEntryKind;
+  /** When the move starts (departs), in minutes on the timetable's clock; null when not timed. */
+  dep: number | null;
+  /** When it arrives at `to`, in minutes; null when not given. */
+  arr: number | null;
+  /** Sequence timetables: released together with the entry before it, not after it has finished. */
+  withPrevious: boolean;
+  /** What the train runs as for this move (TrainType id): sets its description and bell code. */
+  trainTypeId: string;
+  /** Reporting number, e.g. 2B05 (optional). */
+  headcode: string;
+  /** Where the move starts (not used by 'enter'). */
+  from: PlaceRef;
+  /** Where it ends (not used by 'leave'). */
+  to: PlaceRef;
+  /** Places it calls at or passes on the way (runs only). */
+  calls: TimetableCall[];
+  notes: string;
+}
+
+export interface TimetableTrain {
+  id: string;
+  /** e.g. "Train 3", or a name such as "The Mid-day Scot". */
+  name: string;
+  /** The roster loco that works it; '' = any loco with a job for `anyWorking`, chosen when it runs. */
+  locoId: string;
+  anyWorking: string;
+  /** e.g. "4 coaches". */
+  consist: string;
+  notes: string;
+}
+
+export interface Timetable {
+  id: string;
+  name: string;
+  timing: TimetableTiming;
+  /** Session clock: the time shown when the session starts (minutes after midnight). */
+  startAt: number;
+  /** Session clock: show times as minutes after the start (+0:05) instead of clock times. */
+  elapsed: boolean;
+  /** Session clock speed: 1 = real time, 2–12 = a fast clock. */
+  speed: number;
+  /** Line under the poster's title, e.g. "Weekdays" or "Gala weekend". */
+  validity: string;
+  notes: string;
+  trains: TimetableTrain[];
+  entries: TimetableEntry[];
 }
 
 /*
@@ -325,6 +435,8 @@ export interface Layout {
   trackPlan: TrackPlan;
   /** Which side of a double line trains keep to (default left, as in Britain). */
   running?: RunningSide;
+  /** Timetables for this layout (v0.3.24; filled in when loading older saves). */
+  timetables?: Timetable[];
 }
 
 export interface AppState {

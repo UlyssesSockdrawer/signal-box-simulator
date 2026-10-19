@@ -225,6 +225,40 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Timetables, part 1: the editor, poster and train cards (v0.3.24)
+
+**Timetables** on the main menu lists the active layout's timetables. A timetable belongs to one
+layout and is a list of **moves**, train by train. Each move is a **Run** (signalled from one place
+to another over the lines between boxes), a **Shunt / change working** (within one box's area, or
+a change of working where the train stands), **Enter from off layout**, **Leave the layout**, or a
+**Note**. Each has a working (its description and bell code), an optional reporting number, from
+and to (place and road), places it calls at or passes, and notes for the operators.
+
+* A **train** is a chain of moves worked by one loco (or "any loco" with a job for its working).
+  **+ Then this train…** adds its next move starting where the last one ended, so a terminus
+  turnaround is quick: ordinary passenger into a platform, light engine to the shed, light engine
+  back on to the coaches, ordinary passenger out again.
+* Three ways to run: **Operations sequence** (no times: each move is released when the one before
+  has finished, or *with* it), **Real time** (system clock) and **Session clock** (from a start time
+  or as minutes after the start, at real speed or as a fast clock up to ×12).
+* The **Moves** tab shows the moves **In order** or **By train**, checks them as you edit (a loco
+  starting somewhere its last move did not leave it, a road or place that no longer exists, no route
+  between two places, a loco booked on two trains at once, a road another train still stands on,
+  backwards times), shows the **route** each move takes through the boxes, and lists the **stock at
+  the start** (with a button to put the locos there in the app). **Step through** shows where every
+  loco stands after each move.
+* **Poster**: a letterpress public timetable (the layout as a railway company, a table per direction,
+  goods and other trains listed below). **Train cards**: one card per move, as in a card-order
+  system. Both print.
+* **Locomotive roster → Timetable jobs**: the work each loco is given (train jobs between places,
+  or station pilot duty) and its home. "Any loco" trains are given to locos with the job; the
+  timetable generator will use them too.
+* Sigsim Central ships with two example timetables (a session-clock morning service and the same
+  moves as an operations sequence). Existing saves keep their data and start with none.
+
+Running a timetable in the box (choosing it for a session, offers and departures from the
+timetable, switching on the fly) is the next version; dynamic timetables come after that.
+
 ## Fixes (v0.3.23)
 
 * **Catch points at Sigsim Central turned round.** They were laid facing into the yard, so set
@@ -442,6 +476,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   sectionController.ts Your end of a block section: instruments, tokens, log
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
+  timetables.ts        Timetables: trains and moves, routes through the boxes, checks, stock positions, poster tables
   throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
   referee.ts           Puts each line's points on the box's scorecard; clean working judged per train
   simulatedNeighbour.ts The far signaller: replies, offers trains, coaches you
@@ -453,6 +488,7 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   planDiagram.ts       Read-only track diagram (the box's diagram board)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
+  screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
 scripts/build.mjs      Builds dist/ (single HTML file, PWA folder, and claude-hosted/ for the hosted copy)
 ```
 

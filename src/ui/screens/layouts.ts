@@ -6,6 +6,7 @@ import { locoFullName, topBar, type Ctx, type Screen } from '../app';
 import { disposeBoxRuntime } from '../boxRuntime';
 import { confirmButton, confirmDialog, h, toast } from '../dom';
 import { plusIcon } from './boxConfig';
+import { timetablesOf } from '../../core/timetables';
 
 /*
  * Layouts: the layout configurator opens on a list of the layouts set up in the
@@ -334,5 +335,34 @@ export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
     h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.go(layoutRoute(layout.id, 'places')) } }, 'Set up places')),
   );
 
-  return h('div', { class: 'ld-grid' }, layoutCase, boxesCase, placesCase);
+  // ---------------------------------------------------------------- timetables (edited on their own screen)
+  const tts = timetablesOf(layout);
+  const ttCase = h(
+    'article',
+    { class: 'config-case' },
+    h('span', { class: 'plate' }, 'Timetables'),
+    h('p', { class: 'help' }, tts.length ? `${plural(tts.length, 'timetable')} for ${layout.name}:` : `No timetables for ${layout.name} yet.`),
+    tts.length ? h('ul', { class: 'plain ld-places' }, ...tts.map((t) => h('li', null, h('strong', null, t.name), h('small', { class: 'help' }, ` · ${plural(t.trains.length, 'train')} · ${plural(t.entries.length, 'move')}`)))) : null,
+    h(
+      'div',
+      { class: 'row' },
+      h(
+        'button',
+        {
+          class: 'btn primary',
+          type: 'button',
+          on: {
+            click: () => {
+              // The timetable list shows the active layout's timetables.
+              if (!isActive) ctx.store.update((a) => setActiveLayout(a, layout.id));
+              ctx.goFrom('timetables', { route: layoutRoute(layout.id, 'details'), label: layout.name });
+            },
+          },
+        },
+        isActive ? 'Timetables' : 'Make active and open timetables',
+      ),
+    ),
+  );
+
+  return h('div', { class: 'ld-grid' }, layoutCase, boxesCase, placesCase, ttCase);
 }

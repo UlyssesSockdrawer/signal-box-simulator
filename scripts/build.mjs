@@ -39,7 +39,7 @@ const css = readFileSync(p('src', 'styles.css'), 'utf8');
 const fonts =
   '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n' +
-  '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Josefin+Sans:wght@600;700&family=Source+Sans+3:wght@400;600;700&display=swap">';
+  '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Alfa+Slab+One&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Josefin+Sans:wght@600;700&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Source+Sans+3:wght@400;600;700&family=Special+Elite&display=swap">';
 const title = '<title>Signal Box Simulator</title>';
 const body = `<div id="app"></div>\n<script>${js}</script>`;
 

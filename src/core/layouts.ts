@@ -63,6 +63,7 @@ export function addLayout(state: AppState, name?: string): Layout {
     places: [],
     trackPlan: emptyPlan(),
     running: 'left',
+    timetables: [],
   };
   state.layouts.push(layout);
   if (!activeLayout(state)) state.settings.activeLayoutId = layout.id;

@@ -5,6 +5,7 @@ import { confirmDialog, field, h, option, toast } from '../dom';
 import { disposeAllBoxRuntimes } from '../boxRuntime';
 import { resetPlacesUi } from './places';
 import { resetRosterUi } from './roster';
+import { resetTimetablesUi } from './timetables';
 import { resetTrackPlanUi } from './trackPlan';
 
 export function settingsScreen(ctx: Ctx): Screen {
@@ -142,6 +143,7 @@ export function settingsScreen(ctx: Ctx): Screen {
     resetTrackPlanUi();
     resetPlacesUi();
     resetRosterUi();
+    resetTimetablesUi();
   };
   const importText = (text: string, ok: string, bad: string) => {
     try {

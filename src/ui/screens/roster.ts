@@ -1,7 +1,8 @@
 import { activeLayout, findLayout } from '../../core/layouts';
 import { placesWorkedBy } from '../../core/places';
 import { newId } from '../../core/store';
-import type { AppState, Location, Loco } from '../../core/types';
+import { blankJob } from '../../core/timetables';
+import type { AppState, Location, Loco, LocoJob } from '../../core/types';
 import { activeCodeSet, locationText, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { confirmButton, field, h, option } from '../dom';
 
@@ -89,7 +90,7 @@ export function rosterScreen(ctx: Ctx): Screen {
         null,
         h('span', { class: 'loco-num' }, l.number || '—'),
         h('span', { class: 'loco-name' }, l.name || l.locoClass || '(unnamed)'),
-        h('span', { class: 'loco-meta' }, `DCC ${l.dccAddress || '—'} · ${trainTypeName(st, l.working.trainTypeId)} · ${locationText(st, l)}`),
+        h('span', { class: 'loco-meta' }, `DCC ${l.dccAddress || '—'} · ${trainTypeName(st, l.working.trainTypeId)} · ${locationText(st, l)}${l.jobs?.length ? ` · ${l.jobs.length} timetable job${l.jobs.length === 1 ? '' : 's'}` : ''}`),
       ),
       h(
         'div',
@@ -111,9 +112,78 @@ export function rosterScreen(ctx: Ctx): Screen {
         field('Where it is', h('select', { id: `r_${l.id}_loc`, on: { change: (e: Event) => upd(l.id, (x) => (x.location = parseLoc((e.target as HTMLSelectElement).value))) } }, ...locOptions(st, l.location))),
         text(l, 'notes', 'Notes'),
       ),
+      jobsSection(l),
       h('div', { class: 'row end' }, confirmButton('Delete locomotive', 'Press again to delete', () => ctx.store.update((s) => (s.roster = s.roster.filter((x) => x.id !== l.id))))),
     );
     return editor;
+  };
+
+  // ---------------------------------------------------------------- timetable jobs
+  const updJob = (locoId: string, jobId: string, fn: (j: LocoJob) => void) =>
+    upd(locoId, (x) => {
+      const j = x.jobs?.find((y) => y.id === jobId);
+      if (j) fn(j);
+    });
+  const jobsSection = (l: Loco) => {
+    const jobs = l.jobs ?? [];
+    const placeGroups = st.layouts.filter((lay) => lay.places.length);
+    const jobRow = (j: LocoJob) => {
+      const jid = `r_${l.id}_job_${j.id}`;
+      return h(
+        'li',
+        { class: 'loco-job' },
+        h(
+          'div',
+          { class: 'form-grid' },
+          j.kind === 'working'
+            ? field('Works', h('select', { id: `${jid}_tt`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.trainTypeId = (e.target as HTMLSelectElement).value)) } }, ...st.trainTypes.map((t) => option(t.id, t.name, t.id === j.trainTypeId))))
+            : h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Duty'), h('strong', null, 'Station pilot / shunter'), h('small', { class: 'help' }, 'Shunts as a light engine in the places ticked.')),
+          field(
+            'How often',
+            h('select', { id: `${jid}_w`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.weight = Number((e.target as HTMLSelectElement).value) as LocoJob['weight'])) } }, option('1', 'Sometimes', j.weight === 1), option('2', 'Often', j.weight === 2), option('3', 'Mostly', j.weight === 3)),
+          ),
+        ),
+        placeGroups.length
+          ? h(
+              'fieldset',
+              { class: 'loco-job-places' },
+              h('legend', null, j.kind === 'pilot' ? 'Where it shunts' : 'Between (none ticked = anywhere)'),
+              ...placeGroups.map((lay) =>
+                h(
+                  'div',
+                  { class: 'loco-job-group' },
+                  placeGroups.length > 1 ? h('small', { class: 'help' }, lay.name) : null,
+                  ...lay.places.map((p) => {
+                    const cid = `${jid}_p_${p.id}`;
+                    return h(
+                      'label',
+                      { class: 'check', for: cid },
+                      h('input', { id: cid, type: 'checkbox', checked: j.placeIds.includes(p.id), on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.placeIds = (e.target as HTMLInputElement).checked ? [...new Set([...x.placeIds, p.id])] : x.placeIds.filter((y) => y !== p.id))) } }),
+                      h('span', null, p.name),
+                    );
+                  }),
+                ),
+              ),
+            )
+          : null,
+        h('div', { class: 'row end' }, h('button', { class: 'btn danger small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = (x.jobs ?? []).filter((y) => y.id !== j.id))) } }, 'Remove job')),
+      );
+    };
+    const homeOpts = [option('', 'Wherever it is', !l.homePlaceId), ...st.layouts.flatMap((lay) => lay.places.map((p) => option(p.id, st.layouts.length > 1 ? `${lay.name}: ${p.name}` : p.name, p.id === l.homePlaceId)))];
+    return h(
+      'section',
+      { class: 'loco-jobs' },
+      h('h3', { class: 'loco-jobs-head' }, 'Timetable jobs'),
+      h('p', { class: 'muted small' }, 'The work this loco is given in timetables. A train worked by “any loco” is given to a loco with a job for it; the timetable generator (coming soon) uses these jobs too.'),
+      jobs.length ? h('ul', { class: 'plain loco-job-list' }, ...jobs.map(jobRow)) : h('p', { class: 'muted small' }, 'No jobs yet: it is chosen for “any loco” trains of the kind it is working as now.'),
+      h(
+        'div',
+        { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = [...(x.jobs ?? []), blankJob('working', x.working.trainTypeId)])) } }, '+ Add a train job'),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = [...(x.jobs ?? []), blankJob('pilot')])) } }, '+ Station pilot duty'),
+      ),
+      field('Home', h('select', { id: `r_${l.id}_home`, on: { change: (e: Event) => upd(l.id, (x) => ((e.target as HTMLSelectElement).value ? (x.homePlaceId = (e.target as HTMLSelectElement).value) : delete x.homePlaceId)) } }, ...homeOpts), 'Where it stables between jobs.'),
+    );
   };
 
   const add = () => {

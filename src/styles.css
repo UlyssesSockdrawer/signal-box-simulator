@@ -1650,3 +1650,276 @@ body.wide-page .tp-page, body.wide-page .config-page { max-width: min(100%, 2200
 .pl-columns { column-width: 540px; column-gap: 14px; }
 .pl-columns > * { break-inside: avoid; margin-bottom: 14px; width: 100%; }
 .pl-columns > .add-tile { display: flex; }
+
+/* =====================================================================
+   v0.3.24 Timetables: list (shelf of cases), editor (Moves / Poster /
+   Train cards / Settings), the letterpress poster and card-order cards.
+   The poster and cards are railway paperwork: the same in every theme.
+   ===================================================================== */
+.tt-timing-tag { margin: -4px 0 0; }
+.tt-bad strong, li.tt-bad { color: var(--btn-danger-fg); }
+.tt-add { cursor: default; }
+.tt-sub { margin: -6px 0 2px; }
+.tt-page .config-tabs { margin-bottom: 2px; }
+.tt-shelf { gap: 12px; }
+.tt-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tt-toolbar .seg .btn { min-height: 36px; min-width: 0; }
+.tt-toolbar .btn:not(.primary):not([aria-pressed='true']) { background: var(--btn-bg); }
+.tt-toolbar .btn[aria-pressed='true']:not(.seg .btn) { background: var(--btn-fg); color: var(--btn-bg); }
+.tt-toolbar #tt_new_train { margin-left: auto; }
+.tt-check-sum { font-weight: 700; font-size: 0.9rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--btn-border); }
+.tt-check-sum.ok { color: #9be3b4; }
+.tt-check-sum.warn { color: #e9cf8a; }
+.tt-check-sum.bad { color: var(--btn-danger-fg); border-color: var(--btn-danger-fg); }
+.tt-spacer { flex: 1 1 auto; }
+.tt-train-warn p { margin: 0; }
+.tt-train-warn p + p { margin-top: 6px; }
+
+/* Rows: one move each, a mahogany strip that opens into its form */
+.tt-rows { display: flex; flex-direction: column; gap: 6px; list-style: none; padding: 0; margin: 0; }
+@container (max-width: 480px) {
+  .tt-row-head { flex-wrap: wrap; gap: 6px 8px; }
+  .tt-what { flex-basis: 100%; order: 5; }
+  .tt-flag { margin-left: auto; }
+}
+.tt-row { background: var(--btn-bg); border: 2px solid var(--btn-border); border-radius: 8px; box-shadow: 0 3px 0 var(--ink); color: var(--btn-fg); container-type: inline-size; }
+.tt-row.open { border-color: var(--btn-hover); }
+.tt-row.stepping { outline: 3px solid var(--brass); outline-offset: 2px; }
+.tt-row.has-error:not(.open) { border-left: 6px solid var(--btn-danger-fg); }
+.tt-row.kind-note { border-style: dashed; }
+.tt-row-head { font: inherit; color: inherit; background: transparent; border: 0; width: 100%; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-height: 48px; }
+.tt-row-head:hover .pl-chev { border-color: var(--btn-hover); }
+.tt-no { font-family: var(--font-mono); font-weight: 600; min-width: 2.6em; text-align: center; background: var(--describer); color: var(--amber); border: 1px solid var(--ink); border-radius: 4px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
+.tt-no.time { min-width: 3.6em; }
+.tt-headcode { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.08em; background: var(--enamel); color: var(--enamel-ink); border-radius: 3px; padding: 1px 6px; }
+.tt-what { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.tt-what-main { font-weight: 600; overflow-wrap: anywhere; }
+.tt-what-sub { color: var(--btn-muted); font-size: 0.85rem; }
+.tt-flag { font-weight: 700; font-size: 0.85rem; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; flex: 0 0 auto; }
+.tt-flag.error { color: var(--btn-danger-fg); }
+.tt-flag.warn { color: #e9cf8a; }
+.tt-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 14px 14px; border-top: 1px solid var(--btn-border); }
+.tt-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+.tt-where { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.tt-time input { max-width: 9rem; font-family: var(--font-mono); }
+.tt-row textarea, .tt-train textarea, .tt-shelf textarea { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); border-radius: var(--radius); padding: 8px 10px; font: inherit; resize: vertical; width: 100%; }
+.tt-row input[type='text'], .tt-row select { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); }
+.tt-row select option { background: var(--shelf-bg); color: var(--btn-fg); }
+.tt-row .field label, .tt-row .field-label { color: var(--btn-fg); font-weight: 600; font-size: 0.9rem; }
+.tt-row .help { color: var(--btn-muted); }
+.tt-row .check { color: var(--btn-fg); min-height: 36px; }
+.tt-row .check input { accent-color: var(--brass); flex: 0 0 auto; }
+.tt-row .btn:not(.primary):not([aria-pressed='true']) { background: var(--shelf-bg); }
+.tt-row .seg .btn { min-height: 36px; min-width: 0; }
+.tt-route { margin: 0; }
+.tt-actions { gap: 8px; }
+.tt-link { align-self: flex-start; margin-top: 4px; }
+.tt-calls { gap: 8px; }
+.tt-call-list { display: flex; flex-direction: column; gap: 8px; }
+.tt-call { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.tt-call > .field:first-child { flex: 1 1 220px; }
+.tt-call .tt-time input { max-width: 6.5rem; }
+.tt-issues { display: flex; flex-direction: column; gap: 4px; }
+.tt-issue { display: flex; gap: 8px; align-items: baseline; background: var(--enamel); color: var(--enamel-ink); border-radius: 4px; padding: 6px 10px; border-left: 6px solid var(--amber); font-weight: 600; }
+.tt-issue.error { border-left-color: var(--signal-red); }
+.tt-issue-mark { font-weight: 700; flex: 0 0 auto; }
+.tt-issue.error .tt-issue-mark { color: var(--signal-red); }
+.tt-foot { gap: 8px; }
+.tt-foot .btn { background: var(--btn-bg); }
+.tt-first { min-height: 160px; }
+
+/* By train */
+.tt-trains { display: flex; flex-direction: column; gap: 12px; }
+.tt-train .tt-rows { margin-top: 2px; }
+.tt-train .tt-row { background: var(--shelf-bg); }
+.tt-train .tt-row .btn:not(.primary):not([aria-pressed='true']) { background: var(--btn-bg); }
+.tt-train .tt-row input[type='text'], .tt-train .tt-row select, .tt-train .tt-row textarea { background: var(--btn-bg); }
+
+/* Stock at the start and stepping */
+.tt-stock-case.needs { border-color: var(--amber); }
+.tt-stock-case .plate { font-size: 0.95rem; }
+.tt-stock { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.tt-stock th { text-align: left; color: var(--btn-muted); font-weight: 600; border-bottom: 1px solid var(--btn-border); padding: 4px 8px 4px 0; }
+.tt-stock td { padding: 6px 8px 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--btn-border) 50%, transparent); vertical-align: top; }
+.tt-stock tr.ok td:last-child { color: #9be3b4; font-weight: 600; }
+.tt-stock tr.move td:last-child { color: #e9cf8a; font-weight: 600; }
+.tt-stock tr.any td { color: var(--btn-muted); }
+@container (max-width: 520px) { .tt-stock th:nth-child(2), .tt-stock td:nth-child(2) { display: none; } }
+.tt-stock-case { container-type: inline-size; }
+.tt-step { border-color: var(--brass); position: sticky; top: 6px; z-index: 5; max-height: 70vh; overflow: auto; }
+.tt-step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.tt-step-what { margin: 0; font-weight: 600; flex: 1 1 260px; }
+.tt-step-btns { gap: 8px; }
+.tt-step-places { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 10px 18px; }
+.tt-step-place .shelf-label { margin: 0 0 4px; }
+.tt-step-place li { font-size: 0.92rem; }
+
+/* Settings */
+.tt-timing-seg { flex-wrap: wrap; }
+.tt-timing-seg .btn { min-width: 0; }
+@media (max-width: 560px) {
+  .tt-timing-seg { flex-direction: column; }
+  .tt-timing-seg .btn, .tt-timing-seg .btn:first-child, .tt-timing-seg .btn:last-child { border-radius: var(--radius); margin: 0 0 4px; }
+  .tt-toolbar #tt_new_train { margin-left: 0; }
+}
+
+/* Roster: timetable jobs inside an open loco */
+details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid var(--line); border-top: 0; border-bottom: 0; padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+.loco-jobs-head { font-size: 1.05rem; margin: 6px 0 0; }
+.loco-jobs p { margin: 0; }
+.loco-job-list { display: flex; flex-direction: column; gap: 8px; }
+.loco-job { border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.loco-job .form-grid { padding: 0; }
+.loco-job .row.end { padding: 0; }
+.loco-job-places { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.loco-job-places legend { font-weight: 600; font-size: 0.9rem; padding: 0; margin-bottom: 4px; }
+.loco-job-group { display: flex; flex-wrap: wrap; gap: 2px 16px; align-items: center; }
+.loco-job-group > .help { flex-basis: 100%; }
+
+/* Print views: tools and paper */
+.tt-print-shelf { gap: 14px; }
+.tt-print-tools { gap: 10px 14px; align-items: flex-end; }
+.tt-print-tools .shelf-help { flex: 1 1 260px; }
+.tt-card-filter { min-width: min(100%, 260px); }
+.tt-card-filter label { color: var(--btn-fg); font-weight: 600; font-size: 0.9rem; }
+.tt-card-filter select { background: var(--btn-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); }
+.tt-paper-wrap { display: flex; justify-content: center; }
+
+/* The letterpress poster */
+.tt-poster {
+  --paper: #f2e7c9;
+  --paper-ink: #1c1510;
+  --paper-red: #8e1c16;
+  width: 100%;
+  max-width: 860px;
+  background:
+    radial-gradient(ellipse at 20% 15%, rgba(255, 255, 255, 0.35), transparent 55%),
+    radial-gradient(ellipse at 80% 90%, rgba(150, 105, 40, 0.18), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(90, 60, 20, 0.025) 0 2px, transparent 2px 4px),
+    var(--paper);
+  color: var(--paper-ink);
+  padding: clamp(10px, 3vw, 26px);
+  box-shadow: inset 0 0 70px rgba(120, 80, 25, 0.28), 0 6px 0 var(--ink), 0 10px 30px rgba(0, 0, 0, 0.35);
+  font-family: 'Old Standard TT', 'Georgia', 'Times New Roman', serif;
+  border-radius: 2px;
+}
+.tt-poster th, .tt-poster td { border-bottom: 0; color: inherit; text-transform: none; letter-spacing: normal; font-size: inherit; vertical-align: baseline; }
+.pp-border { border: 4px double var(--paper-ink); outline: 1px solid var(--paper-ink); outline-offset: 5px; padding: clamp(14px, 3.5vw, 28px) clamp(10px, 3vw, 26px); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.pp-company { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: clamp(0.95rem, 3.2vw, 1.35rem); margin: 0; text-wrap: balance; }
+.pp-title { font-family: 'Abril Fatface', 'Didot', 'Bodoni MT', 'Georgia', serif; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; font-size: clamp(2.3rem, 10vw, 4.8rem); line-height: 0.95; margin: 4px 0 0; color: var(--paper-ink); text-wrap: balance; }
+.pp-of { font-style: italic; font-size: 1.15rem; margin: 0; }
+.pp-title2 { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.1em; font-size: clamp(1.25rem, 5vw, 2.1rem); color: var(--paper-red); margin: 0; }
+.pp-valid { font-style: italic; font-size: 1.05rem; margin: 2px 0 0; }
+.pp-rule { width: 100%; display: flex; align-items: center; gap: 10px; color: var(--paper-ink); margin: 6px 0; }
+.pp-rule::before, .pp-rule::after { content: ''; flex: 1 1 auto; border-top: 3px solid var(--paper-ink); border-bottom: 1px solid var(--paper-ink); height: 3px; }
+.pp-rule.thin::before { border-top-width: 1px; height: 0; border-bottom: 0; }
+.pp-rule.thin::after { display: none; }
+.pp-rule span { font-size: 0.9rem; }
+.pp-empty { font-style: italic; }
+.pp-table { width: 100%; margin-top: 10px; }
+.pp-dir { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; font-size: clamp(0.95rem, 3vw, 1.2rem); margin: 0 0 6px; text-wrap: balance; }
+.pp-dir em { font-family: 'Old Standard TT', 'Georgia', serif; text-transform: none; letter-spacing: 0; font-size: 1.05em; }
+.pp-table.small .pp-dir { font-size: clamp(0.85rem, 2.6vw, 1rem); }
+.pp-scroll { width: 100%; overflow-x: auto; }
+.pp-table table { border-collapse: collapse; margin-inline: auto; font-variant-numeric: tabular-nums lining-nums; border-top: 2px solid var(--paper-ink); border-bottom: 2px solid var(--paper-ink); }
+.pp-table.small table { font-size: 0.9rem; }
+.pp-table th, .pp-table td { padding: 2px 8px; white-space: nowrap; }
+.pp-heads th { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; font-weight: 400; font-size: 0.85rem; letter-spacing: 0.04em; border-bottom: 1px solid var(--paper-ink); padding-top: 5px; }
+.pp-kinds th, .pp-halves th { font-weight: 400; font-style: italic; font-size: 0.82rem; }
+.pp-halves th { border-bottom: 1px solid var(--paper-ink); }
+.pp-kinds th:not(.pp-corner):not(.pp-ad), .pp-halves th:not(.pp-corner):not(.pp-ad) { text-align: right; }
+.pp-kinds strong { font-family: 'Abril Fatface', 'Georgia', serif; font-style: normal; font-weight: 400; font-size: 1.05rem; color: var(--paper-red); }
+.pp-heads th:not(.pp-corner):not(.pp-ad), .pp-t { text-align: right; border-left: 1px solid rgba(28, 21, 16, 0.35); }
+.pp-place { text-align: left; font-weight: 700; padding-right: 4px; min-width: 9em; text-transform: none; letter-spacing: 0.01em; font-size: 0.98rem; color: var(--paper-ink); }
+.pp-list .pp-l { text-align: left; border-left: 1px solid rgba(28, 21, 16, 0.35); }
+.pp-list .pp-train { text-align: left; border-left: 1px solid rgba(28, 21, 16, 0.35); }
+.pp-list .pp-heads th:not(.pp-corner):not(.pp-ad) { text-align: left; }
+.pp-list .pp-heads th:first-child, .pp-list .pp-heads th:last-child { text-align: right; }
+.pp-list .pp-t:first-child { border-left: 0; }
+.pp-table table { min-width: min(100%, 420px); }
+.pp-place span { display: block; }
+.pp-line.cont .pp-place { font-weight: 400; }
+.pp-ad { font-style: italic; font-size: 0.85rem; text-align: left; padding-left: 2px; }
+.pp-t { font-size: 1.05rem; min-width: 3.4em; }
+.pp-line.first td, .pp-line.first th { padding-top: 5px; }
+.pp-line.last td, .pp-line.last th { padding-bottom: 5px; }
+.pp-none { letter-spacing: 0.15em; opacity: 0.7; }
+.pp-pass { font-weight: 700; }
+.pp-stop { font-style: italic; font-size: 0.9rem; }
+.pp-section { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; font-weight: 400; text-transform: uppercase; letter-spacing: 0.1em; font-size: clamp(1rem, 3.4vw, 1.3rem); color: var(--paper-red); margin: 16px 0 0; }
+.pp-section small { font-family: 'Old Standard TT', 'Georgia', serif; text-transform: none; letter-spacing: 0; font-style: italic; font-size: 0.8em; color: var(--paper-ink); }
+.pp-key { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 20px; font-size: 0.92rem; margin-top: 10px; max-width: 60ch; }
+.pp-notes { font-style: italic; max-width: 60ch; margin: 6px 0 0; }
+.pp-order { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.3em; margin: 4px 0 0; }
+.pp-date { margin: 0; font-style: italic; }
+.pp-imprint { margin: 6px 0 0; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.75; }
+
+/* Train cards (card order) */
+.tt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.tt-card {
+  --card: #efe2bd;
+  --card-ink: #231b12;
+  position: relative;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.25), transparent 30%), var(--card);
+  color: var(--card-ink);
+  border-radius: 4px;
+  box-shadow: 0 4px 0 var(--ink), 0 8px 18px rgba(0, 0, 0, 0.3);
+  padding: 0 14px 12px;
+  font-family: 'Special Elite', 'Courier New', var(--font-mono);
+  border-top: 10px solid #8e1c16;
+  overflow: hidden;
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+}
+.tt-card.kind-shunt { border-top-color: #1d4f7a; }
+.tt-card.kind-enter, .tt-card.kind-leave { border-top-color: #2e6b3d; }
+.tt-card.kind-note { border-top-color: #6b5a2e; }
+.tc-head { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid rgba(35, 27, 18, 0.5); padding: 8px 0 6px; }
+.tc-no { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; font-size: 1.6rem; line-height: 1; }
+.tc-no small { font-family: 'Old Standard TT', 'Georgia', serif; font-style: italic; font-size: 0.9rem; margin-right: 2px; }
+.tc-time { font-size: 1.2rem; }
+.tc-hc { font-size: 1.25rem; letter-spacing: 0.12em; }
+.tc-stamp { margin-left: auto; align-self: center; transform: rotate(-7deg); border: 3px solid rgba(142, 28, 22, 0.72); color: rgba(142, 28, 22, 0.78); border-radius: 4px; padding: 0 8px; font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.95rem; pointer-events: none; }
+.tt-card.kind-shunt .tc-stamp { border-color: rgba(29, 79, 122, 0.7); color: rgba(29, 79, 122, 0.8); }
+.tt-card.kind-enter .tc-stamp, .tt-card.kind-leave .tc-stamp { border-color: rgba(46, 107, 61, 0.7); color: rgba(46, 107, 61, 0.8); }
+.tc-body { margin: 8px 0 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; background-image: repeating-linear-gradient(180deg, transparent 0 22px, rgba(60, 90, 140, 0.22) 22px 23px); }
+.tc-row { display: grid; grid-template-columns: 6.6em 1fr; gap: 6px; align-items: baseline; }
+.tc-row dt { font-family: 'Old Standard TT', 'Georgia', serif; font-style: italic; font-size: 0.85rem; }
+.tc-row dd { margin: 0; font-size: 0.95rem; overflow-wrap: anywhere; }
+.tc-foot { border-top: 1px dashed rgba(35, 27, 18, 0.5); margin-top: 8px; padding-top: 6px; font-size: 0.82rem; }
+.tc-foot p { margin: 0; }
+.tc-issue { color: #8e1c16; }
+.tt-card.has-error { outline: 3px solid var(--signal-red); outline-offset: 2px; }
+
+/* While the poster is being fitted to the paper (just before printing): same layout as on paper. */
+.pp-fitting .pp-border { justify-content: space-between; outline-offset: 4px; }
+.pp-fitting .pp-table table { width: 100%; }
+.pp-fitting .pp-scroll { overflow: visible; }
+.pp-fitting .pp-list td, .pp-fitting .pp-list th { white-space: normal; }
+@page { margin: 10mm; }
+@media print {
+  /* Toasts are only for the screen (one left over from an earlier action was printing over the paper). */
+  #toast { display: none !important; }
+  body:has(.tt-print-area) #app > main > *:not(.tt-print-shelf),
+  body:has(.tt-print-area) .tt-print-tools, .tt-print-note { display: none !important; }
+  body:has(.tt-print-area), body:has(.tt-print-area) #app, body:has(.tt-print-area) .tt-print-shelf { background: #fff !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: 0 !important; }
+  body:has(.tt-print-area) .page { max-width: none; padding: 0; margin: 0; }
+  /* Keep the paper colours, card stripes and stamps (browsers drop backgrounds when printing unless told). */
+  body:has(.tt-print-area) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tt-paper-wrap { display: block; }
+  /* The poster is scaled to fit one page just before printing (timetablePrint.ts); nothing scrolls on paper. */
+  .tt-poster { box-shadow: none; max-width: none; margin: 0 auto; }
+  .tt-poster.pp-fitting { margin: 0; break-after: avoid; break-inside: avoid; }
+  .pp-scroll { overflow: visible; }
+  .pp-list td, .pp-list th { white-space: normal; }
+  .pp-table { break-inside: avoid; }
+  .tt-cards { grid-template-columns: repeat(2, 1fr); gap: 6mm; }
+  .tt-card { box-shadow: none; break-inside: avoid; outline: 0; }
+}
+@media (max-width: 560px) {
+  .tt-print-shelf { padding: 8px; }
+  .pp-place { min-width: 0; white-space: normal !important; }
+  .pp-table th, .pp-table td { padding: 2px 5px; }
+  .pp-border { outline-offset: 3px; }
+}

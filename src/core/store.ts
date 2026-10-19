@@ -1,6 +1,7 @@
 import { createDefaultState, DEFAULT_SETTINGS, FALLBACK_LAYOUT_NAME, SCHEMA_VERSION } from './defaults';
 import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
+import { sanitiseTimetables } from './timetables';
 import type { AppState, BoxDef, ConnectionDef, Layout, Place, PlaceRoad, TrackPlan } from './types';
 
 /** Shapes saved by earlier versions (before places, v0.3.13 and earlier). */
@@ -151,6 +152,8 @@ export function migrate(raw: unknown): AppState {
   }
   sanitiseTrackPlan(state);
   sanitisePlaces(state);
+  // Timetables and loco jobs (v0.3.24): older saves have none.
+  sanitiseTimetables(state);
   return state;
 }
 

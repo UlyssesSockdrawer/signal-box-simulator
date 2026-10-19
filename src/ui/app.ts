@@ -14,9 +14,11 @@ import { settingsScreen } from './screens/settings';
 import { layoutListScreen, layoutMenuSummary, moveBoxToLayout } from './screens/layouts';
 import { trackPlanScreen } from './screens/trackPlan';
 import { tutorialScreen } from './screens/tutorial';
+import { timetableListScreen, timetableScreen, timetablesMenuSummary } from './screens/timetables';
+import { findTimetable } from '../core/timetables';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.23';
+export const APP_VERSION = '0.3.24';
 
 export interface Ctx {
   store: Store;
@@ -118,6 +120,7 @@ function menuScreen(ctx: Ctx): Screen {
         item('config', 'Box configurator', 'Each box, its shelf and the boxes it is connected to'),
         item('plan', 'Layout configurator', layoutMenuSummary(st)),
         item('roster', 'Locomotive roster', `${st.roster.length} locomotives`),
+        item('timetables', 'Timetables', timetablesMenuSummary(st)),
         item('layout', 'Trains in places', `${onLayout} ${onLayout === 1 ? 'train' : 'trains'} in ${nPlaces} ${nPlaces === 1 ? 'place' : 'places'}${active ? ` on ${active.name}` : ''}`),
         item('tutorial', 'Tutorial', 'Absolute block and bell codes, step by step'),
         item('help', 'Bell code reference', activeCodeSet(st).name),
@@ -344,6 +347,20 @@ export function startApp(root: HTMLElement, store: Store): void {
           const t = route.split('/')[2];
           screen = trackPlanScreen(ctx, layout.id, t === 'details' || t === 'places' ? t : undefined);
         }
+        break;
+      }
+      case 'timetables':
+        screen = timetableListScreen(ctx);
+        break;
+      case 'tt': {
+        // A timetable's editor: #tt/<id>[/poster|cards|settings].
+        if (!findTimetable(store.state, arg)) {
+          history.replaceState(null, '', '#timetables');
+          screen = timetableListScreen(ctx);
+          break;
+        }
+        const t = route.split('/')[2];
+        screen = timetableScreen(ctx, arg, t === 'poster' || t === 'cards' || t === 'settings' ? t : 'moves');
         break;
       }
       case 'help':
