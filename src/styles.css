@@ -375,6 +375,8 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .log-hint { background: var(--hint-bg); }
 .log-irregularity span { color: var(--danger); }
 .log-status span, .log-action span { color: var(--muted); }
+.log-register span { font-weight: 700; }
+.status.held { color: var(--accent); }
 
 /* ---------- Roster / layout ---------- */
 details.loco { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
@@ -400,6 +402,7 @@ details.loco .row.end { padding: 0 16px 16px; }
 /* ---------- Settings ---------- */
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
 .settings-grid .panel.wide { grid-column: 1 / -1; }
+.settings-grid .panel h3 { font-size: 1rem; margin: 16px 0 4px; }
 @media (max-width: 400px) { .settings-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------- Tables ---------- */
@@ -417,6 +420,9 @@ th { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; colo
 .prose h2 { margin-top: 16px; }
 .prose ul { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 4px; }
 .steps td:nth-child(2) { white-space: nowrap; font-weight: 600; }
+.prose .lead { font-size: 1.08rem; }
+.prose .try-list { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 10px; }
+.prose .try-list li::marker { font-weight: 700; }
 
 /* ---------- Toast ---------- */
 #toast {
@@ -1347,6 +1353,8 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .confirm-dialog { max-width: min(92vw, 480px); padding: 18px; border: 2px solid var(--btn-border); }
 .confirm-dialog::backdrop { background: rgba(12, 10, 8, 0.6); }
 .confirm-dialog p, .confirm-dialog li { color: var(--btn-fg); }
+.confirm-dialog .reset-list { margin: 0 0 10px; padding-left: 1.3em; display: flex; flex-direction: column; gap: 4px; }
+.confirm-dialog > p { margin-bottom: 10px; }
 .confirm-dialog ul { margin: 0; padding-left: 1.2em; }
 .confirm-dialog .plate { margin: 0; align-self: flex-start; }
 .confirm-dialog .row.end { gap: 10px; }
@@ -1402,6 +1410,8 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .desk-panel .log-hint { background: rgba(230, 180, 80, 0.16); border-radius: 4px; }
 .desk-panel .log-irregularity span { color: var(--btn-danger-fg); }
 .desk-panel .log-status span, .desk-panel .log-action span { color: var(--btn-muted); }
+.desk-panel .log-register span { color: var(--btn-fg); }
+.desk-panel .status.held { color: #e9cf8a; }
 .desk-panel :focus-visible { outline-color: var(--btn-hover); }
 @media (max-width: 999px) {
   .desk { padding-top: 6px; }

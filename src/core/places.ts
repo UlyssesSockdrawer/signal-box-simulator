@@ -82,7 +82,7 @@ export function farPlace(state: AppState, box: BoxDef, conn: ConnectionDef): Pla
   return placesForBox(state, box).find((p) => p.id === conn.placeId);
 }
 
-/** Who works a place, in words: "Becton", "Fiddle Yard (simulated)". */
+/** Who works a place, in words: "Sigsim Central", "Fiddle Yard West (simulated)". */
 export function workerName(state: AppState, w: PlaceWorker): string {
   const box = state.boxes.find((b) => b.id === w.boxId);
   if (w.kind === 'box') return box?.name ?? 'Unknown box';
@@ -102,7 +102,7 @@ export function boxLocos(state: AppState, boxId: string): Loco[] {
   return state.roster.filter((l) => (l.location.kind === 'place' && ids.has(l.location.placeId)) || (l.location.kind === 'atBox' && l.location.boxId === boxId));
 }
 
-/** "Becton · P1", "Fiddle Yard · Road 3", "Becton" (somewhere in it). */
+/** "Sigsim Central · P1", "Fiddle Yard West · Road 3", "Sigsim Central" (somewhere in it). */
 export function placeLocationText(state: AppState, loc: Extract<Location, { kind: 'place' }>): string {
   const p = findPlace(state, loc.placeId);
   const r = findRoad(p, loc.roadId);

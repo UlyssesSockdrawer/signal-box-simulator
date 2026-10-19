@@ -1268,7 +1268,7 @@ export function platformPath(plan: TrackPlan, c: TrackCircuit): Pt[] {
   return best > 0 ? [off[bi - 1], off[bi]] : off;
 }
 
-/** Platform roads on a plan, optionally only those belonging to one owner (an ownerKey, e.g. 'box|becton'). */
+/** Platform roads on a plan, optionally only those belonging to one owner (an ownerKey, e.g. 'box|sigsim-central'). */
 export function platformsOf(plan: TrackPlan, key?: string): Array<{ circuit: TrackCircuit; number: string }> {
   return plan.circuits
     .filter((c) => c.platform && (key === undefined || ownerKey(c.owner) === key))

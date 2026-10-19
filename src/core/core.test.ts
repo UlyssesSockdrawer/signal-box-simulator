@@ -6,10 +6,15 @@ import { trainsOnLayout } from './layoutRegister';
 import { addPlace, addRoad, arrivalChoices, boxLocos, checkPlaceName, checkPlaceShort, checkRoadName, placesWorkedBy, removePlace, removeRoad, roadOfCircuit, sanitisePlaces, setConnectionPlace, setRoadCount, setWorker, tieRoad } from './places';
 import { incomingCandidates } from './selection';
 import { SectionController } from './sectionController';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
+import { createDefaultState as shippedState } from './defaults';
+import { JUNCTIONS, lineRun, localToWorld, orient, planIssues, portsOf } from './trackPlan';
+import { ThroughWorkings } from './throughTrains';
+import { BoxReferee } from './referee';
+import { Scorecard } from './score';
 import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
-import { migrate } from './store';
+import { migrate, Store } from './store';
 import { layoutShelf, positionLabel } from './shelf';
 import { TapDecoder } from './tapDecoder';
 import type { AppState, Location, WorkingMode } from './types';
@@ -230,6 +235,89 @@ describe('Simplified absolute block, single line', () => {
   });
 });
 
+describe('a train offered with the wrong description', () => {
+  /** Offer the station pilot (a light engine, 2-3) as 3-1 and let it depart. */
+  function sendMisdescribed(t: ReturnType<typeof setup>) {
+    t.c.setOutgoing('ex4', 'light_engine');
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('3-1');
+    t.tick();
+    expect(t.c.view.remoteInstrument).toBe('LC'); // accepted as heard
+    t.c.sendBell('2');
+    t.tick();
+  }
+
+  it('is reported by the receiving box with 5-3 when the train arrives, then cleared back as usual', () => {
+    const t = setup('ab');
+    sendMisdescribed(t);
+    t.bellsIn.length = 0;
+    t.c.confirmOutgoingArrived('road5', null);
+    t.tick(5000);
+    expect(t.bellsIn).toEqual(['1']);
+    t.c.sendBell('1');
+    t.tick();
+    expect(t.bellsIn).toEqual(['1', '5-3']);
+    expect(t.c.view.guidance).toMatch(/incorrectly described.*You offered 3-1, but it was 2-3/);
+    expect(t.c.irregularities.join(' ')).toMatch(/offered as 3-1 .* but it was 2-3/);
+    t.c.sendBell('5-3');
+    t.tick(6000);
+    expect(t.bellsIn).toEqual(['1', '5-3', '1']);
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('2-1');
+    t.tick();
+    expect(t.bellsIn).toEqual(['1', '5-3', '1', '2-1']);
+    expect(t.c.view.outgoing).toBeNull();
+    expect(t.state.roster.find((l) => l.id === 'ex4')!.location).toEqual({ kind: 'place', placeId: 'fy1', roadId: 'road5' });
+  });
+
+  it('is not reported if corrected while the train is on its way (1, 5-3, then the right code)', () => {
+    const t = setup('ab');
+    sendMisdescribed(t);
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('5-3');
+    t.tick();
+    expect(t.c.view.guidance).toMatch(/send the correct description: 2-3/);
+    t.c.sendBell('2-3');
+    t.tick();
+    expect(t.bellsIn.slice(-3)).toEqual(['1', '5-3', '2-3']);
+    expect(t.c.view.outgoing?.departed).toBe(true); // still on its way, not re-offered
+    t.bellsIn.length = 0;
+    t.c.confirmOutgoingArrived('road5', null);
+    t.tick(5000);
+    t.c.sendBell('1');
+    t.tick();
+    expect(t.bellsIn).toEqual(['1', '2-1']);
+  });
+
+  it('corrected before it departs, the offer is withdrawn and the train offered again', () => {
+    const t = setup('ab');
+    t.c.setOutgoing('ex4', 'light_engine');
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('3-1');
+    t.tick();
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('5-3');
+    t.tick();
+    expect(t.c.view.remoteInstrument).toBe('LB');
+    t.c.sendBell('2-3');
+    t.tick();
+    expect(t.c.view.remoteInstrument).toBe('LC');
+    t.c.sendBell('2');
+    t.tick();
+    t.bellsIn.length = 0;
+    t.c.confirmOutgoingArrived('road5', null);
+    t.tick(5000);
+    t.c.sendBell('1');
+    t.tick();
+    expect(t.bellsIn).toEqual(['1', '2-1']);
+  });
+});
+
 describe('Electric key token, single line', () => {
   it('runs an incoming train end to end', () => {
     const t = setup('token');
@@ -364,12 +452,234 @@ describe('opening the box', () => {
   });
 });
 
+describe('the starting data (Sigsim Central)', () => {
+  it('is a generic example: one layout and box called Sigsim Central between two fiddle yards', () => {
+    const s = shippedState();
+    expect(s.layouts.map((l) => l.name)).toEqual(['Sigsim Central']);
+    expect(s.boxes.map((b) => b.name)).toEqual(['Sigsim Central']);
+    const box = s.boxes[0];
+    expect(box.layoutId).toBe(s.layouts[0].id);
+    expect(s.settings.activeLayoutId).toBe(s.layouts[0].id);
+    expect(box.connections.map((c) => [c.neighbourName, c.lineType, s.layouts[0].places.find((p) => p.id === c.placeId)?.name])).toEqual([
+      ['Fiddle Yard West', 'single', 'Fiddle Yard West'],
+      ['Fiddle Yard East', 'single', 'Fiddle Yard East'],
+    ]);
+    expect(JSON.stringify(s).toLowerCase()).not.toMatch(/becton|tansley/);
+  });
+
+  it('has a passing loop with platforms 1 and 2, a goods siding and shed, all tied to the track plan without issues', () => {
+    const s = shippedState();
+    const layout = s.layouts[0];
+    expect(planIssues(s, layout)).toEqual([]);
+    expect(placesWorkedBy(s, s.boxes[0].id).map((p) => [p.kind, p.roads.map((r) => r.name)])).toEqual([
+      ['station', ['P1', 'P2']],
+      ['goods', ['Goods siding', 'Goods shed']],
+    ]);
+    for (const p of placesWorkedBy(s, s.boxes[0].id)) for (const r of p.roads) expect(layout.trackPlan.circuits.some((c) => c.id === r.circuitId)).toBe(true);
+    expect(layout.trackPlan.circuits.filter((c) => c.platform).map((c) => c.platform!.number)).toEqual(['1', '2']);
+    // Each single line is two track circuits (ready for trains shown moving through the section); catch points guard the goods yard exit.
+    const plan = layout.trackPlan;
+    const owned = (conn: string) => plan.circuits.filter((c) => c.owner.kind === 'line' && c.owner.connectionId === conn);
+    expect(owned('sgc-west')).toHaveLength(2);
+    expect(owned('sgc-east')).toHaveLength(2);
+    expect(lineRun(plan, owned('sgc-west')[0].id).map((c) => c.name)).toEqual(['West far', 'West near', 'West end', 'Platform 1', 'East near', 'East far']);
+    const trap = plan.junctions.find((j) => j.kind === 'catchPoints')!;
+    expect(trap.boxId).toBe(s.boxes[0].id);
+    // The circuit on each side of the catch points: towards points 2 (the main line) and towards the yard.
+    const sideOf = (c: (typeof plan.circuits)[number]) => c.ends.find((e) => e.kind === 'joined' && e.junctionId !== trap.id)!;
+    const neck = plan.circuits.find((c) => c.ends.some((e) => e.kind === 'joined' && e.junctionId === trap.id) && plan.junctions.find((j) => j.id === (sideOf(c) as { junctionId: string }).junctionId)?.number === '2')!;
+    expect(neck).toBeTruthy();
+    const neckPort = (neck.ends.find((e) => e.kind === 'joined' && e.junctionId === trap.id) as { port: string }).port;
+    const port = portsOf(trap).find((p) => p.id === neckPort)!;
+    const towardsMain = orient(trap, port.dx, port.dy); // the way the track leaves the catch points towards points 2
+    // The trap blade derails traffic running the way the blade points: it must point towards the main line (out of the yard)...
+    const [b0, b1] = JUNCTIONS.catchPoints.stubs![0].map(([x, y]) => localToWorld(trap, x, y));
+    expect(Math.sign(towardsMain.x)).toBe(-1);
+    expect(Math.sign(b1.x - b0.x)).toBe(Math.sign(towardsMain.x));
+    // ...and throw the runaway away from the main line (which is below the goods yard on the plan).
+    expect(b1.y).toBeLessThan(b0.y);
+    expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s); // loads back unchanged
+  });
+
+  it('has four LMS locomotives of different types, with trains to offer from both fiddle yards and one to send away', () => {
+    const s = shippedState();
+    expect(s.roster).toHaveLength(4);
+    expect(s.roster.every((l) => l.locoClass.startsWith('LMS '))).toBe(true);
+    expect(new Set(s.roster.map((l) => l.locoClass)).size).toBe(4);
+    expect(new Set(s.roster.map((l) => l.working.trainTypeId)).size).toBe(4);
+    const [west, east] = s.boxes[0].connections;
+    expect(incomingCandidates(s, west).length).toBeGreaterThan(0);
+    expect(incomingCandidates(s, east).length).toBeGreaterThan(0);
+    expect(arrivalChoices(s, s.boxes[0].id)).toHaveLength(4);
+  });
+});
+
+describe('the starting data plays end to end', () => {
+  it('runs the Duchess express through from Fiddle Yard West to Fiddle Yard East (the tutorial\'s through train), cleanly', () => {
+    const state = shippedState();
+    state.settings.responseDelayMs = [1000, 1000];
+    state.settings.despatchDelayMs = [5000, 5000];
+    const sched = new FakeScheduler();
+    const box = state.boxes[0];
+    const sessions = createBoxSession(box, () => state, sched);
+    const [west, east] = sessions;
+    for (const s of sessions) {
+      s.controller.events.on('locoMoved', (m) => {
+        const l = state.roster.find((x) => x.id === m.locoId);
+        if (l) l.location = m.location;
+      });
+      s.neighbour!.start();
+    }
+    const card = new Scorecard(() => sched.now());
+    new BoxReferee(sessions, card);
+    const w = new ThroughWorkings(sessions, {
+      worksPlaces: () => placesWorkedBy(state, box.id).length > 0,
+      codeSet: () => state.codeSets[0],
+      trainTypes: () => state.trainTypes,
+      locoLabel: (id) => id ?? '',
+    });
+    const tick = (ms = 4000) => sched.advance(ms);
+    for (const s of sessions) {
+      s.controller.sendBell('1');
+      tick();
+      s.controller.sendBell('5-5-5');
+      tick(8000);
+    }
+    const a = west.controller;
+    const c = east.controller;
+    expect(a.requestIncoming('lms6233', 'express_passenger')).toBeNull();
+    expect(w.route('sgc-west')).toBe(''); // a box with a station stops trains unless told otherwise
+    expect(w.setRoute('sgc-west', 'sgc-east')).toBeNull();
+    tick();
+    a.sendBell('1');
+    tick();
+    a.sendBell('4');
+    a.setInstrument('LC');
+    tick(500);
+    expect(w.guidance()?.text).toMatch(/Offer .* on to Fiddle Yard East/);
+    c.sendBell('1');
+    tick();
+    c.sendBell('4');
+    tick(8000);
+    a.sendBell('2');
+    a.setInstrument('TOL');
+    tick();
+    c.sendBell('2');
+    tick();
+    a.confirmIncomingArrived(null, { moveLoco: !w.keepLocoWhereItIs('sgc-west') });
+    a.sendBell('1');
+    tick();
+    a.sendBell('2-1');
+    tick();
+    a.setInstrument('LB');
+    tick();
+    c.confirmOutgoingArrived('fye-road2', 'lms6233');
+    tick(5000);
+    c.sendBell('1');
+    tick();
+    c.sendBell('2-1');
+    tick();
+    expect(a.view.incoming).toBeNull();
+    expect(c.view.outgoing).toBeNull();
+    expect(state.roster.find((l) => l.id === 'lms6233')!.location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road2' });
+    expect(card.entries.filter((e) => e.points < 0)).toEqual([]);
+    expect(card.entries.filter((e) => e.rule === 'clean_working')).toHaveLength(1); // one bonus for the whole journey
+  });
+
+  it('receives the express from Fiddle Yard West into P1 and sends the pilot to Fiddle Yard East', () => {
+    const state = shippedState();
+    state.settings.responseDelayMs = [1000, 1000];
+    state.settings.despatchDelayMs = [5000, 5000];
+    const sched = new FakeScheduler();
+    const [west, east] = createBoxSession(state.boxes[0], () => state, sched);
+    for (const s of [west, east]) {
+      s.controller.events.on('locoMoved', (m) => {
+        const l = state.roster.find((x) => x.id === m.locoId);
+        if (l) l.location = m.location;
+      });
+      s.neighbour!.start();
+    }
+    const tick = (ms = 4000) => sched.advance(ms);
+    for (const s of [west, east]) {
+      s.controller.sendBell('1');
+      tick();
+      s.controller.sendBell('5-5-5');
+      tick(8000);
+    }
+    // In from the west: 6233, express passenger (4), into P1.
+    const w = west.controller;
+    expect(w.requestIncoming('lms6233', 'express_passenger')).toBeNull();
+    tick();
+    w.sendBell('1');
+    tick();
+    w.sendBell('4');
+    tick(1000);
+    w.setInstrument('LC');
+    tick(9000);
+    w.sendBell('2');
+    tick(1000);
+    w.setInstrument('TOL');
+    w.confirmIncomingArrived({ placeId: 'sgc-station', roadId: 'sgc-p1' });
+    w.sendBell('1');
+    tick();
+    w.sendBell('2-1');
+    tick(3000);
+    w.setInstrument('LB');
+    tick();
+    expect(state.roster.find((l) => l.id === 'lms6233')!.location).toEqual({ kind: 'place', placeId: 'sgc-station', roadId: 'sgc-p1' });
+    expect(w.view.incoming).toBeNull();
+    // Out to the east: the Jinty from the goods siding, light engine (2-3).
+    const e = east.controller;
+    e.setOutgoing('lms7298', 'light_engine');
+    e.sendBell('1');
+    tick();
+    e.sendBell('2-3');
+    tick();
+    expect(e.view.remoteInstrument).toBe('LC');
+    e.sendBell('2');
+    tick();
+    e.confirmOutgoingArrived('fye-road2', 'lms7298');
+    tick(5000);
+    e.sendBell('1');
+    tick();
+    e.sendBell('2-1');
+    tick();
+    expect(e.view.outgoing).toBeNull();
+    expect(state.roster.find((l) => l.id === 'lms7298')!.location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road2' });
+    expect([...w.irregularities, ...e.irregularities]).toEqual([]);
+  });
+});
+
+describe('reset to defaults', () => {
+  it('erases saved layouts, boxes and roster (and the old storage key) and starts again from the starting data', () => {
+    const mem = new Map<string, string>();
+    const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) };
+    const store = new Store(storage);
+    store.update((s) => {
+      s.layouts[0].name = 'My own railway';
+      s.roster.length = 0;
+      s.boxes.push({ ...structuredClone(s.boxes[0]), id: 'b2', name: 'Second', shortName: 'SEC' });
+      s.settings.theme = 'lms';
+    });
+    mem.set('bts-signalbox-state', '{"old":true}');
+    let heard = 0;
+    store.subscribe(() => heard++);
+    store.reset();
+    const def = shippedState();
+    expect(store.state).toEqual(def);
+    expect(JSON.parse(mem.get('signal-box-simulator-state')!)).toEqual(def);
+    expect(mem.has('bts-signalbox-state')).toBe(false);
+    expect(heard).toBe(1);
+    expect(new Store(storage).state).toEqual(migrate(shippedState())); // stays reset after a reload
+  });
+});
+
 describe('store migration', () => {
   it('fills defaults into partial saved data', () => {
     const s = migrate({ settings: { volume: 0.2 }, roster: [] });
     expect(s.settings.volume).toBe(0.2);
     expect(s.settings.tap.holdMs).toBe(900);
-    expect(s.boxes[0].id).toBe('becton');
+    expect(s.boxes[0].id).toBe('sigsim-central');
     expect(s.roster).toEqual([]);
   });
 });

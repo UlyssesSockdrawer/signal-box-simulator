@@ -3,7 +3,7 @@ import { arrivalChoices, arrivedLabel, farPlace, findPlace, findRoad, placeLocat
 import { pointsText } from '../../core/score';
 import { describeCode, REGULATION_SIGNALS, signalCode, trainCode } from '../../core/bellcodes';
 import { realScheduler } from '../../core/scheduler';
-import { instrumentName, type LogEntry } from '../../core/sectionController';
+import { clockTime, instrumentName, waitingText, type IncomingView, type LogEntry } from '../../core/sectionController';
 import { incomingCandidates, SELECTORS, stationLocos } from '../../core/selection';
 import { layoutShelf, positionLabel } from '../../core/shelf';
 import { beatDots } from '../../core/simulatedNeighbour';
@@ -107,11 +107,19 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       nextStep.hidden = true;
       return;
     }
+    // Two trains offered at once, one of a higher class: warn before the lower class is accepted.
+    const reg = runtime.regulator.advice();
     // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
     const tg = runtime.workings.guidance();
     // A quiet line selected while a train is still being worked on another: show that line's next step.
     const other = !tg && !ui.busy() ? uis.find((u) => u !== ui && u.busy()) : undefined;
-    const g = tg ? { text: tg.text, hint: '' } : other ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` } : ui.guidance();
+    const g = reg
+      ? { text: reg.text, hint: '' }
+      : tg
+        ? { text: tg.text, hint: '' }
+        : other
+          ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` }
+          : ui.guidance();
     nextStep.hidden = false;
     replace(
       nextStep,
@@ -436,6 +444,22 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   const unsubStep = store.subscribe(renderNextStep);
   ctx.onLeave(unsubStep);
 
+  // Regulating: when a higher class train is offered while another is waiting, select its line's instruments once.
+  let lastRegKey = '';
+  for (const s of sessions) {
+    ctx.onLeave(
+      s.controller.events.on('change', () => {
+        const reg = runtime.regulator.advice();
+        const key = reg ? `${reg.connId}|${reg.text}` : '';
+        if (key === lastRegKey) return;
+        lastRegKey = key;
+        const i = reg && learner() ? runtime.conns.findIndex((x) => x.session.connection.id === reg.connId) : -1;
+        if (i >= 0 && i !== selected) select(i);
+        else renderNextStep();
+      }),
+    );
+  }
+
   // When a through train needs work on another line (e.g. offering it on), select that line's instruments once.
   let lastThroughKey = '';
   ctx.onLeave(
@@ -500,7 +524,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   let lastHint = '';
   let hintAt = 0;
 
-  /** Where a train in this box's places stands, briefly: "P1", "Becton sidings · Coal siding". */
+  /** Where a train in this box's places stands, briefly: "P1", "Sigsim Central goods yard · Goods siding". */
   const whereAtBox = (l: Loco) => {
     const loc = l.location;
     if (loc.kind === 'atBox') return 'At box';
@@ -599,13 +623,14 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     let code = '';
     let text = '';
     let stage = '';
-    if (v.incoming) {
+    // A train held at the far box gives way in the describer to one being sent the other way on the single line.
+    if (v.incoming && !(v.incoming.held && v.outgoing?.locoId)) {
       const l = state.roster.find((x) => x.id === v.incoming!.locoId);
       dir = `FROM ${short}`;
       code = trainCode(codeSet(), v.incoming.trainTypeId);
       text = `${trainTypeName(state, v.incoming.trainTypeId)} · ${l ? locoName(l) : ''}${l?.dccAddress ? ` · DCC ${l.dccAddress}` : ''}`;
       const accepted = v.mode === 'ab' ? v.myInstrument !== 'LB' : v.tokenIndicator === 'coming';
-      stage = v.incoming.arrived ? 'ARRIVED' : v.incoming.departed ? 'ON LINE' : accepted ? 'ACCEPTED' : 'OFFERED';
+      stage = v.incoming.arrived ? 'ARRIVED' : v.incoming.departed ? 'ON LINE' : accepted ? 'ACCEPTED' : v.incoming.held ? heldText(v.incoming).toUpperCase() : 'OFFERED';
     } else if (v.outgoing?.locoId) {
       const l = state.roster.find((x) => x.id === v.outgoing!.locoId);
       const tt = v.outgoing.trainTypeId ?? l?.working.trainTypeId ?? '';
@@ -630,6 +655,12 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
       );
     });
   };
+
+  /** The refusal tracker's words for a held train: "held at Fiddle Yard · offered 14:02 · waiting 3 min". */
+  function heldText(inc: IncomingView): string {
+    const waited = waitingText(Date.now() - (inc.offeredAt ?? Date.now()));
+    return [`held at ${conn.neighbourName}`, inc.offeredAt !== null ? `offered ${clockTime(inc.offeredAt)}` : '', `waiting ${waited || '<1 min'}`].filter(Boolean).join(' · ');
+  }
 
   // ------------------------------------------------------------- bell
   const dome = h('div', { class: 'bell-dome', role: 'img', 'aria-label': `Block bell from ${conn.neighbourName}` });
@@ -884,7 +915,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const candidates = incomingCandidates(state, conn);
     if (incSel && !candidates.some((l) => l.id === incSel) && !v.incoming) incSel = '';
     const thr = workings.through(conn.id);
-    const key = JSON.stringify([v.boxOpen, v.incoming, incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey()]);
+    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey()]);
     mount(arrBody, key, () => {
       const title = null; // the panel's line bar names the line ("Next arrival from …")
       if (!v.incoming) {
@@ -938,7 +969,11 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         const inc = v.incoming;
         const onward = thr ? allConns.find((x) => x.id === thr.toConnId) : undefined;
         const status = !inc.departed
-          ? `Being offered. Don't move the train until ${short} sends 2 (Train entering section).`
+          ? inc.held
+            ? `${heldText(inc)[0].toUpperCase()}${heldText(inc).slice(1)}${inc.reoffers ? ` · offered ${inc.reoffers + 1} times` : ''}. You have not accepted it, so ${conn.neighbourName} is holding it and will offer it again${inc.nextOfferAt ? ` at about ${clockTime(inc.nextOfferAt)}` : ''}${allConns.length > 1 ? ', or soon after you next send 2-1 on another line' : ''}.`
+            : inc.offeredAt !== null && inc.acceptedAt === null && !(v.mode === 'ab' ? v.myInstrument !== 'LB' : v.tokenIndicator === 'coming')
+              ? `Offered ${clockTime(inc.offeredAt)}. Repeat the code to accept it, or do not reply to refuse it for now. Don't move the train until ${short} sends 2 (Train entering section).`
+              : `Being offered. Don't move the train until ${short} sends 2 (Train entering section).`
           : !inc.arrived
             ? thr?.stage === 'sentOn'
               ? `Sent on towards ${onward?.neighbourName}. Report it passed complete once its tail lamp has passed.`
@@ -952,7 +987,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
           title,
           trainCard(inc.locoId, inc.trainTypeId),
           routeField(),
-          h('p', { class: `status ${inc.departed ? 'go' : ''}` }, status),
+          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, status),
           inc.departed && !inc.arrived
             ? h(
                 'div',
@@ -1153,6 +1188,14 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     }
   };
   offs.push(c.events.on('change', renderAll));
+  // A held train's waiting time counts up in the describer and the Next arrival panel.
+  const waitTimer = window.setInterval(() => {
+    if (c.view.incoming?.held) {
+      renderDescriber();
+      renderIncoming();
+    }
+  }, 10_000);
+  offs.push(() => window.clearInterval(waitTimer));
   // Through trains link two lines: a change on one can change what the other shows.
   offs.push(workings.onChange(renderAll));
   const unsub = store.subscribe(() => {

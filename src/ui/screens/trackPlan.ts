@@ -150,6 +150,14 @@ const redoStack: string[] = [];
 let uiLayout = '';
 const UNDO_MAX = 60;
 
+/** Forget the editor's session state (undo history, selection, zoom), e.g. when all data is reset. */
+export function resetTrackPlanUi(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  uiLayout = '';
+  Object.assign(ui, { tab: 'plan', sel: null, menu: null, pick: null, zoom: 1, zoomChosen: false, issueIdx: 0, bend: null });
+}
+
 type Hit =
   | { t: 'circuit'; id: string }
   | { t: 'junction'; id: string }
@@ -328,15 +336,36 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('details', 'Details'));
   };
 
+  /** The plan's bounds widened so the names of level exits ("To Fiddle Yard West") fit on the board too. */
+  const withExitNames = (p: TrackPlan, b: { minX: number; minY: number; maxX: number; maxY: number }, u: number, font: number) => {
+    let { minX, maxX } = b;
+    for (const c of p.circuits) {
+      c.ends.forEach((e, i) => {
+        if (e.kind !== 'exit') return;
+        const hd = endHeading(p, c, i as 0 | 1);
+        if (!hd || Math.abs(hd.dy) > Math.abs(hd.dx) * 2) return; // upright exits' names run along the line
+        const w = (24 + exitText(e.to).length * font * 0.62) / u;
+        if (hd.dx < 0) minX = Math.min(minX, e.x - w + MARGIN - 0.5);
+        else maxX = Math.max(maxX, e.x + w - MARGIN + 0.5);
+      });
+    }
+    return { ...b, minX, maxX };
+  };
+
   const fit = () => {
-    const b = planBounds(plan());
+    const b0 = planBounds(plan());
     const w = boardEl.clientWidth - 8;
-    if (!b || w <= 0) {
+    if (!b0 || w <= 0) {
       ui.zoom = 1;
       return;
     }
-    const z = w / ((b.maxX - b.minX + 2 * MARGIN) * UNIT);
-    ui.zoom = clampZoom(z);
+    // Exit names do not shrink with the plan, so settle the zoom in a few steps.
+    let z = 1;
+    for (let k = 0; k < 4; k++) {
+      const b = withExitNames(plan(), b0, UNIT * z, Math.max(10, Math.round(12 * Math.min(1.4, z))));
+      z = clampZoom(w / ((b.maxX - b.minX + 2 * MARGIN) * UNIT));
+    }
+    ui.zoom = z;
     ui.zoomChosen = true;
   };
   const zoomBy = (f: number) => {
@@ -563,6 +592,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     let b = b0 ?? { minX: 0, minY: 0, maxX: 16, maxY: 8 };
     if (frozenBounds) b = { minX: Math.min(b.minX, frozenBounds.minX), minY: Math.min(b.minY, frozenBounds.minY), maxX: Math.max(b.maxX, frozenBounds.maxX), maxY: Math.max(b.maxY, frozenBounds.maxY) };
     const u = UNIT * ui.zoom;
+    b = withExitNames(p, b, u, Math.max(10, Math.round(12 * Math.min(1.4, ui.zoom))));
     const avail = Math.max(0, boardEl.clientWidth - 4) / u;
     const wUnits = Math.max(b.maxX - b.minX + 2 * MARGIN, avail);
     // Fill the board, so the grid dots reach the bottom even when zoomed out.
@@ -611,7 +641,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
           }
           const tx = X((pp[pb - 1].x + pp[pb].x) / 2);
           const ty = Y((pp[pb - 1].y + pp[pb].y) / 2);
-          platformUp = (pp[pb - 1].y + pp[pb].y) / 2 < (path[Math.min(pb, path.length - 1) - 1].y + path[Math.min(pb, path.length - 1)].y) / 2;
+          // Which side the platform is on, from its own setting (the platform is only drawn along the track's longest straight stretch).
+          platformUp = parallelSideNames(p, c.id).find((x) => x.side === c.platform!.side)?.name === 'above';
           const label = `P${c.platform.number}`;
           const tw = Math.max(22, label.length * 7.5 + 8);
           labels.push(svg('rect', { x: tx - tw / 2, y: ty - 8, width: tw, height: 16, rx: 2, fill: '#f6f1e3', stroke: '#0c0a08', 'stroke-width': 1.5 }));
@@ -826,8 +857,13 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
 
   const renderBoard = (p: TrackPlan = plan()) => {
     // Phones start further out so more of the plan fits; pinch or the buttons change it.
+    // A plan already drawn opens fitted to the board (never larger than normal size).
     if (!ui.zoomChosen && boardEl.clientWidth > 0) {
-      ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
+      const hasPlan = p.circuits.length > 0 || p.junctions.length > 0;
+      if (hasPlan) {
+        fit();
+        ui.zoom = Math.min(ui.zoom, boardEl.clientWidth < 600 ? 0.65 : 1);
+      } else ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
       ui.zoomChosen = true;
     }
     const empty = !p.circuits.length && !p.junctions.length && !(p.markers ?? []).length;

@@ -1,7 +1,11 @@
 import type { AppState, Settings, ThemeId } from '../../core/types';
 import { THEMES } from '../theme';
 import { topBar, type Ctx, type Screen } from '../app';
-import { confirmButton, field, h, option, toast } from '../dom';
+import { confirmDialog, field, h, option, toast } from '../dom';
+import { disposeAllBoxRuntimes } from '../boxRuntime';
+import { resetPlacesUi } from './places';
+import { resetRosterUi } from './roster';
+import { resetTrackPlanUi } from './trackPlan';
 
 export function settingsScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;
@@ -122,24 +126,52 @@ export function settingsScreen(ctx: Ctx): Screen {
     num('set_rmax', 'Reaction time, longest (ms)', s.responseDelayMs[1], (v) => (s.responseDelayMs = [Math.min(v, s.responseDelayMs[0]), v]), { min: 200, step: 100 }),
     num('set_dmin', 'Despatch after line clear, shortest (s)', s.despatchDelayMs[0] / 1000, (v) => (s.despatchDelayMs = [v * 1000, Math.max(v * 1000, s.despatchDelayMs[1])]), { min: 1 }),
     num('set_dmax', 'Despatch after line clear, longest (s)', s.despatchDelayMs[1] / 1000, (v) => (s.despatchDelayMs = [Math.min(v * 1000, s.despatchDelayMs[0]), v * 1000]), { min: 1 }),
-    num('set_rep', 'Ring again if no reply after (s)', s.repeatAfterMs / 1000, (v) => (s.repeatAfterMs = v * 1000), { min: 5, max: 120 }),
+    num('set_rep', 'Ring again if no reply after (s)', s.repeatAfterMs / 1000, (v) => (s.repeatAfterMs = v * 1000), { min: 5, max: 120, help: 'For call attention and the other bells. An Is line clear that is not repeated is not rung again: it counts as refused (below).' }),
+    h('h3', null, 'Refused trains'),
+    num('set_refuse', 'An offer not repeated counts as refused after (s)', s.offerRefusedAfterMs / 1000, (v) => (s.offerRefusedAfterMs = Math.max(3, v) * 1000), { min: 3, max: 120, help: 'To refuse a train, acknowledge the call attention (1) but do not repeat the Is line clear code. The far box holds the train.' }),
+    num('set_reoffer', 'Offer a held train again every (s)', s.reofferAfterMs / 1000, (v) => (s.reofferAfterMs = Math.max(5, v) * 1000), { min: 5, max: 900, help: 'A held train is also offered again soon after you send 2-1 (Train out of section) on another line.' }),
+    h('div', { class: 'checks' },
+      check('set_coincide', 'Offers can coincide: when a train is offered on one line, another line may offer one at about the same time, so you have to regulate (accept the higher class first)', s.coincidingOffers, (v) => (s.coincidingOffers = v)),
+    ),
   );
 
   // ---------------------------------------------------------------- data
+  /** Before all the app's data is replaced (reset or import): close running boxes and forget screen state belonging to the old data. */
+  const freshStart = () => {
+    disposeAllBoxRuntimes();
+    resetTrackPlanUi();
+    resetPlacesUi();
+    resetRosterUi();
+  };
+  const importText = (text: string, ok: string, bad: string) => {
+    try {
+      JSON.parse(text);
+    } catch {
+      toast(bad);
+      return;
+    }
+    freshStart();
+    try {
+      ctx.store.importJson(text);
+      toast(ok);
+    } catch {
+      toast(bad);
+    }
+  };
+  const downloadBackup = () => {
+    const blob = new Blob([ctx.store.exportJson()], { type: 'application/json' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: 'signal-box-simulator-data.json' });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
   const exportArea = h('textarea', { id: 'data_export', rows: 6, readonly: true, class: 'mono' });
   const importArea = h('textarea', { id: 'data_import', rows: 6, class: 'mono', placeholder: 'Paste saved data here, then press Import.' });
   const importFile = h('input', { id: 'data_file', type: 'file', accept: '.json,application/json' });
   importFile.addEventListener('change', () => {
     const f = importFile.files?.[0];
     if (!f) return;
-    f.text().then((t) => {
-      try {
-        ctx.store.importJson(t);
-        toast('Data imported.');
-      } catch {
-        toast('That file is not valid saved data.');
-      }
-    });
+    f.text().then((t) => importText(t, 'Data imported.', 'That file is not valid saved data.'));
   });
   const data = h(
     'section',
@@ -168,11 +200,7 @@ export function settingsScreen(ctx: Ctx): Screen {
         type: 'button',
         on: {
           click: () => {
-            const blob = new Blob([ctx.store.exportJson()], { type: 'application/json' });
-            const a = h('a', { href: URL.createObjectURL(blob), download: 'signal-box-simulator-data.json' });
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            downloadBackup();
             exportArea.value = ctx.store.exportJson();
           },
         },
@@ -182,13 +210,50 @@ export function settingsScreen(ctx: Ctx): Screen {
     field('Import from file', importFile),
     importArea,
     h('div', { class: 'row' },
-      h('button', { class: 'btn', type: 'button', on: { click: () => { try { ctx.store.importJson(importArea.value); toast('Data imported.'); } catch { toast('That is not valid saved data.'); } } } }, 'Import pasted data'),
-      confirmButton('Reset everything', 'Press again to erase all data', () => { ctx.store.reset(); toast('Reset to the starting data.'); }),
+      h('button', { class: 'btn', type: 'button', on: { click: () => importText(importArea.value, 'Data imported.', 'That is not valid saved data.') } }, 'Import pasted data'),
     ),
+  );
+
+  // ---------------------------------------------------------------- reset to defaults
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const confirmReset = () => {
+    const now = ctx.store.state;
+    confirmDialog({
+      title: 'Reset to defaults?',
+      body: [
+        'This erases everything saved in this browser on this device, and cannot be undone:',
+        h(
+          'ul',
+          { class: 'reset-list' },
+          h('li', null, `${plural(now.layouts.length, 'layout')}, with ${now.layouts.length === 1 ? 'its track plan' : 'their track plans'} and places`),
+          h('li', null, `${plural(now.boxes.length, 'signal box', 'signal boxes')} and ${now.boxes.length === 1 ? 'its' : 'their'} connected boxes`),
+          h('li', null, `${plural(now.roster.length, 'locomotive')} in the roster`),
+          h('li', null, 'All settings: theme, bell sound and timings, simulated signaller'),
+          h('li', null, 'Any box that is running is closed, and its score is lost'),
+        ),
+        'The app then starts again with the data it first came with. Download a backup first if you might want any of it back.',
+        h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', on: { click: () => { downloadBackup(); toast('Backup downloaded.'); } } }, 'Download a backup')),
+      ],
+      confirmLabel: 'Erase everything and reset',
+      onDone: (ok) => {
+        if (!ok) return;
+        freshStart();
+        ctx.store.reset();
+        ctx.go('menu');
+        toast('Reset: Signal Box Simulator is back to its starting data.');
+      },
+    });
+  };
+  const resetPanel = h(
+    'section',
+    { class: 'panel' },
+    h('h2', null, 'Reset to defaults'),
+    h('p', { class: 'muted small' }, 'Erase all your layouts, signal boxes, places, track plans, locomotives and settings saved in this browser, and start again with the data the app first came with. You will be asked to confirm.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn danger', type: 'button', id: 'reset_app', on: { click: confirmReset } }, 'Reset to defaults…')),
   );
 
   return {
     title: 'Settings',
-    el: h('main', { class: 'page' }, topBar(ctx, 'Settings'), h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, data)),
+    el: h('main', { class: 'page' }, topBar(ctx, 'Settings'), h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, data, resetPanel)),
   };
 }

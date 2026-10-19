@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
 import { FakeScheduler } from './scheduler';
 import { pointsText, SCORE_RULES, Scorecard, type ScoreRuleId } from './score';
 import { createBoxSession } from './session';
@@ -128,11 +128,98 @@ describe('Scoring a session (absolute block)', () => {
     t.tick();
     t.c.confirmOutgoingArrived('road5', null);
     t.tick(5000);
+    // Not corrected: on arrival the far box reports it with 5-3 before clearing back with 2-1.
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('5-3');
+    t.tick(6000);
     t.c.sendBell('1');
     t.tick();
     t.c.sendBell('2-1');
     t.tick();
-    expect(t.rules).toEqual(['box_opened', 'wrong_description', 'out_departed', 'out_cleared']);
+    expect(t.rules).toEqual(['box_opened', 'wrong_description', 'out_departed', 'misdescribed_not_corrected', 'out_cleared']);
+  });
+
+  /** Finish an outgoing train: report it arrived and answer the far box (5-3 first if it reports a misdescription). */
+  function arriveAndClear(t: ReturnType<typeof setup>, loco: string | null) {
+    const from = t.c.log.length;
+    t.c.confirmOutgoingArrived('road5', loco);
+    t.tick(5000);
+    t.c.sendBell('1');
+    t.tick();
+    if (t.c.log.slice(from).some((e) => e.kind === 'bellIn' && e.text.includes(': 5-3'))) {
+      t.c.sendBell('5-3');
+      t.tick(6000);
+      t.c.sendBell('1');
+      t.tick();
+    }
+    t.c.sendBell('2-1');
+    t.tick();
+  }
+  const offerAndGo = (t: ReturnType<typeof setup>, code: string) => {
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell(code);
+    t.tick();
+    t.c.sendBell('2');
+    t.tick();
+  };
+
+  it('a misdescription is penalised and loses the bonus even when the train is chosen only after it was offered', () => {
+    const t = setup();
+    open(t);
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('3-1');
+    t.tick();
+    t.c.setOutgoing('ex4', 'light_engine'); // the light engine, chosen after it was offered as 3-1
+    t.c.sendBell('2');
+    t.tick();
+    arriveAndClear(t, 'ex4');
+    expect(t.rules).toEqual(['box_opened', 'wrong_description', 'out_departed', 'misdescribed_not_corrected', 'out_cleared']);
+  });
+
+  it('a train never chosen is judged when it arrives, by what it is working as', () => {
+    const t = setup();
+    open(t);
+    offerAndGo(t, '3-1');
+    arriveAndClear(t, 'ex4');
+    expect(t.rules).toEqual(['box_opened', 'out_departed', 'wrong_description', 'misdescribed_not_corrected', 'out_cleared']);
+    const u = setup();
+    open(u);
+    offerAndGo(u, '2-3');
+    arriveAndClear(u, 'ex4');
+    expect(u.rules).toEqual(['box_opened', 'out_departed', 'out_offered', 'out_cleared', 'clean_working']);
+  });
+
+  it('correcting a misdescription (5-3) still costs the points and the bonus, but is not reported on arrival', () => {
+    // On its way, before the far box knew what the train was.
+    const t = setup();
+    open(t);
+    offerAndGo(t, '3-1');
+    t.c.sendBell('1');
+    t.tick();
+    t.c.sendBell('5-3');
+    t.tick();
+    t.c.sendBell('2-3');
+    t.tick();
+    arriveAndClear(t, 'ex4');
+    expect(t.rules).toEqual(['box_opened', 'out_departed', 'wrong_description', 'out_cleared']);
+    // Before it departed, then offered again correctly.
+    const u = setup();
+    open(u);
+    u.c.sendBell('1');
+    u.tick();
+    u.c.sendBell('3-1');
+    u.tick();
+    u.c.sendBell('1');
+    u.tick();
+    u.c.sendBell('5-3');
+    u.tick();
+    u.c.setOutgoing('ex4', 'light_engine');
+    offerAndGo(u, '2-3');
+    arriveAndClear(u, 'ex4');
+    expect(u.rules).toEqual(['box_opened', 'wrong_description', 'out_offered', 'out_departed', 'out_cleared']);
   });
 
   it('treats sending a train without line clear as a safety breach', () => {

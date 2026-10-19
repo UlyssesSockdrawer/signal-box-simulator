@@ -9,6 +9,7 @@ import {
   markerPos,
   orient,
   ownerKey,
+  parallelSideNames,
   planBounds,
   platformPath,
   portsOf,
@@ -154,8 +155,8 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
         }
         const tx = X((pp[pb - 1].x + pp[pb].x) / 2);
         const ty = Y((pp[pb - 1].y + pp[pb].y) / 2);
-        const k = Math.min(pb, path.length - 1);
-        platformUp = (pp[pb - 1].y + pp[pb].y) / 2 < (path[k - 1].y + path[k].y) / 2;
+        // Which side the platform is on, from its own setting (it is drawn along the track's longest straight stretch only).
+        platformUp = parallelSideNames(layout.trackPlan, c.id).find((x) => x.side === c.platform!.side)?.name === 'above';
         const label = `P${c.platform.number}`;
         const tw = Math.max(22, label.length * 7.5 + 8);
         labels.append(svg('rect', { x: tx - tw / 2, y: ty - 8, width: tw, height: 16, rx: 2, fill: '#f6f1e3', stroke: '#0c0a08', 'stroke-width': 1.5 }));

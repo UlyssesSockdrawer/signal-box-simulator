@@ -33,6 +33,11 @@ export interface TrainCodeEntry {
   code: BellCode;
   classLabel: string; // e.g. "Class B" or "Class 2"
   note?: string;
+  /**
+   * Regulating priority of this class of train: higher goes first when two trains are offered at
+   * once (class A above class B, and so on). Ties allowed; absent = not judged.
+   */
+  rank?: number;
 }
 
 export interface CodeSet {
@@ -166,6 +171,12 @@ export interface Settings {
   despatchDelayMs: [number, number];
   /** How long the simulated box waits for a reply before repeating (ms). */
   repeatAfterMs: number;
+  /** An offer (Is line clear) not repeated within this time after it has rung counts as refused (ms). */
+  offerRefusedAfterMs: number;
+  /** How long the simulated box holds a refused train before offering it again (ms). */
+  reofferAfterMs: number;
+  /** When a train is offered on one line, another line may offer one at about the same time (practice in regulating). */
+  coincidingOffers: boolean;
   /** Beat spacing when bells are played (ms). */
   bellBeatMs: number;
   bellGroupPauseMs: number;

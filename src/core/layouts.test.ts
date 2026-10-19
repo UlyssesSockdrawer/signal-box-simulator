@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addBox, addConnection, deleteBox, removeConnection } from './boxes';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
 import { activeLayout, addLayout, deleteLayout, moveBoxImpact, setBoxLayout, unassignedBoxes } from './layouts';
 import { addPlace, removePlace, removeRoad, setRoadCount, trainsBeyondRoad } from './places';
 import { trainsOnLayout } from './layoutRegister';

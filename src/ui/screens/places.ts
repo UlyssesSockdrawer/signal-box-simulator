@@ -45,6 +45,13 @@ let focusNext = '';
 const placeOpen = new Map<string, boolean>();
 const roadsOpen = new Map<string, boolean>();
 
+/** Forget which places and road lists were open, e.g. when all data is reset. */
+export function resetPlacesUi(): void {
+  placeOpen.clear();
+  roadsOpen.clear();
+  focusNext = '';
+}
+
 export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
   const st = ctx.store.state;
   const layout = findLayout(st, layoutId)!;

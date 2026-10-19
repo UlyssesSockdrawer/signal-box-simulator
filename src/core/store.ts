@@ -20,6 +20,7 @@ type OldLocation =
 export interface KeyValueStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 }
 
 const KEY = 'signal-box-simulator-state';
@@ -81,6 +82,15 @@ export function migrate(raw: unknown): AppState {
   // New built-in train types / code sets added in later versions get merged in.
   for (const tt of def.trainTypes) if (!state.trainTypes.some((t) => t.id === tt.id)) state.trainTypes.push(tt);
   for (const cs of def.codeSets) if (!state.codeSets.some((c) => c.id === cs.id)) state.codeSets.push(cs);
+  // Regulating ranks (v0.3.17): saved copies of the built-in code sets get the built-in ranks.
+  for (const cs of state.codeSets) {
+    const d = def.codeSets.find((x) => x.id === cs.id);
+    if (!d || !cs.trainCodes) continue;
+    for (const [id, e] of Object.entries(cs.trainCodes)) {
+      const r = d.trainCodes[id]?.rank;
+      if (e && typeof e.rank !== 'number' && typeof r === 'number') e.rank = r;
+    }
+  }
   if (!state.codeSets.some((c) => c.id === state.settings.codeSetId)) state.settings.codeSetId = state.codeSets[0].id;
   // Before places (v0.3.13 and earlier) every box had an implied station with free-text notes, and a
   // line with no fiddle yard ran to "the location its far box serves". Both become places.
@@ -238,7 +248,14 @@ export class Store {
     for (const l of this.listeners) l(this.state);
   }
 
+  /** Erase everything saved (layouts, boxes, places, track plans, roster, settings) and start again from the app's starting data. */
   reset(): void {
+    try {
+      this.storage?.removeItem?.(KEY);
+      this.storage?.removeItem?.(OLD_KEY);
+    } catch {
+      /* storage unavailable: the save below still replaces it */
+    }
     this.state = createDefaultState();
     this.save();
     for (const l of this.listeners) l(this.state);

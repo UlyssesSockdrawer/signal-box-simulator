@@ -1,8 +1,8 @@
 {
   "name": "signal-box-simulator",
-  "version": "0.3.16",
+  "version": "0.3.23",
   "private": true,
-  "description": "Absolute block signal box bell and instrument simulator for model railways. Set up first for Becton box on the Becton and Tansley Spa Steam Railway (OO gauge).",
+  "description": "Absolute block signal box bell and instrument simulator for model railways. Ships with an example layout, Sigsim Central, to try it out.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",

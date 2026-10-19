@@ -10,6 +10,11 @@ const POWER_TYPES = ['Steam (tender)', 'Steam (tank)', 'Diesel', 'DMU', 'Electri
 let openId: string | null = null;
 
 /** Encode a Location as a select value. */
+/** Forget which roster entry was open, e.g. when all data is reset. */
+export function resetRosterUi(): void {
+  openId = null;
+}
+
 export function locValue(l: Location): string {
   if (l.kind === 'place') return `pl|${l.placeId}|${l.roadId}`;
   if (l.kind === 'atBox') return `bx|${l.boxId}`;

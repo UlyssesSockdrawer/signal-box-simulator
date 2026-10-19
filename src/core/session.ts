@@ -47,6 +47,7 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
       localShort: box.shortName,
       codeSet,
       trainTypes,
+      locoLabel: (id) => locoLabel(getState().roster.find((l) => l.id === id)),
     });
     const neighbour = new SimulatedNeighbour({
       link: remoteEnd,
@@ -62,6 +63,8 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
       placeName: place?.name ?? '',
       arrivedLabel: arrivedLabel(place, connection.neighbourName),
       locoLabel: (id) => locoLabel(getState().roster.find((l) => l.id === id)),
+      otherLines: box.connections.length - 1,
+      trainTypeOf: (id) => getState().roster.find((l) => l.id === id)?.working.trainTypeId ?? null,
     });
     return { connection, controller, neighbour };
   });

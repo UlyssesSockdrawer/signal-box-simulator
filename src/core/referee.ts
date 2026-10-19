@@ -74,7 +74,8 @@ export class BoxReferee {
     this.faults.delete(locoId);
   }
 
-  private score(s: SectionSession, rule: ScoreRuleId, detail: string, locoId: string | null): void {
+  /** Points for something on line s (from its far box, or judged by the box itself, e.g. regulating). */
+  score(s: SectionSession, rule: ScoreRuleId, detail: string, locoId: string | null): void {
     this.refresh();
     this.card.add(rule, s.connection.neighbourName, detail);
     if (SCORE_RULES[rule].points < 0) {

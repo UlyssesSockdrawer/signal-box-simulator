@@ -33,6 +33,8 @@ export const SCORE_RULES = {
   in_cleared: { points: 10, label: 'Train out of section sent after the train arrived complete (2-1)', category: 'working' },
   in_blocked: { points: 5, label: 'Block instrument returned to Line Blocked', category: 'working' },
   clean_working: { points: 20, label: 'Clean working bonus: the whole train movement without an irregularity', category: 'working' },
+  // ---- Regulating (two or more trains offered at once) ----
+  regulated_ok: { points: 5, label: 'Regulated correctly: accepted the higher class train first', category: 'procedure' },
 
   // ---- Procedure irregularities: mistakes that do not put a train at risk ----
   no_reply: { points: -3, label: 'Slow to answer: the far box had to ring again', category: 'procedure' },
@@ -42,11 +44,13 @@ export const SCORE_RULES = {
   box_not_open: { points: -5, label: 'Train offered before the box was opened', category: 'procedure' },
   no_hold: { points: -5, label: 'Last beat not held for a token release', category: 'procedure' },
   wrong_description: { points: -10, label: 'Train offered with the wrong description', category: 'procedure' },
+  misdescribed_not_corrected: { points: -10, label: 'Wrong description not corrected: the receiving box reported it on arrival (5-3)', category: 'procedure' },
   close_with_train: { points: -10, label: 'Tried to close the box with a train being signalled', category: 'procedure' },
   tol_early: { points: -10, label: 'Train On Line shown before the train entered the section', category: 'procedure' },
   tol_late: { points: -10, label: 'Train On Line not shown while the train was in the section', category: 'procedure' },
   lb_late: { points: -5, label: 'Instrument left off Line Blocked after the train cleared', category: 'procedure' },
   unexpected_out_of_section: { points: -10, label: 'Train out of section sent with no train in the section', category: 'procedure' },
+  regulated_wrong: { points: -10, label: 'Regulating: accepted a lower class train while a higher class one was waiting', category: 'procedure' },
 
   // ---- Safety: the ones that matter on a real railway ----
   lc_without_accept: { points: -20, label: 'Line Clear given without accepting a train', category: 'safety' },

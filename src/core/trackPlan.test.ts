@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addConnection, deleteBox, addBox, removeConnection } from './boxes';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
 import { migrate } from './store';
 import {
   addJunctionInTrack,

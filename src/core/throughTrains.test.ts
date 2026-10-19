@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addConnection } from './boxes';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
 import { addPlace, placesWorkedBy, setConnectionPlace, setWorker } from './places';
 import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
