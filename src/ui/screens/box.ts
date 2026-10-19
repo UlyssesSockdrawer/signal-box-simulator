@@ -1,14 +1,19 @@
-import { findYard } from '../../core/layouts';
+import { findLayout } from '../../core/layouts';
+import { arrivalChoices, arrivedLabel, farPlace, findPlace, findRoad, placeLocationText } from '../../core/places';
+import { pointsText } from '../../core/score';
 import { describeCode, REGULATION_SIGNALS, signalCode, trainCode } from '../../core/bellcodes';
 import { realScheduler } from '../../core/scheduler';
-import { instrumentName, type LogEntry } from '../../core/sectionController';
+import { clockTime, instrumentName, waitingText, type IncomingView, type LogEntry } from '../../core/sectionController';
 import { incomingCandidates, SELECTORS, stationLocos } from '../../core/selection';
 import { layoutShelf, positionLabel } from '../../core/shelf';
 import { beatDots } from '../../core/simulatedNeighbour';
 import { TapDecoder } from '../../core/tapDecoder';
 import { trainsOnLayout, type RegisterLocation } from '../../core/layoutRegister';
-import type { BoxDef, InstrumentState, Loco } from '../../core/types';
-import { getBoxRuntime, type ConnRuntime } from '../boxRuntime';
+import type { BoxDef, ConnectionDef, InstrumentState, Loco } from '../../core/types';
+import { getBoxRuntime, takeFinishedScore, type ConnRuntime } from '../boxRuntime';
+import type { ThroughWorkings } from '../../core/throughTrains';
+import { drawDiagram, hasDiagram, type DiagramLabels } from '../planDiagram';
+import { showScoreSheet } from '../scoreSheet';
 import { activeCodeSet, locationText, locoFullName, locoName, trainTypeName, type Ctx, type Screen } from '../app';
 import { confirmButton, h, option, replace, safeRerender, toast } from '../dom';
 import { codeReference } from './help';
@@ -17,8 +22,9 @@ import { layoutEditor } from './layout';
 /*
  * The signal box console.
  *
- *   header      ‹ Menu · external nameboard · clock · mode · Codes · Yard · Settings
- *   next step   learner guidance (above everything else, for visitors at shows)
+ *   header      ‹ Menu · external nameboard · clock · mode · Score · Diagram · Codes · Yard · Settings
+ *   diagram     the layout's track plan as a diagram board (shown or hidden from the header)
+ *   next step   learner guidance (for visitors at shows), between the diagram and the shelf
  *   block shelf one instrument group per connection, in the box's shelf positions
  *   desk        next arrival (from a chosen line) · departure (to a chosen line) · trains on layout · train register
  *
@@ -34,6 +40,9 @@ interface ConnectionUI {
   depBody: HTMLElement;
   regBody: HTMLElement;
   guidance(): { text: string; hint: string };
+  /** A train is being offered or worked on this line. */
+  busy(): boolean;
+  name: string;
   tapPress(): void;
   tapRelease(): void;
   setSelected(on: boolean, many: boolean): void;
@@ -54,6 +63,10 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     }),
   );
 
+  // The final score of a box that has just been closed (shown once, here).
+  const finished = takeFinishedScore(box.id);
+  if (finished && store.state.settings.scoring) window.setTimeout(() => showScoreSheet(finished, { boxName: box.name, final: true }), 0);
+
   document.body.classList.add('console-mode');
   ctx.onLeave(() => document.body.classList.remove('console-mode'));
 
@@ -62,13 +75,51 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 
   // ---------------------------------------------------------------- next step
   const nextStep = h('div', { class: 'next-step', role: 'status', 'aria-live': 'polite' });
+  // The Next step bar sits above the shelf, so a change in its height moves the instruments. Never
+  // change it while a finger or mouse button is down: the tap would land somewhere else (e.g. tapping
+  // a chip on another line's case selects that case, which changes the next step).
+  let pointerHeld = false;
+  let stepPending = false;
+  const onDown = () => (pointerHeld = true);
+  const onUp = () =>
+    window.setTimeout(() => {
+      pointerHeld = false;
+      if (stepPending) {
+        stepPending = false;
+        renderNextStep();
+      }
+    }, 0);
+  window.addEventListener('pointerdown', onDown, true);
+  window.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointercancel', onUp, true);
+  ctx.onLeave(() => {
+    window.removeEventListener('pointerdown', onDown, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onUp, true);
+  });
   const renderNextStep = () => {
+    if (pointerHeld) {
+      stepPending = true;
+      return;
+    }
     const ui = uis[selected];
     if (!ui || !learner()) {
       nextStep.hidden = true;
       return;
     }
-    const g = ui.guidance();
+    // Two trains offered at once, one of a higher class: warn before the lower class is accepted.
+    const reg = runtime.regulator.advice();
+    // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
+    const tg = runtime.workings.guidance();
+    // A quiet line selected while a train is still being worked on another: show that line's next step.
+    const other = !tg && !ui.busy() ? uis.find((u) => u !== ui && u.busy()) : undefined;
+    const g = reg
+      ? { text: reg.text, hint: '' }
+      : tg
+        ? { text: tg.text, hint: '' }
+        : other
+          ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` }
+          : ui.guidance();
     nextStep.hidden = false;
     replace(
       nextStep,
@@ -84,7 +135,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 
   // ---------------------------------------------------------------- connections
   let uis: ConnectionUI[] = [];
-  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i)));
+  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection)));
+
 
   // ---------------------------------------------------------------- header
   const clock = h('span', { class: 'box-clock', 'aria-label': 'Box clock' });
@@ -111,6 +163,79 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   const side = sidePanel(ctx, box.id);
   ctx.onLeave(side.dispose);
 
+  // ---------------------------------------------------------------- score
+  const score = runtime.score;
+  const scoreNum = h('strong', { class: 'score-num' });
+  const scoreDelta = h('span', { class: 'score-delta', 'aria-hidden': 'true' });
+  const scoreBtn = h(
+    'button',
+    { class: 'score-chip', type: 'button', title: 'Score sheet', on: { click: () => showScoreSheet(score, { boxName: box.name, final: false }) } },
+    h('span', { class: 'score-word' }, 'Score'),
+    scoreNum,
+    scoreDelta,
+  );
+  let deltaTimer = 0;
+  const renderScore = (delta?: number) => {
+    scoreBtn.hidden = !store.state.settings.scoring;
+    scoreNum.textContent = String(score.total);
+    scoreBtn.setAttribute('aria-label', `Score ${score.total}. Open the score sheet.`);
+    if (delta === undefined || delta === 0) return;
+    scoreDelta.textContent = pointsText(delta);
+    scoreDelta.className = `score-delta show ${delta < 0 ? 'neg' : 'pos'}`;
+    window.clearTimeout(deltaTimer);
+    deltaTimer = window.setTimeout(() => (scoreDelta.className = 'score-delta'), 1800);
+  };
+  ctx.onLeave(score.onChange((e) => renderScore(e?.points)));
+  ctx.onLeave(store.subscribe(() => renderScore()));
+  ctx.onLeave(() => window.clearTimeout(deltaTimer));
+  renderScore();
+
+  // ---------------------------------------------------------------- diagram board
+  const diagramBtn = h('button', { class: 'btn small', type: 'button', 'aria-controls': 'diagram-board', on: { click: () => store.update((s) => { s.settings.boxDiagram = !s.settings.boxDiagram; }) } }, 'Diagram');
+  const diagramEl = h('section', { id: 'diagram-board', class: 'diagram-shelf', 'aria-label': 'Track diagram' });
+  let diagramKey = '';
+  const renderDiagram = () => {
+    const st = store.state;
+    const show = st.settings.boxDiagram;
+    diagramBtn.setAttribute('aria-pressed', String(show));
+    diagramBtn.title = show ? 'Hide the track diagram' : 'Show the track diagram';
+    diagramEl.hidden = !show;
+    if (!show) {
+      diagramKey = '';
+      return;
+    }
+    const b = st.boxes.find((x) => x.id === box.id) ?? box;
+    const layout = b.layoutId ? findLayout(st, b.layoutId) : undefined;
+    const key = JSON.stringify([layout?.trackPlan, layout?.name, layout?.places.map((y) => y.name), st.settings.diagramLabels, st.boxes.map((x) => [x.id, x.shortName, x.connections.map((c) => [c.id, c.neighbourName, c.neighbourShort])])]);
+    if (key === diagramKey) return;
+    diagramKey = key;
+    const labelsSeg = h(
+      'div',
+      { class: 'dg-tools', role: 'group', 'aria-label': 'Track labels' },
+      ...(['none', 'codes', 'names'] as DiagramLabels[]).map((v) =>
+        h('button', { class: 'dg-tool', type: 'button', 'aria-pressed': String(st.settings.diagramLabels === v), on: { click: () => store.update((s) => { s.settings.diagramLabels = v; }) } }, v === 'none' ? 'No labels' : v === 'codes' ? 'Codes' : 'Names'),
+      ),
+    );
+    const editPlan = (label: string) =>
+      h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom(`plan/${layout!.id}`, { route: `box/${box.id}`, label: `${box.name} box` }) } }, label);
+    if (!layout || !hasDiagram(layout)) {
+      replace(
+        diagramEl,
+        h(
+          'div',
+          { class: 'dg-board dg-empty' },
+          h('p', null, !layout ? `${box.name} is not on a layout, so there is no track diagram to show.` : `No track has been drawn for ${layout.name} yet. Draw it in the Layout configurator and it will appear here.`),
+          layout ? editPlan('Open the Layout configurator') : null,
+        ),
+      );
+      return;
+    }
+    const svgEl = drawDiagram(st, layout, { boxId: box.id, labels: st.settings.diagramLabels });
+    replace(diagramEl, h('div', { class: 'dg-board' }, svgEl, labelsSeg));
+  };
+  ctx.onLeave(store.subscribe(renderDiagram));
+  renderDiagram();
+
   const header = h(
     'header',
     { class: 'console-head' },
@@ -122,8 +247,10 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     h(
       'div',
       { class: 'head-tools' },
+      scoreBtn,
+      diagramBtn,
       h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('codes') } }, 'Bell codes'),
-      h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('layout') } }, 'Yard & station'),
+      h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('layout') } }, 'Places'),
       h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom('settings', { route: `box/${box.id}`, label: `${box.name} box` }) } }, 'Settings'),
     ),
   );
@@ -181,28 +308,30 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   const renderYard = () => {
     const st = store.state;
     const trainText = (l: Loco) => `${locoFullName(l)}, ${trainTypeName(st, l.working.trainTypeId).toLowerCase()}`;
-    const noteOf = (l: Loco) => (l.location.kind === 'station' || l.location.kind === 'farBox' ? l.location.note : '');
+    const none = [h('dt', { class: 'muted' }, '—'), h('dd', { class: 'muted' }, 'no trains')];
     const group = (loc: RegisterLocation) => {
       let meta = '';
       let rows: HTMLElement[] = [];
-      if (loc.kind === 'yard') {
-        meta = `${loc.roads.length} ${loc.roads.length === 1 ? 'road' : 'roads'}`;
+      let count = 0;
+      if (loc.kind === 'place') {
+        meta = loc.roads.length ? `${loc.roads.length} ${loc.roads.length === 1 ? 'road' : 'roads'}` : '';
         rows = loc.roads.flatMap(({ road, locos }) => [
           h('dt', null, road.name),
           h('dd', { class: locos.length ? '' : 'muted' }, locos.length ? locos.map(trainText).join('; ') : 'empty'),
         ]);
+        rows.push(...loc.loose.flatMap((l) => [h('dt', null, loc.roads.length ? 'No road' : 'Here'), h('dd', null, trainText(l))]));
+        if (!rows.length) rows = none;
+        count = loc.roads.reduce((n, r) => n + r.locos.length, 0) + loc.loose.length;
       } else if (loc.kind === 'section') {
         rows = loc.locos.flatMap(({ loco, conn, box: b }) => [h('dt', null, conn && b ? `${b.shortName}–${conn.neighbourShort}` : 'Line'), h('dd', null, trainText(loco))]);
+        count = loc.locos.length;
       } else {
-        const where = 'In station'; // until the layout configurator gives locations their platforms/roads
-        rows = loc.locos.length
-          ? loc.locos.flatMap((l) => [h('dt', null, noteOf(l) || where), h('dd', null, trainText(l))])
-          : [h('dt', { class: 'muted' }, '—'), h('dd', { class: 'muted' }, 'no trains')];
+        rows = loc.locos.length ? loc.locos.flatMap((l) => [h('dt', null, 'At box'), h('dd', null, trainText(l))]) : none;
+        count = loc.locos.length;
       }
-      const count = loc.kind === 'yard' ? loc.roads.reduce((n, r) => n + r.locos.length, 0) : loc.locos.length;
       return h(
         'section',
-        { class: 'reg-loc' },
+        { class: `reg-loc${loc.kind === 'place' && loc.mine ? ' mine' : ''}` },
         h('h3', { class: 'reg-loc-head' }, h('span', { class: 'reg-loc-name' }, loc.name), h('span', { class: 'reg-loc-meta' }, [meta, `${count} ${count === 1 ? 'train' : 'trains'}`].filter(Boolean).join(' · '))),
         h('dl', { class: 'yard-list' }, ...rows),
       );
@@ -315,7 +444,38 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   const unsubStep = store.subscribe(renderNextStep);
   ctx.onLeave(unsubStep);
 
-  renderTabs();
+  // Regulating: when a higher class train is offered while another is waiting, select its line's instruments once.
+  let lastRegKey = '';
+  for (const s of sessions) {
+    ctx.onLeave(
+      s.controller.events.on('change', () => {
+        const reg = runtime.regulator.advice();
+        const key = reg ? `${reg.connId}|${reg.text}` : '';
+        if (key === lastRegKey) return;
+        lastRegKey = key;
+        const i = reg && learner() ? runtime.conns.findIndex((x) => x.session.connection.id === reg.connId) : -1;
+        if (i >= 0 && i !== selected) select(i);
+        else renderNextStep();
+      }),
+    );
+  }
+
+  // When a through train needs work on another line (e.g. offering it on), select that line's instruments once.
+  let lastThroughKey = '';
+  ctx.onLeave(
+    runtime.workings.onChange(() => {
+      const tg = runtime.workings.guidance();
+      const key = tg ? `${tg.connId}|${tg.text}` : '';
+      if (key !== lastThroughKey) {
+        lastThroughKey = key;
+        const i = tg ? runtime.conns.findIndex((x) => x.session.connection.id === tg.connId) : -1;
+        // The Departure panel follows the line the through train is being offered on to.
+        if (i >= 0 && tg && runtime.workings.throughTo(tg.connId) && depIdx !== i) showLine('dep', i, false);
+        if (i >= 0 && i !== selected) select(i);
+        else renderNextStep();
+      }
+    }),
+  );  renderTabs();
   if (uis.length) {
     showLine('arr', 0, false);
     showLine('dep', 0, false);
@@ -332,6 +492,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       { class: 'console' },
       header,
       soundBanner,
+      diagramEl,
       nextStep,
       h('div', { class: 'console-main' }, shelf, desk),
       side.el,
@@ -343,7 +504,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 // One connection: its instrument group on the shelf and its desk panels
 // =============================================================================
 
-function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => void, onSelect: () => void): ConnectionUI {
+function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => void, onSelect: () => void, workings: ThroughWorkings, allConns: ConnectionDef[]): ConnectionUI {
   const store = ctx.store;
   const c = cr.session.controller;
   const conn = cr.session.connection;
@@ -356,11 +517,91 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   const short = conn.neighbourShort;
 
   let incSel = '';
-  let platformNote = '';
+  /** Where the incoming train is put when it arrives: 'placeId|roadId' of a place this box works. */
+  let arrAt = '';
   let outSel = '';
   let arrRoad = '';
   let lastHint = '';
   let hintAt = 0;
+
+  /** Where a train in this box's places stands, briefly: "P1", "Sigsim Central goods yard · Goods siding". */
+  const whereAtBox = (l: Loco) => {
+    const loc = l.location;
+    if (loc.kind === 'atBox') return 'At box';
+    if (loc.kind !== 'place') return locationText(st(), l);
+    const p = findPlace(st(), loc.placeId);
+    const r = findRoad(p, loc.roadId);
+    return r ? (/^(p\d|platform)/i.test(r.name) ? r.name : `${p?.name} · ${r.name}`) : (p?.name ?? '');
+  };
+  /** Where an incoming candidate stands: its road at the far end, or the roster. */
+  const whereFrom = (l: Loco) => {
+    const loc = l.location;
+    if (loc.kind === 'offLayout') return 'Roster';
+    if (loc.kind !== 'place') return locationText(st(), l);
+    return findRoad(findPlace(st(), loc.placeId), loc.roadId)?.name ?? placeLocationText(st(), loc);
+  };
+  const farPlaceName = () => {
+    const state = st();
+    const b = state.boxes.find((x) => x.id === box.id) ?? box;
+    return farPlace(state, b, conn)?.name ?? '';
+  };
+  /** The roads of the places this box works, for putting an arriving train on (none for a junction box). */
+  const arrivalKey = () => JSON.stringify(arrivalChoices(st(), box.id));
+  const arrivalSelect = (id: string): HTMLSelectElement | null => {
+    const state = st();
+    const choices = arrivalChoices(state, box.id);
+    if (!choices.length) return null;
+    const val = (x: { placeId: string; roadId: string }) => `${x.placeId}|${x.roadId}`;
+    const occ = new Set(state.roster.flatMap((l) => (l.location.kind === 'place' && l.location.roadId ? [val(l.location)] : [])));
+    if (!arrAt || !choices.some((x) => val(x) === arrAt)) arrAt = val(choices.find((x) => !occ.has(val(x))) ?? choices[0]);
+    return h(
+      'select',
+      { id, 'aria-label': 'Where it arrived', on: { change: (e: Event) => (arrAt = (e.target as HTMLSelectElement).value) } },
+      ...choices.map((x) => option(val(x), `${choices.every((y) => y.placeId === x.placeId) && x.roadId ? x.label.split(' · ').slice(1).join(' · ') : x.label}${occ.has(val(x)) ? ' (occupied)' : ''}`, val(x) === arrAt)),
+    );
+  };
+  const arrivalTarget = () => {
+    if (!arrivalChoices(st(), box.id).length || !arrAt) return null;
+    const [placeId, roadId] = arrAt.split('|');
+    return { placeId, roadId: roadId ?? '' };
+  };
+
+  /** The train on this line has arrived (stopped here) or passed (a through train sent on). */
+  const arrived = () => {
+    if (workings.through(conn.id)) c.confirmIncomingArrived(null, { moveLoco: !workings.keepLocoWhereItIs(conn.id) });
+    else c.confirmIncomingArrived(arrivalTarget());
+  };
+  /** Where the incoming train goes at this box: stop here, or on along another line (offering it on). */
+  const routeField = (): HTMLElement | null => {
+    const others = allConns.filter((x) => x.id !== conn.id);
+    if (!others.length || !c.view.incoming) return null;
+    const thr = workings.through(conn.id);
+    const id = `route_${conn.id}`;
+    const stopLabel = `Stop at ${box.name} (${arrivalChoices(st(), box.id).length ? 'into a road' : 'stands at the box'})`;
+    return h(
+      'div',
+      { class: 'field route-field' },
+      h('label', { for: id }, 'Route'),
+      h(
+        'select',
+        {
+          id,
+          disabled: thr?.stage === 'sentOn' || thr?.stage === 'passed',
+          on: {
+            change: (e: Event) => {
+              const err = workings.setRoute(conn.id, (e.target as HTMLSelectElement).value);
+              if (err) toast(err);
+            },
+          },
+        },
+        option('', stopLabel, !thr),
+        ...others.map((x) => option(x.id, `On to ${x.neighbourName} (offer it on)`, thr?.toConnId === x.id)),
+      ),
+      thr
+        ? h('small', { class: 'help' }, thr.blocked ? `Another train is chosen to depart to ${allConns.find((x) => x.id === thr.toConnId)?.neighbourName}.` : 'Once you have accepted it, offer it on: call attention on that line, then send its Is line clear code.')
+        : null,
+    );
+  };
 
   /** A brass button that works once: it disables itself as soon as it is pressed, so a double click reports nothing twice. */
   const onceButton = (label: string, fn: () => void) =>
@@ -382,13 +623,14 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     let code = '';
     let text = '';
     let stage = '';
-    if (v.incoming) {
+    // A train held at the far box gives way in the describer to one being sent the other way on the single line.
+    if (v.incoming && !(v.incoming.held && v.outgoing?.locoId)) {
       const l = state.roster.find((x) => x.id === v.incoming!.locoId);
       dir = `FROM ${short}`;
       code = trainCode(codeSet(), v.incoming.trainTypeId);
       text = `${trainTypeName(state, v.incoming.trainTypeId)} · ${l ? locoName(l) : ''}${l?.dccAddress ? ` · DCC ${l.dccAddress}` : ''}`;
       const accepted = v.mode === 'ab' ? v.myInstrument !== 'LB' : v.tokenIndicator === 'coming';
-      stage = v.incoming.arrived ? 'ARRIVED' : v.incoming.departed ? 'ON LINE' : accepted ? 'ACCEPTED' : 'OFFERED';
+      stage = v.incoming.arrived ? 'ARRIVED' : v.incoming.departed ? 'ON LINE' : accepted ? 'ACCEPTED' : v.incoming.held ? heldText(v.incoming).toUpperCase() : 'OFFERED';
     } else if (v.outgoing?.locoId) {
       const l = state.roster.find((x) => x.id === v.outgoing!.locoId);
       const tt = v.outgoing.trainTypeId ?? l?.working.trainTypeId ?? '';
@@ -413,6 +655,12 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
       );
     });
   };
+
+  /** The refusal tracker's words for a held train: "held at Fiddle Yard · offered 14:02 · waiting 3 min". */
+  function heldText(inc: IncomingView): string {
+    const waited = waitingText(Date.now() - (inc.offeredAt ?? Date.now()));
+    return [`held at ${conn.neighbourName}`, inc.offeredAt !== null ? `offered ${clockTime(inc.offeredAt)}` : '', `waiting ${waited || '<1 min'}`].filter(Boolean).join(' · ');
+  }
 
   // ------------------------------------------------------------- bell
   const dome = h('div', { class: 'bell-dome', role: 'img', 'aria-label': `Block bell from ${conn.neighbourName}` });
@@ -624,27 +872,20 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   const renderAction = () => {
     const inc = c.view.incoming;
     const show = !!inc && inc.departed && !inc.arrived;
-    mount(actionEl, JSON.stringify([show, inc?.locoId]), () => {
+    mount(actionEl, JSON.stringify([show, inc?.locoId, arrivalKey(), workings.through(conn.id)]), () => {
       actionEl.hidden = !show;
       if (!show || !inc) return replace(actionEl);
       const l = st().roster.find((x) => x.id === inc.locoId);
-      const note = h('input', {
-        id: `cpnote_${conn.id}`,
-        type: 'text',
-        placeholder: 'Platform',
-        'aria-label': 'Platform it arrived in (optional)',
-        value: platformNote,
-        on: { input: (e: Event) => (platformNote = (e.target as HTMLInputElement).value) },
-      });
+      const thr = workings.through(conn.id);
       replace(
         actionEl,
         h(
           'button',
-          { class: 'btn arrived-btn', type: 'button', on: { click: (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; c.confirmIncomingArrived(platformNote.trim()); } } },
-          `${l ? locoName(l) : 'Train'} arrived complete`,
+          { class: 'btn arrived-btn', type: 'button', on: { click: (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; arrived(); } } },
+          `${l ? locoName(l) : 'Train'} ${thr?.stage === 'sentOn' ? 'passed complete' : 'arrived complete'}`,
           h('span', null, 'tail lamp seen'),
         ),
-        note,
+        thr ? null : arrivalSelect(`cparr_${conn.id}`),
       );
     });
   };
@@ -673,15 +914,16 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const state = st();
     const candidates = incomingCandidates(state, conn);
     if (incSel && !candidates.some((l) => l.id === incSel) && !v.incoming) incSel = '';
-    const key = JSON.stringify([v.boxOpen, v.incoming, incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id]);
+    const thr = workings.through(conn.id);
+    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey()]);
     mount(arrBody, key, () => {
       const title = null; // the panel's line bar names the line ("Next arrival from …")
       if (!v.incoming) {
         const sel = h(
           'select',
           { id: `inc_${conn.id}`, on: { change: (e: Event) => { incSel = (e.target as HTMLSelectElement).value; renderIncoming(); } } },
-          option('', candidates.length ? 'Choose a train…' : conn.fiddleYardId ? 'No trains in the fiddle yard' : `No trains at ${conn.neighbourName}`, !incSel),
-          ...candidates.map((l) => option(l.id, `${locationText(state, l).split(', ').pop()}: ${locoFullName(l)}, ${trainTypeName(state, l.working.trainTypeId).toLowerCase()}`, l.id === incSel)),
+          option('', candidates.length ? 'Choose a train…' : farPlaceName() ? `No trains in ${farPlaceName()}` : 'No trains off the layout', !incSel),
+          ...candidates.map((l) => option(l.id, `${whereFrom(l)}: ${locoFullName(l)}, ${trainTypeName(state, l.working.trainTypeId).toLowerCase()}`, l.id === incSel)),
         );
         const chosen = candidates.find((l) => l.id === incSel);
         const modeSel = h(
@@ -715,7 +957,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
                   ctx.bell.unlock();
                   const err = c.requestIncoming(chosen.id, chosen.working.trainTypeId);
                   if (err) toast(err);
-                  else platformNote = '';
+                  else arrAt = '';
                 },
               },
             },
@@ -725,24 +967,34 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         );
       } else {
         const inc = v.incoming;
+        const onward = thr ? allConns.find((x) => x.id === thr.toConnId) : undefined;
         const status = !inc.departed
-          ? `Being offered. Don't move the train until ${short} sends 2 (Train entering section).`
+          ? inc.held
+            ? `${heldText(inc)[0].toUpperCase()}${heldText(inc).slice(1)}${inc.reoffers ? ` · offered ${inc.reoffers + 1} times` : ''}. You have not accepted it, so ${conn.neighbourName} is holding it and will offer it again${inc.nextOfferAt ? ` at about ${clockTime(inc.nextOfferAt)}` : ''}${allConns.length > 1 ? ', or soon after you next send 2-1 on another line' : ''}.`
+            : inc.offeredAt !== null && inc.acceptedAt === null && !(v.mode === 'ab' ? v.myInstrument !== 'LB' : v.tokenIndicator === 'coming')
+              ? `Offered ${clockTime(inc.offeredAt)}. Repeat the code to accept it, or do not reply to refuse it for now. Don't move the train until ${short} sends 2 (Train entering section).`
+              : `Being offered. Don't move the train until ${short} sends 2 (Train entering section).`
           : !inc.arrived
-            ? `Despatched. Drive it into ${box.name}.`
+            ? thr?.stage === 'sentOn'
+              ? `Sent on towards ${onward?.neighbourName}. Report it passed complete once its tail lamp has passed.`
+              : onward
+                ? `Despatched. It runs through ${box.name} to ${onward.neighbourName}.`
+                : `Despatched. Drive it into ${box.name}.`
             : 'Arrived. Call attention, then send 2-1.';
-        const noteInput = h('input', { id: `pnote_${conn.id}`, type: 'text', placeholder: 'e.g. P1', value: platformNote, on: { input: (e: Event) => (platformNote = (e.target as HTMLInputElement).value) } });
+        const arrSel = thr ? null : arrivalSelect(`parr_${conn.id}`);
         replace(
           arrBody,
           title,
           trainCard(inc.locoId, inc.trainTypeId),
-          h('p', { class: `status ${inc.departed ? 'go' : ''}` }, status),
+          routeField(),
+          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, status),
           inc.departed && !inc.arrived
             ? h(
                 'div',
                 { class: 'quick-row' },
-                h('label', { for: noteInput.id }, 'Platform'),
-                noteInput,
-                onceButton('Train arrived complete', () => c.confirmIncomingArrived(platformNote.trim())),
+                arrSel ? h('label', { for: arrSel.id }, 'Into') : null,
+                arrSel,
+                onceButton(thr?.stage === 'sentOn' ? 'Train passed complete' : thr ? 'Train arrived (standing here)' : 'Train arrived complete', arrived),
               )
             : null,
           !inc.departed ? confirmButton('Cancel this train', 'Press again to cancel', () => c.cancelIncoming(), 'btn ghost danger') : null,
@@ -757,11 +1009,12 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const v = c.view;
     const state = st();
     const inStation = stationLocos(state, box.id);
-    const yard = findYard(state, conn.fiddleYardId);
+    const b = state.boxes.find((x) => x.id === box.id) ?? box;
+    const place = farPlace(state, b, conn);
     const accepted = v.mode === 'ab' ? v.remoteInstrument === 'LC' : v.tokenWithdrawnHere || v.releaseAvailable;
-    const occupied = new Set(state.roster.flatMap((l) => (l.location.kind === 'fiddleYard' && l.location.yardId === yard?.id ? [l.location.roadId] : [])));
-    if (!arrRoad || !yard?.roads.some((r) => r.id === arrRoad)) arrRoad = yard?.roads.find((r) => !occupied.has(r.id))?.id ?? yard?.roads[0]?.id ?? '';
-    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id]);
+    const occupied = new Set(state.roster.flatMap((l) => (l.location.kind === 'place' && l.location.placeId === place?.id ? [l.location.roadId] : [])));
+    if (!arrRoad || !place?.roads.some((r) => r.id === arrRoad)) arrRoad = place?.roads.find((r) => !occupied.has(r.id))?.id ?? place?.roads[0]?.id ?? '';
+    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, place?.name, place?.roads, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id, workings.throughTo(conn.id)]);
     mount(depBody, key, () => {
       const title = null; // the panel's line bar names the line ("Departure to …")
       const out = v.outgoing;
@@ -769,27 +1022,31 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         const roadSel = h(
           'select',
           { id: `road_${conn.id}`, on: { change: (e: Event) => { arrRoad = (e.target as HTMLSelectElement).value; } } },
-          ...(yard?.roads ?? []).map((r) => option(r.id, `${r.name}${occupied.has(r.id) ? ' (occupied)' : ''}`, r.id === arrRoad)),
+          ...(place?.roads ?? []).map((r) => option(r.id, `${r.name}${occupied.has(r.id) ? ' (occupied)' : ''}`, r.id === arrRoad)),
         );
         replace(
           depBody,
           title,
           out.locoId ? trainCard(out.locoId, out.trainTypeId ?? state.roster.find((l) => l.id === out.locoId)?.working.trainTypeId ?? '') : h('p', null, 'Train on line.'),
           out.arrived
-            ? h('p', { class: 'status go' }, `Arrived at ${conn.neighbourName}. ${conn.neighbourName} will call attention and send 2-1 (Train out of section).`)
-            : yard
+            ? h('p', { class: 'status go' }, `Arrived at ${place?.name ?? conn.neighbourName}. ${conn.neighbourName} will call attention and send 2-1 (Train out of section).`)
+            : place?.roads.length
               ? [
-                  h('p', { class: 'status go' }, `On line to ${conn.neighbourName}. Drive it into the fiddle yard.`),
-                  h('div', { class: 'quick-row' }, h('label', { for: roadSel.id }, 'Into road'), roadSel, onceButton('Arrived in fiddle yard', () => c.confirmOutgoingArrived(arrRoad, out.locoId))),
+                  h('p', { class: 'status go' }, `On line to ${conn.neighbourName}. Drive it into ${place.name}.`),
+                  h('div', { class: 'quick-row' }, h('label', { for: roadSel.id }, 'Into road'), roadSel, onceButton(arrivedLabel(place, conn.neighbourName), () => c.confirmOutgoingArrived(arrRoad, out.locoId))),
                 ]
               : [
-                  h('p', { class: 'status go' }, `On line to ${conn.neighbourName}. Drive it there, then press below when it has arrived complete.`),
-                  onceButton(`Arrived at ${conn.neighbourName}`, () => c.confirmOutgoingArrived('', out.locoId)),
+                  h('p', { class: 'status go' }, place ? `On line to ${conn.neighbourName}. Drive it to ${place.name}, then press below when it has arrived complete.` : `On line to ${conn.neighbourName}. Drive it there (it goes back to the roster), then press below when it has arrived complete.`),
+                  onceButton(arrivedLabel(place, conn.neighbourName), () => c.confirmOutgoingArrived('', out.locoId)),
                 ],
         );
         return;
       }
-      if (outSel && !inStation.some((l) => l.id === outSel)) outSel = '';
+      const thrTo = workings.throughTo(conn.id);
+      const thrLoco = thrTo && !thrTo.blocked ? state.roster.find((l) => l.id === thrTo.locoId) : undefined;
+      const fromName = thrTo ? allConns.find((x) => x.id === thrTo.fromConnId)?.neighbourName ?? '' : '';
+      if (thrLoco && !inStation.some((l) => l.id === thrLoco.id)) outSel = thrLoco.id;
+      if (outSel && !inStation.some((l) => l.id === outSel) && outSel !== thrLoco?.id) outSel = '';
       const sel = h(
         'select',
         {
@@ -797,6 +1054,8 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
           on: {
             change: (e: Event) => {
               outSel = (e.target as HTMLSelectElement).value;
+              // Choosing another train for this line stops the through train here instead.
+              if (thrTo && outSel !== thrTo.locoId) workings.setRoute(thrTo.fromConnId, '');
               const l = st().roster.find((x) => x.id === outSel);
               c.setOutgoing(outSel || null, l?.working.trainTypeId ?? null);
               renderOutgoing();
@@ -804,9 +1063,10 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
           },
         },
         option('', inStation.length ? 'Choose a train…' : `No trains in ${box.name} station`, !outSel),
-        ...inStation.map((l) => option(l.id, `${l.location.kind === 'station' && l.location.note ? `${l.location.note}: ` : ''}${locoFullName(l)}, ${trainTypeName(state, l.working.trainTypeId).toLowerCase()}`, l.id === outSel)),
+        ...inStation.map((l) => option(l.id, `${whereAtBox(l)}: ${locoFullName(l)}, ${trainTypeName(state, l.working.trainTypeId).toLowerCase()}`, l.id === outSel)),
+        ...(thrLoco && !inStation.some((l) => l.id === thrLoco.id) ? [option(thrLoco.id, `Through from ${fromName}: ${locoFullName(thrLoco)}, ${trainTypeName(state, thrTo!.trainTypeId).toLowerCase()}`, outSel === thrLoco.id)] : []),
       );
-      const chosen = inStation.find((l) => l.id === outSel);
+      const chosen = inStation.find((l) => l.id === outSel) ?? (thrLoco?.id === outSel ? thrLoco : undefined);
       const code = chosen ? trainCode(codeSet(), chosen.working.trainTypeId) : '';
       replace(
         depBody,
@@ -815,9 +1075,9 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         chosen ? workingEditor(chosen.id, 'Working for this departure') : null,
         chosen
           ? h('p', null, code ? ['Offer with ', h('strong', null, signalCode(codeSet(), 'call_attention')), ', then ', h('strong', null, code), '.'] : 'This working has no bell code in the current code set.')
-          : h('p', { class: 'muted small' }, conn.fiddleYardId ? 'Choose the train before offering it, so the app can move it to the fiddle yard when it arrives.' : `Choose the train before offering it, so the app can move it to ${conn.neighbourName} when it arrives.`),
+          : h('p', { class: 'muted small' }, farPlaceName() ? `Choose the train before offering it, so the app can move it to ${farPlaceName()} when it arrives.` : `Choose the train before offering it. ${conn.neighbourName} has no place on the layout, so it goes back to the roster when it arrives.`),
         accepted
-          ? h('p', { class: 'status go' }, v.mode === 'ab' ? 'Line clear: clear your starting signal. Send 2 as it departs.' : v.tokenWithdrawnHere ? 'Token out: hand it to the driver, clear your signal, send 2 as it departs.' : 'Release given: withdraw the token now.')
+          ? h('p', { class: 'status go' }, v.mode === 'ab' ? (thrLoco && outSel === thrLoco.id ? 'Line clear: clear your signals for the through train. Send 2 as it passes your box.' : 'Line clear: clear your starting signal. Send 2 as it departs.') : v.tokenWithdrawnHere ? 'Token out: hand it to the driver, clear your signal, send 2 as it departs.' : 'Release given: withdraw the token now.')
           : null,
       );
     });
@@ -911,7 +1171,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const out = c.view.outgoing;
     if (!outSel || out?.departed) return;
     const l = st().roster.find((x) => x.id === outSel);
-    if (l && l.location.kind === 'station' && (out?.locoId !== l.id || out?.trainTypeId !== l.working.trainTypeId)) c.setOutgoing(l.id, l.working.trainTypeId);
+    if (l && stationLocos(st(), box.id).some((x) => x.id === l.id) && (out?.locoId !== l.id || out?.trainTypeId !== l.working.trainTypeId)) c.setOutgoing(l.id, l.working.trainTypeId);
   };
   let lastGuidance = '';
   const renderAll = () => {
@@ -928,6 +1188,16 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     }
   };
   offs.push(c.events.on('change', renderAll));
+  // A held train's waiting time counts up in the describer and the Next arrival panel.
+  const waitTimer = window.setInterval(() => {
+    if (c.view.incoming?.held) {
+      renderDescriber();
+      renderIncoming();
+    }
+  }, 10_000);
+  offs.push(() => window.clearInterval(waitTimer));
+  // Through trains link two lines: a change on one can change what the other shows.
+  offs.push(workings.onChange(renderAll));
   const unsub = store.subscribe(() => {
     syncOutgoing();
     renderBellText();
@@ -942,6 +1212,8 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     depBody,
     regBody,
     guidance: () => ({ text: c.view.guidance, hint: lastHint }),
+    busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
+    name: conn.neighbourName,
     tapPress: press,
     tapRelease: release,
     setSelected: (on, many) => {
@@ -962,7 +1234,7 @@ function sidePanel(ctx: Ctx, boxId: string): { el: HTMLElement; toggle(tab: Side
   const body = h('div', { class: 'side-body' });
   const tabBtn = (t: SideTab, label: string) =>
     h('button', { class: 'btn small side-tab', type: 'button', role: 'tab', 'data-tab': t, on: { click: () => { tab = t; render(); } } }, label);
-  const tabs = h('div', { class: 'side-tabs', role: 'tablist' }, tabBtn('codes', 'Bell codes'), tabBtn('layout', 'Fiddle yard & station'));
+  const tabs = h('div', { class: 'side-tabs', role: 'tablist' }, tabBtn('codes', 'Bell codes'), tabBtn('layout', 'Trains in places'));
   const el = h(
     'aside',
     { id: 'side-panel', class: 'side-panel', hidden: true, 'aria-label': 'Reference and layout' },

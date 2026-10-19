@@ -1268,7 +1268,7 @@ export function platformPath(plan: TrackPlan, c: TrackCircuit): Pt[] {
   return best > 0 ? [off[bi - 1], off[bi]] : off;
 }
 
-/** Platform roads on a plan, optionally only those belonging to one owner (an ownerKey, e.g. 'box|becton'). */
+/** Platform roads on a plan, optionally only those belonging to one owner (an ownerKey, e.g. 'box|sigsim-central'). */
 export function platformsOf(plan: TrackPlan, key?: string): Array<{ circuit: TrackCircuit; number: string }> {
   return plan.circuits
     .filter((c) => c.platform && (key === undefined || ownerKey(c.owner) === key))
@@ -1987,7 +1987,7 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
         if (!j || !portsOf(j).some((p) => p.id === e.port)) c.ends[i] = { kind: 'open', x: 0, y: 0 };
       } else if (e.kind === 'exit') {
         const t = e.to;
-        if (!t || (t.kind === 'fiddleYard' && !layout.fiddleYards.some((y) => y.id === t.yardId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
+        if (!t || (t.kind === 'place' && !layout.places.some((y) => y.id === t.placeId)) || (t.kind === 'connection' && !connOk(t.boxId, t.connectionId))) e.to = { kind: 'offScene' };
       }
     });
   }

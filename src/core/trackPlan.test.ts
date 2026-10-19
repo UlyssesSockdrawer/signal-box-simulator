@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addConnection, deleteBox, addBox, removeConnection } from './boxes';
-import { createDefaultState } from './defaults';
+import { createBectonState as createDefaultState } from './testState';
 import { migrate } from './store';
 import {
   addJunctionInTrack,
@@ -56,7 +56,7 @@ describe('track plan: starting out', () => {
     expect(migrate(createDefaultState()).layouts[0].trackPlan).toEqual({ circuits: [], junctions: [], markers: [] });
     // A save from before layouts, with no track plan.
     const old = createDefaultState() as unknown as Record<string, unknown>;
-    old.fiddleYards = (old.layouts as AppState['layouts'])[0].fiddleYards;
+    old.fiddleYards = (old.layouts as AppState['layouts'])[0].places.filter((p) => p.kind === 'fiddleYard');
     delete old.layouts;
     expect(migrate(old).layouts[0].trackPlan).toEqual({ circuits: [], junctions: [], markers: [] });
   });

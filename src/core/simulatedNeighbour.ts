@@ -8,6 +8,7 @@ import {
   trainCode,
 } from './bellcodes';
 import type { LinkEnd, LinkMessage } from './link';
+import type { ScoreRuleId } from './score';
 import type { Scheduler } from './scheduler';
 import type { BellCode, CodeSet, InstrumentState, LineType, Settings, TrainType, WorkingMode } from './types';
 
@@ -21,21 +22,38 @@ export interface NeighbourOptions {
   lineType: LineType;
   /** e.g. "Fiddle Yard" */
   name: string;
-  /** e.g. "Becton" — the user's box */
+  /** e.g. "Sigsim Central" — the user's box */
   localName: string;
-  /** True (default) when this box stands at a fiddle yard; false when it serves a location on the layout instead. */
+  /** True (default) when the line runs to a fiddle yard; false when it runs to another place (or none). */
   servesFiddleYard?: boolean;
+  /** The place at the far end of the line, for guidance ("Fiddle Yard", "Tansley Spa"); '' = none. */
+  placeName?: string;
+  /** The button the operator presses when an outgoing train has arrived, e.g. "Arrived in Fiddle Yard". */
+  arrivedLabel?: string;
   locoLabel: (locoId: string | null) => string;
+  /** What a train is working as (its train type), to judge its description when it was not chosen before it was offered. */
+  trainTypeOf?: (locoId: string | null) => string | null;
+  /** How many other lines the user's box has (a held train is offered again soon after 2-1 on one of them). */
+  otherLines?: number;
   random?: () => number;
 }
 
-type Stage = 'calling' | 'offered' | 'awaitingLC' | 'accepted' | 'inSection' | 'arrived';
+/** 'held': offered, not accepted in time (a silent refusal); the far box holds the train and offers it again later. */
+type Stage = 'calling' | 'offered' | 'held' | 'awaitingLC' | 'accepted' | 'inSection' | 'arrived';
 
 interface Movement {
   locoId: string | null;
   trainTypeId: string | null;
   code: BellCode;
   stage: Stage;
+  /** Incoming only: how many times the train has been offered again after being refused. */
+  reoffers: number;
+  /** Outgoing only: offered with a valid code that is not the train's own description, and not yet corrected. */
+  misdescribed?: { sent: BellCode; correct: BellCode };
+  /** Outgoing only: the description has been checked against the train (its type is known). */
+  judged?: boolean;
+  /** Outgoing only: wrong_description has already been scored for this train. */
+  descFault?: boolean;
 }
 
 interface Awaiting {
@@ -45,6 +63,8 @@ interface Awaiting {
   attempts: number;
   repeatTimer: number | null;
   label: string;
+  /** Ring the code again after a wrong reply. Default: a fresh exchange (which rings again if unanswered). */
+  resend?: () => void;
 }
 
 const ATTENTION_VALID_MS = 60_000;
@@ -73,8 +93,20 @@ export class SimulatedNeighbour {
   private awaiting: Awaiting | null = null;
   private localArrived = false;
   private localTokenReplaced = false;
+  /** Irregularities since the line was last clear (for the clean working bonus). */
+  private faults = 0;
+  /** Waiting for the user to put their instrument back to Line Blocked after 2-1. */
+  private awaitingLB = false;
+  /** Train On Line has been scored for the incoming train. */
+  private tolScored = false;
+  /** The last incoming train cleared out of section (for scoring while the instrument goes back to Line Blocked). */
+  private lastLoco: string | null = null;
   private timers = new Set<number>();
   private releaseTimer: number | null = null;
+  /** Offering a held (refused) incoming train again. */
+  private reofferTimer: number | null = null;
+  /** 5-3 acknowledged for a train already in the section: the next train description is its correct description. */
+  private correcting = false;
   private busyUntil = 0;
   private random: () => number;
 
@@ -125,8 +157,27 @@ export class SimulatedNeighbour {
   private hint(text: string, level: 'info' | 'warn' = 'warn'): void {
     this.send({ type: 'hint', text, level });
   }
-  private irregular(text: string): void {
+  /** An irregularity: logged in the train register and scored against the signaller. */
+  private irregular(text: string, rule: ScoreRuleId): void {
+    this.faults++;
     this.send({ type: 'irregularity', text });
+    this.send({ type: 'score', rule, locoId: this.currentLoco() ?? undefined });
+  }
+  /** Points for something done by the book. */
+  private award(rule: ScoreRuleId): void {
+    this.send({ type: 'score', rule, locoId: this.currentLoco() ?? undefined });
+  }
+  /** The train being worked on this line (or just finished, while the instrument is still to go back to Line Blocked). */
+  private currentLoco(): string | null {
+    return this.incoming?.locoId ?? this.outgoing?.locoId ?? (this.awaitingLB ? this.lastLoco : null);
+  }
+  /**
+   * A train movement has finished on this line: was it clean (nothing went wrong on this line since
+   * it was last clear)? The box gives the clean working bonus, judging a through train once over all its lines.
+   */
+  private movementDone(locoId: string | null): void {
+    this.send({ type: 'movementJudged', locoId: locoId ?? undefined, clean: this.faults === 0 });
+    this.faults = 0;
   }
   private status(text: string): void {
     this.send({ type: 'status', text: `${this.o.name}: ${text}` });
@@ -180,6 +231,11 @@ export class SimulatedNeighbour {
       aw.repeatTimer = this.after(dur + this.o.settings().repeatAfterMs, () => {
         if (this.awaiting !== aw) return;
         this.hint(`${this.o.name} has had no reply and is ringing ${code} (${label}) again. Repeat it back to acknowledge.`, 'info');
+        // Scored once per exchange, so a box left unattended does not drain the score.
+        if (aw.attempts === 1) {
+          this.faults++;
+          this.send({ type: 'score', rule: 'no_reply', detail: `${code} (${label})`, locoId: this.currentLoco() ?? undefined });
+        }
         fire();
       });
     };
@@ -192,7 +248,8 @@ export class SimulatedNeighbour {
     this.cancel(aw.repeatTimer);
     aw.repeatTimer = this.after(this.reactionDelay() + 1500, () => {
       if (this.awaiting !== aw) return;
-      this.exchange(aw.code, aw.label, aw.onAck, false, aw.expectHold);
+      if (aw.resend) aw.resend();
+      else this.exchange(aw.code, aw.label, aw.onAck, false, aw.expectHold);
     });
   }
 
@@ -202,7 +259,8 @@ export class SimulatedNeighbour {
 
   private sectionBusy(): boolean {
     if (this.outgoing || this.tokenOut) return true;
-    if (this.o.lineType === 'single' && this.incoming) return true;
+    // A train the user's box has refused (held here) does not occupy the single line: the user may send one the other way first.
+    if (this.o.lineType === 'single' && this.incoming && this.incoming.stage !== 'held') return true;
     return false;
   }
 
@@ -211,6 +269,7 @@ export class SimulatedNeighbour {
   }
 
   private idleGuidance(): string {
+    if (this.incoming?.stage === 'held' && !this.outgoing) return this.heldGuidance(this.incoming);
     if (this.incoming || this.outgoing) return '';
     if (!this.opened) {
       return `Your box is closed. Open it by calling attention (tap 1) and, when ${this.o.name} answers, sending 5-5-5 (Opening of signal box).`;
@@ -236,9 +295,13 @@ export class SimulatedNeighbour {
       case 'operator':
         if (m.action === 'offerIncoming') this.offerIncoming(m.locoId, m.trainTypeId);
         else if (m.action === 'cancelIncoming') this.cancelIncoming();
-        else if (m.action === 'declareOutgoing') this.declaredOutgoing = { locoId: m.locoId, trainTypeId: m.trainTypeId };
+        else if (m.action === 'declareOutgoing') {
+          this.declaredOutgoing = { locoId: m.locoId, trainTypeId: m.trainTypeId };
+          this.onDeclared(m.locoId, m.trainTypeId);
+        }
         else if (m.action === 'arrivedLocal') this.onArrivedLocal();
         else if (m.action === 'arrivedRemote') this.onArrivedHere(m.locoId, m.roadId);
+        else if (m.action === 'promptReoffer') this.promptReoffer();
         break;
       default:
         break;
@@ -267,6 +330,7 @@ export class SimulatedNeighbour {
           this.hint(
             `You repeated ${code} correctly, but in token working you must HOLD the last beat so ${this.o.name} can withdraw a token. Press and hold the tapper on the final beat (or tick "hold last beat").`,
           );
+          this.irregular(`${code} repeated without holding the last beat for the token release.`, 'no_hold');
           this.resendAwaiting();
           return;
         }
@@ -276,7 +340,7 @@ export class SimulatedNeighbour {
         return;
       }
       this.hint(`${this.o.name} expected you to repeat ${aw.code} (${aw.label}), but you sent ${code}. They will ring ${aw.code} again.`);
-      this.irregular(`Wrong reply: sent ${code} when ${aw.code} (${aw.label}) should have been repeated.`);
+      this.irregular(`Wrong reply: sent ${code} when ${aw.code} (${aw.label}) should have been repeated.`, 'wrong_reply');
       this.resendAwaiting();
       return;
     }
@@ -288,7 +352,7 @@ export class SimulatedNeighbour {
         this.attentionAt = this.o.scheduler.now();
         if (!this.opened) {
           this.guide(`${this.o.name} is attending. Now send 5-5-5 (Opening of signal box).`);
-        } else if (!this.incoming && !this.outgoing) {
+        } else if ((!this.incoming || this.incoming.stage === 'held') && !this.outgoing) {
           this.guide(`${this.o.name} is attending. Now send the "Is line clear" code for your train.`);
         }
       });
@@ -310,6 +374,20 @@ export class SimulatedNeighbour {
       return;
     }
 
+    // The correct description following 5-3 for a train already on its way.
+    if (this.correcting && this.hasAttention() && isTrainDescription(code, set)) {
+      this.onCorrectedDescription(code);
+      return;
+    }
+
+    // The held train's code repeated after the offer lapsed: the far box takes it you can now accept, and offers it again.
+    const held = this.incoming;
+    if (held?.stage === 'held' && code === held.code && !this.hasAttention()) {
+      this.hint(`${this.o.name} had already taken your silence as a refusal and is holding the train. They will call attention and offer it again now: answer 1, then repeat ${code}.`, 'info');
+      this.promptReoffer(500);
+      return;
+    }
+
     if (isTrainDescription(code, set)) {
       this.onIsLineClear(code);
       return;
@@ -319,7 +397,7 @@ export class SimulatedNeighbour {
     if (reg) {
       if (reg.needsCallAttention && !this.hasAttention()) {
         this.hint(`Call attention (1) first and wait for it to be acknowledged before sending ${code} (${reg.name}).`);
-        this.irregular(`${reg.name} (${code}) sent without call attention.`);
+        this.irregular(`${reg.name} (${code}) sent without call attention.`, 'no_call_attention');
         return;
       }
       this.attentionAt = null;
@@ -328,6 +406,8 @@ export class SimulatedNeighbour {
           const dur = this.ring(code);
           this.after(dur, () => {
             this.setOpened(true);
+            this.faults = 0;
+            this.award('box_opened');
             this.status('your box is open.');
             this.guide();
           });
@@ -337,12 +417,13 @@ export class SimulatedNeighbour {
       if (reg.id === 'closing' || reg.id === 'closing_locked') {
         if (this.incoming || this.outgoing || this.tokenOut) {
           this.hint('You cannot close the box while a train is being signalled. Finish the move first.');
-          this.irregular('Tried to close the box with a train in progress.');
+          this.irregular('Tried to close the box with a train in progress.', 'close_with_train');
           return;
         }
         this.after(this.reactionDelay(), () => {
           const dur = this.ring(code);
           this.after(dur, () => {
+            this.award('box_closed');
             this.setOpened(false);
             this.status('your box is closed. The box will reset, ready to be opened again.');
             this.guide();
@@ -351,17 +432,28 @@ export class SimulatedNeighbour {
         return;
       }
       this.after(this.reactionDelay(), () => this.ring(code));
-      if (reg.id === 'incorrectly_described' && this.outgoing && this.outgoing.stage !== 'inSection') {
+      const out = this.outgoing;
+      if (reg.id === 'incorrectly_described' && out && (out.stage === 'offered' || out.stage === 'accepted')) {
+        // Not yet departed: the offer is withdrawn and the train is offered again with the right code.
+        // Misdescribing is a fault even when put right: score it now if it was not already.
+        if (!out.descFault) this.descriptionFault(out, `Train offered as ${out.code} was incorrectly described (corrected with 5-3 before it departed).`);
         this.status('acknowledged: last train incorrectly described. Re-offer it with the correct code.');
         this.attentionAt = this.o.scheduler.now() + 3000;
         this.outgoing = null;
         this.setMyInstrument('LB');
+      } else if (reg.id === 'incorrectly_described' && out?.stage === 'inSection') {
+        // Already on its way: 5-3 is followed by the correct description (no further call attention).
+        this.correcting = true;
+        this.attentionAt = this.o.scheduler.now() + 3000;
+        this.status('acknowledged: last train incorrectly described. Send its correct description.');
+        const right = out.trainTypeId ? trainCode(this.set, out.trainTypeId) : '';
+        this.guide(`${this.o.name} acknowledged 5-3. Now send the correct description${right ? `: ${right} (${this.desc(right)})` : ''}. They will repeat it.`);
       }
       return;
     }
 
     this.hint(`${code} is not a code ${this.o.name} recognises in the "${set.name}" code set, so they will not answer it.`);
-    this.irregular(`Unrecognised code ${code} sent.`);
+    this.irregular(`Unrecognised code ${code} sent.`, 'unrecognised_code');
   }
 
   // -------------------------------------------------------------------------
@@ -371,31 +463,24 @@ export class SimulatedNeighbour {
   private onIsLineClear(code: BellCode): void {
     if (!this.hasAttention()) {
       this.hint(`Call attention first: tap 1 beat and wait for ${this.o.name} to answer 1 before offering the train.`);
-      this.irregular(`"Is line clear" (${code}) sent without call attention.`);
+      this.irregular(`"Is line clear" (${code}) sent without call attention.`, 'no_call_attention');
       return;
     }
     this.attentionAt = null;
     if (!this.opened) {
       this.hint(`${this.o.name} will not accept trains until your box is open. Call attention (1), then send 5-5-5.`);
-      this.irregular(`Train offered (${code}) before the box was opened.`);
+      this.irregular(`Train offered (${code}) before the box was opened.`, 'box_not_open');
       return;
     }
     if (this.sectionBusy()) {
       this.hint(`${this.o.name} cannot accept: the section is not clear (a train has already been offered or is in the section). They will not reply.`);
-      this.irregular(`Train offered (${code}) while the section was not clear.`);
+      this.irregular(`Train offered (${code}) while the section was not clear.`, 'offered_section_busy');
       return;
     }
     const decl = this.declaredOutgoing;
-    if (decl?.trainTypeId) {
-      const expected = trainCode(this.set, decl.trainTypeId);
-      if (expected && expected !== code) {
-        this.hint(
-          `You offered ${code} (${this.desc(code)}), but the train you selected to depart is described as ${expected} (${this.desc(expected)}). ${this.o.name} will accept what they heard. If it was a mistake, call attention and send 5-3 (incorrectly described), then re-offer.`,
-        );
-        this.irregular(`Train offered as ${code} but selected train should be ${expected}.`);
-      }
-    }
-    this.outgoing = { locoId: decl?.locoId ?? null, trainTypeId: decl?.trainTypeId ?? null, code, stage: 'offered' };
+    this.outgoing = { locoId: decl?.locoId ?? null, trainTypeId: null, code, stage: 'offered', reoffers: 0 };
+    // Judged now if the departing train has been chosen; otherwise as soon as it is known (chosen later, or on arrival).
+    this.judgeDescription(this.outgoing, decl?.trainTypeId ?? null, 'offer');
     this.after(this.reactionDelay(), () => {
       if (!this.outgoing || this.outgoing.stage !== 'offered') return;
       if (this.token) {
@@ -468,13 +553,13 @@ export class SimulatedNeighbour {
     const out = this.outgoing;
     if (!out || out.stage !== 'accepted') {
       this.hint(`You sent 2 (Train entering section) but no train has been accepted by ${this.o.name}. Never let a train go without line clear!`);
-      this.irregular('Train entering section sent without line clear.');
+      this.irregular('Train entering section sent without line clear.', 'no_line_clear');
       return;
     }
     if (this.token && this.tokenOut !== 'local') {
       this.hint(`The train has left without a token! In token working the driver must be given the token before departure.`);
-      this.irregular('Train despatched without a token.');
-    }
+      this.irregular('Train despatched without a token.', 'no_token');
+    } else this.award('out_departed');
     this.after(this.reactionDelay(), () => {
       const dur = this.ring(this.sig('train_entering_section'));
       this.after(dur + 300, () => {
@@ -482,11 +567,115 @@ export class SimulatedNeighbour {
       });
       out.stage = 'inSection';
       this.send({ type: 'trainDeparted', direction: 'outgoing', locoId: out.locoId });
-      this.guide(
-        this.o.servesFiddleYard === false
-          ? `${this.o.name} acknowledged: train on line. When ${this.o.locoLabel(out.locoId)} has reached ${this.o.name}, press "Arrived at ${this.o.name}".`
-          : `${this.o.name} acknowledged: train on line. Drive ${this.o.locoLabel(out.locoId)} into the fiddle yard, then press "Arrived in fiddle yard" and choose the road.`,
+      this.outgoingRunningGuidance(out, `${this.o.name} acknowledged: train on line.`);
+    });
+  }
+
+  /**
+   * Check an outgoing train's description against what the train is, once that is known: at the offer
+   * (the departing train was chosen first), when it is chosen or its working changes later, or at the
+   * latest when it arrives. Misdescribing costs wrong_description (once per train) and the clean working
+   * bonus; if still not corrected when it arrives, the far box reports it with 5-3.
+   */
+  private judgeDescription(out: Movement, trainTypeId: string | null, when: 'offer' | 'later' | 'arrival'): void {
+    if (!trainTypeId) return;
+    const expected = trainCode(this.set, trainTypeId);
+    if (!expected) return;
+    const first = !out.judged;
+    out.judged = true;
+    out.trainTypeId = trainTypeId;
+    if (expected === out.code) {
+      out.misdescribed = undefined;
+      if (first && !out.descFault) this.award('out_offered');
+      return;
+    }
+    out.misdescribed = { sent: out.code, correct: expected };
+    if (when !== 'arrival') {
+      const fix =
+        out.stage === 'inSection'
+          ? `To correct it, call attention (1), send 5-3, then ${expected}.`
+          : `If it was a mistake, call attention and send 5-3 (incorrectly described): before it departs, then re-offer it; once it is on its way, follow 5-3 with ${expected}.`;
+      this.hint(
+        `You offered ${out.code} (${this.desc(out.code)}), but the train ${when === 'offer' ? 'you selected to depart' : 'departing'} is described as ${expected} (${this.desc(expected)}). ${this.o.name} will accept what they heard. ${fix} If you do not correct it, ${this.o.name} will report it with 5-3 when the train arrives.`,
       );
+      if (out.stage === 'inSection') this.outgoingRunningGuidance(out, `${this.o.name} has the train on line.`);
+    }
+    if (!out.descFault) this.descriptionFault(out, `Train offered as ${out.code} but the train ${when === 'arrival' ? 'that arrived' : 'chosen'} should be ${expected}.`);
+  }
+
+  /** wrong_description, once per train. */
+  private descriptionFault(out: Movement, text: string): void {
+    out.descFault = true;
+    this.irregular(text, 'wrong_description');
+  }
+
+  /** The departing train was chosen (or its working changed) after it was offered: judge its description now. */
+  private onDeclared(locoId: string | null, trainTypeId: string | null): void {
+    const out = this.outgoing;
+    if (!out || out.stage === 'arrived') return;
+    // Once on its way, a different train chosen is the next departure, not this one.
+    if (out.stage === 'inSection' && out.locoId && locoId && out.locoId !== locoId) return;
+    if (locoId) out.locoId = locoId;
+    if (trainTypeId && trainTypeId !== out.trainTypeId) this.judgeDescription(out, trainTypeId, 'later');
+  }
+
+  private outgoingRunningGuidance(out: Movement, lead: string): void {
+    const drive =
+      this.o.servesFiddleYard === false
+        ? `When ${this.o.locoLabel(out.locoId)} has reached ${this.o.placeName || this.o.name}, press "${this.o.arrivedLabel ?? `Arrived at ${this.o.name}`}".`
+        : `Drive ${this.o.locoLabel(out.locoId)} into ${this.o.placeName || 'the fiddle yard'}, then press "${this.o.arrivedLabel ?? 'Arrived in fiddle yard'}" and choose the road.`;
+    const m = out.misdescribed;
+    const fix = m
+      ? ` You described it as ${m.sent}, but it is ${m.correct} (${this.desc(m.correct)}). To correct it now: call attention (1), send 5-3, then ${m.correct}. Otherwise ${this.o.name} will report it with 5-3 when it arrives.`
+      : '';
+    this.guide(`${lead} ${drive}${fix}`);
+  }
+
+  /** The correct description sent after 5-3 for a train already in the section. */
+  private onCorrectedDescription(code: BellCode): void {
+    this.correcting = false;
+    this.attentionAt = null;
+    const out = this.outgoing;
+    this.after(this.reactionDelay(), () => this.ring(code));
+    if (!out || out.stage !== 'inSection') return;
+    // 5-3 says the train was misdescribed: a fault even when put right, scored once.
+    if (!out.descFault && code !== out.code) this.descriptionFault(out, `Train offered as ${out.code} was incorrectly described (corrected to ${code} with 5-3 while on its way).`);
+    if (!out.judged) {
+      out.code = code;
+      out.misdescribed = undefined;
+      this.status(`description corrected: the train in the section is ${code} (${this.desc(code)}).`);
+      this.outgoingRunningGuidance(out, `${this.o.name} repeated ${code}: description corrected.`);
+      return;
+    }
+    const right = out.trainTypeId ? trainCode(this.set, out.trainTypeId) : '';
+    if (right && code !== right) {
+      out.misdescribed = { sent: code, correct: right };
+      this.hint(`${this.o.name} repeated ${code} (${this.desc(code)}), but the train is ${right} (${this.desc(right)}). Send 1, 5-3 and ${right} to put it right.`);
+    } else {
+      out.misdescribed = undefined;
+      out.code = code;
+      this.status(`description corrected: the train in the section is ${code} (${this.desc(code)}).`);
+    }
+    this.outgoingRunningGuidance(out, out.misdescribed ? `${this.o.name} repeated ${code}.` : `${this.o.name} repeated ${code}: description corrected.`);
+  }
+
+  /**
+   * The train has arrived and is not what it was described as: before clearing back, the receiving
+   * box calls attention and sends 5-3 (Last train signalled incorrectly described).
+   */
+  private reportMisdescribed(out: Movement, then: () => void): void {
+    const m = out.misdescribed!;
+    this.irregular(`${this.o.name} reports ${this.o.locoLabel(out.locoId)} incorrectly described: offered as ${m.sent} (${this.desc(m.sent)}), but it was ${m.correct} (${this.desc(m.correct)}).`, 'misdescribed_not_corrected');
+    this.hint(`The train you offered as ${m.sent} has arrived at ${this.o.name}, and it is really ${m.correct} (${this.desc(m.correct)}). ${this.o.name} is telling you with 5-3 (Last train signalled incorrectly described).`);
+    this.guide(`${this.o.name} is calling attention to report that the last train was incorrectly described. Answer 1, then repeat 5-3.`);
+    this.exchange(this.sig('call_attention'), 'Call attention', () => {
+      this.after(this.reactionDelay(), () => {
+        this.guide(`${this.o.name}: "Last train incorrectly described" (5-3). You offered ${m.sent}, but it was ${m.correct}. Repeat 5-3 to acknowledge.`);
+        this.exchange(this.sig('incorrectly_described'), 'Last train incorrectly described', () => {
+          out.misdescribed = undefined;
+          this.after(this.reactionDelay() + 1000, then);
+        });
+      });
     });
   }
 
@@ -495,13 +684,16 @@ export class SimulatedNeighbour {
     if (out && out.stage === 'arrived') return; // already reported; ignore a repeat
 
     if (!out || out.stage !== 'inSection') {
-      this.irregular(`${this.o.locoLabel(locoId)} arrived ${this.o.servesFiddleYard === false ? `at ${this.o.name}` : 'in the fiddle yard'} without being signalled through the section.`);
+      this.irregular(`${this.o.locoLabel(locoId)} arrived ${this.o.servesFiddleYard === false ? `at ${this.o.placeName || this.o.name}` : `in ${this.o.placeName || 'the fiddle yard'}`} without being signalled through the section.`, 'unsignalled_train');
       this.hint(`That train was not signalled! Normally you would offer it (1, Is line clear) and send 2 as it departs.`);
       this.send({ type: 'movementComplete', direction: 'outgoing', locoId, roadId });
       return;
     }
     out.stage = 'arrived';
     out.locoId = locoId ?? out.locoId;
+    // A train that was never chosen before it ran is judged now, against what it is working as.
+    if (!out.judged) this.judgeDescription(out, this.o.trainTypeOf?.(out.locoId) ?? null, 'arrival');
+    if (!out.judged && !out.descFault) this.award('out_offered'); // nothing known to judge it by
     this.status(`${this.o.locoLabel(out.locoId)} arrived complete with tail lamp.`);
     this.guide(`${this.o.name} has seen the train arrive. They will call attention (answer 1) and then send 2-1 (repeat 2-1).`);
     this.after(this.reactionDelay() + 1000, () => {
@@ -510,6 +702,7 @@ export class SimulatedNeighbour {
         this.send({ type: 'token', event: 'replaced' });
         this.status('token replaced in their instrument.');
       }
+      const clearBack = () => {
       this.exchange(this.sig('call_attention'), 'Call attention', () => {
         this.after(this.reactionDelay(), () => {
           this.exchange(this.sig('train_out_of_section'), 'Train out of section', () => {
@@ -517,20 +710,28 @@ export class SimulatedNeighbour {
             this.outgoing = null;
             this.declaredOutgoing = null;
             this.send({ type: 'movementComplete', direction: 'outgoing', locoId: out.locoId, roadId });
+            this.award('out_cleared');
+            this.movementDone(out.locoId);
             this.status('section clear.');
             this.guide();
+            // A train held here while the user sent theirs (single line): offer it again now the line is clear.
+            this.promptReoffer();
           });
           this.guide(`${this.o.name} is sending 2-1 (Train out of section). Repeat 2-1 to acknowledge.`);
         });
       });
       this.guide(`${this.o.name} is calling attention. Answer with 1 beat.`);
+      };
+      // A train that arrived not as described is reported first (5-3), then cleared back with 2-1.
+      if (out.misdescribed) this.reportMisdescribed(out, clearBack);
+      else clearBack();
     });
   }
 
   private onCancelling(): void {
     if (!this.hasAttention()) {
       this.hint('Call attention (1) first before sending 3-5 (Cancelling).');
-      this.irregular('Cancelling sent without call attention.');
+      this.irregular('Cancelling sent without call attention.', 'no_call_attention');
       return;
     }
     this.attentionAt = null;
@@ -574,30 +775,116 @@ export class SimulatedNeighbour {
       this.hint(`The train type has no bell code in the "${this.set.name}" code set. Set one in Settings → Bell codes.`);
       return;
     }
-    const mv: Movement = { locoId, trainTypeId, code, stage: 'calling' };
+    const mv: Movement = { locoId, trainTypeId, code, stage: 'calling', reoffers: 0 };
     this.incoming = mv;
     this.localArrived = false;
     this.localTokenReplaced = false;
+    this.tolScored = false;
+    this.callAndOffer(mv);
+  }
+
+  /** Call attention (rung again until answered), then offer the train. */
+  private callAndOffer(mv: Movement): void {
     this.after(this.reactionDelay(), () => {
       if (this.incoming !== mv) return;
+      mv.stage = 'calling';
       this.guide(`${this.o.name} is calling attention. Answer with 1 beat.`);
       this.exchange(this.sig('call_attention'), 'Call attention', () => {
         this.after(this.reactionDelay(), () => {
           if (this.incoming !== mv) return;
-          mv.stage = 'offered';
-          this.guide(
-            this.token
-              ? `${this.o.name} asks "Is line clear" for ${this.trainDesc(trainTypeId)}: ${code}. If you can accept the train, repeat ${code} and HOLD the last beat to release a token.`
-              : `${this.o.name} asks "Is line clear" for ${this.trainDesc(trainTypeId)}: ${code}. If you can accept the train, repeat ${code}, then turn your block instrument to LINE CLEAR.`,
-          );
-          this.exchange(code, 'Is line clear', () => this.onIncomingAccepted(mv), false, this.token);
+          this.ringOffer(mv);
         });
       });
     });
   }
 
+  /**
+   * Ring Is line clear for the train once. Repeating it accepts the train; no reply within the grace
+   * period is a refusal (the prototypical way of refusing a train: you simply do not answer), so the
+   * far box holds the train and offers it again later. An unanswered offer is not scored as slow.
+   */
+  private ringOffer(mv: Movement): void {
+    const code = mv.code;
+    mv.stage = 'offered';
+    const what = this.trainDesc(mv.trainTypeId ?? '');
+    this.guide(
+      (this.token
+        ? `${this.o.name} asks "Is line clear" for ${what}: ${code}. If you can accept the train, repeat ${code} and HOLD the last beat to release a token.`
+        : `${this.o.name} asks "Is line clear" for ${what}: ${code}. If you can accept the train, repeat ${code}, then turn your block instrument to LINE CLEAR.`) +
+        ` If you cannot take it yet, do not reply: ${this.o.name} will hold it and offer it again later.`,
+    );
+    const aw: Awaiting = {
+      code,
+      expectHold: this.token,
+      onAck: () => this.onIncomingAccepted(mv),
+      attempts: 1,
+      repeatTimer: null,
+      label: 'Is line clear',
+      resend: () => this.ringOffer(mv),
+    };
+    this.awaiting = aw;
+    const dur = this.ring(code);
+    this.send({ type: 'offer', state: 'offered', reoffers: mv.reoffers });
+    aw.repeatTimer = this.after(dur + this.o.settings().offerRefusedAfterMs, () => {
+      if (this.awaiting !== aw) return;
+      this.awaiting = null;
+      this.refused(mv);
+    });
+  }
+
+  /** The offer was not repeated in time: the train is refused for now and held at the far box. */
+  private refused(mv: Movement): void {
+    if (this.incoming !== mv) return;
+    mv.stage = 'held';
+    const wait = Math.max(5000, this.o.settings().reofferAfterMs);
+    this.scheduleReoffer(mv, wait);
+    this.status(`no reply to ${mv.code}: the train is refused for now. ${this.o.name} is holding ${this.o.locoLabel(mv.locoId)}.`);
+    this.hint(
+      `You did not repeat ${mv.code}, so ${this.o.name} takes it that you cannot accept the train yet (a refusal). They are holding it and will offer it again in about ${Math.round(wait / 1000)} s${this.o.otherLines ? ', or soon after you next send 2-1 on another line' : ''}.`,
+      'info',
+    );
+    this.guide(this.heldGuidance(mv));
+  }
+
+  private heldGuidance(mv: Movement): string {
+    const sendFirst = this.o.lineType === 'single' ? ` The single line is free until then: you may send a train to ${this.o.name} first.` : '';
+    return `${this.o.name} is holding ${this.o.locoLabel(mv.locoId)} (${mv.code}), which you have not accepted. They will offer it again: answer their 1, then repeat ${mv.code} when you can take it.${sendFirst}`;
+  }
+
+  private scheduleReoffer(mv: Movement, ms: number): void {
+    this.cancel(this.reofferTimer);
+    const nextAt = this.o.scheduler.now() + ms;
+    this.reofferTimer = this.after(ms, () => {
+      this.reofferTimer = null;
+      this.reoffer(mv);
+    });
+    this.send({ type: 'offer', state: 'held', reoffers: mv.reoffers, nextAt });
+  }
+
+  /** Offer the held train again, once the line and the user are free. */
+  private reoffer(mv: Movement): void {
+    if (this.incoming !== mv || mv.stage !== 'held') return;
+    // Wait while the user is sending a train this way on the single line, or is in the middle of a bell exchange here.
+    if (this.sectionBusy() || this.awaiting || this.hasAttention()) {
+      this.scheduleReoffer(mv, 10_000);
+      return;
+    }
+    mv.reoffers++;
+    this.status(`offering ${this.o.locoLabel(mv.locoId)} again.`);
+    this.callAndOffer(mv);
+  }
+
+  /** The user's box is free (it has just cleared a line): offer a held train again soon, rather than at the next interval. */
+  promptReoffer(delayMs?: number): void {
+    const mv = this.incoming;
+    if (!mv || mv.stage !== 'held') return;
+    this.scheduleReoffer(mv, delayMs ?? this.reactionDelay() + 2500);
+  }
+
   private onIncomingAccepted(mv: Movement): void {
     if (this.incoming !== mv) return;
+    this.award('in_accepted');
+    this.send({ type: 'offer', state: 'accepted', reoffers: mv.reoffers });
     if (this.token) {
       mv.stage = 'accepted';
       this.after(800, () => {
@@ -611,6 +898,7 @@ export class SimulatedNeighbour {
     } else {
       mv.stage = 'awaitingLC';
       if (this.localInstrument === 'LC') {
+        // Already at Line Clear (turned early, which was scored as an irregularity at the time).
         this.onLineClearShown(mv);
       } else {
         this.guide(`Train accepted. Now turn your block instrument to LINE CLEAR so ${this.o.name} can clear their section signal.`);
@@ -641,13 +929,15 @@ export class SimulatedNeighbour {
       );
       this.exchange(this.sig('train_entering_section'), 'Train entering section', () => {
         mv.stage = 'inSection';
+        this.award('in_entering');
         this.send({ type: 'trainDeparted', direction: 'incoming', locoId: mv.locoId });
         this.incomingRunningGuidance(mv);
         if (!this.token) {
           this.after(this.o.settings().repeatAfterMs, () => {
             if (this.incoming === mv && mv.stage === 'inSection' && this.localInstrument !== 'TOL') {
+              this.tolScored = true; // no points for turning it now
               this.hint('Your block instrument should show TRAIN ON LINE while the train is in the section.');
-              this.irregular('Instrument not turned to Train On Line after acknowledging Train entering section.');
+              this.irregular('Instrument not turned to Train On Line after acknowledging Train entering section.', 'tol_late');
             }
           });
         }
@@ -663,6 +953,12 @@ export class SimulatedNeighbour {
     );
   }
 
+  private scoreTol(): void {
+    if (this.tolScored) return;
+    this.tolScored = true;
+    this.award('in_tol');
+  }
+
   private onArrivedLocal(): void {
     this.localArrived = true;
   }
@@ -670,13 +966,13 @@ export class SimulatedNeighbour {
   private onTrainOutOfSection(): void {
     if (!this.hasAttention()) {
       this.hint('Call attention (1) first and wait for the reply before sending 2-1 (Train out of section).');
-      this.irregular('Train out of section sent without call attention.');
+      this.irregular('Train out of section sent without call attention.', 'no_call_attention');
       return;
     }
     const mv = this.incoming;
     if (!mv || mv.stage !== 'inSection') {
       this.hint('There is no train in the section from ' + this.o.name + ', so 2-1 is not expected.');
-      this.irregular('Train out of section sent with no train in the section.');
+      this.irregular('Train out of section sent with no train in the section.', 'unexpected_out_of_section');
       this.attentionAt = null;
       return;
     }
@@ -684,8 +980,9 @@ export class SimulatedNeighbour {
       this.hint('Replace the token in your instrument before sending 2-1 (Train out of section).');
       return;
     }
-    if (!this.localArrived) {
-      this.irregular('Train out of section sent before the train was confirmed arrived complete with tail lamp.');
+    const early = !this.localArrived;
+    if (early) {
+      this.irregular('Train out of section sent before the train was confirmed arrived complete with tail lamp.', 'out_of_section_early');
       if (this.o.settings().strictness === 'learner') {
         this.hint('Only send 2-1 once the train has arrived complete with its tail lamp. Press "Train arrived" first, then send 2-1 again.');
         return;
@@ -694,17 +991,24 @@ export class SimulatedNeighbour {
     this.attentionAt = null;
     this.after(this.reactionDelay(), () => {
       this.ring(this.sig('train_out_of_section'));
+      this.lastLoco = mv.locoId;
+      if (!early) this.award('in_cleared');
       this.incoming = null;
       this.tokenOut = null;
       this.send({ type: 'movementComplete', direction: 'incoming', locoId: mv.locoId });
-      if (!this.token) {
+      if (!this.token && this.localInstrument !== 'LB') {
+        this.awaitingLB = true;
         this.guide('Train out of section acknowledged. Return your block instrument to LINE BLOCKED.');
         this.after(this.o.settings().repeatAfterMs, () => {
-          if (!this.incoming && this.localInstrument !== 'LB') {
+          if (this.awaitingLB) {
+            this.awaitingLB = false;
             this.hint('Your instrument should be returned to LINE BLOCKED once 2-1 has been sent.');
+            this.irregular('Block instrument not returned to Line Blocked after Train out of section.', 'lb_late');
+            this.movementDone(this.lastLoco);
           } else if (!this.incoming && !this.outgoing) this.guide();
         });
       } else {
+        this.movementDone(mv.locoId);
         this.guide();
       }
     });
@@ -719,7 +1023,9 @@ export class SimulatedNeighbour {
     }
     if (this.awaiting?.repeatTimer != null) this.cancel(this.awaiting.repeatTimer);
     this.awaiting = null;
-    if (mv.stage === 'calling' || mv.stage === 'offered') {
+    if (mv.stage === 'calling' || mv.stage === 'offered' || mv.stage === 'held') {
+      this.cancel(this.reofferTimer);
+      this.reofferTimer = null;
       this.incoming = null;
       this.status('offer withdrawn.');
       this.guide();
@@ -754,24 +1060,34 @@ export class SimulatedNeighbour {
     const mv = this.incoming;
     if (s === 'LC') {
       if (mv && mv.stage === 'awaitingLC') {
+        this.award('in_line_clear');
         this.onLineClearShown(mv);
-      } else if (!mv || mv.stage === 'calling' || mv.stage === 'offered') {
+      } else if (!mv || mv.stage === 'calling' || mv.stage === 'offered' || mv.stage === 'held') {
         this.hint('Only turn the instrument to LINE CLEAR after you have accepted a train by repeating its "Is line clear" code.');
-        this.irregular('Instrument turned to Line Clear without accepting a train.');
+        this.irregular('Instrument turned to Line Clear without accepting a train.', 'lc_without_accept');
       }
     } else if (s === 'TOL') {
       if (!mv || mv.stage !== 'inSection') {
-        if (!(mv && mv.stage === 'accepted' && this.awaiting)) {
+        if (mv && mv.stage === 'accepted' && this.awaiting) {
+          // Turned as the 2 was heard, before repeating it: fine.
+          this.scoreTol();
+        } else {
           this.hint('TRAIN ON LINE is set after you acknowledge 2 (Train entering section).');
-          this.irregular('Instrument turned to Train On Line before Train entering section.');
+          this.irregular('Instrument turned to Train On Line before Train entering section.', 'tol_early');
         }
       } else {
+        this.scoreTol();
         this.incomingRunningGuidance(mv);
       }
     } else if (s === 'LB') {
       if (mv && (mv.stage === 'accepted' || mv.stage === 'inSection')) {
         this.hint('A train is in (or about to enter) the section! The instrument must stay at LINE CLEAR or TRAIN ON LINE until Train out of section has been sent.');
-        this.irregular('Instrument returned to Line Blocked with a train in or approaching the section.');
+        this.irregular('Instrument returned to Line Blocked with a train in or approaching the section.', 'lb_with_train');
+      } else if (this.awaitingLB) {
+        this.award('in_blocked');
+        this.awaitingLB = false;
+        this.movementDone(this.lastLoco);
+        if (!mv && !this.outgoing) this.guide();
       } else if (!mv && !this.outgoing) {
         this.guide();
       }

@@ -1,7 +1,8 @@
+import { boxLocos, placeOccupants } from './places';
 import type { AppState, ConnectionDef, Loco, SelectionMode } from './types';
 
 /**
- * Strategies for choosing the next incoming train from the fiddle yard.
+ * Strategies for choosing the next incoming train from the place at the far end of a line.
  * Add a 'timetable' strategy here later (exhibition running plans): it only
  * needs to implement IncomingSelector.
  */
@@ -29,21 +30,16 @@ export const SELECTORS: Record<string, IncomingSelector> = {
   random: randomSelector(),
 };
 
-/** Locos standing in the fiddle yard served by a connection. */
-export function fiddleYardCandidates(state: AppState, yardId: string): Loco[] {
-  return state.roster.filter((l) => l.location.kind === 'fiddleYard' && l.location.yardId === yardId);
-}
-
-/** Locos standing at the layout location served by the far box of a connection with no fiddle yard. */
-export function farBoxLocos(state: AppState, connectionId: string): Loco[] {
-  return state.roster.filter((l) => l.location.kind === 'farBox' && l.location.connectionId === connectionId);
-}
-
-/** Trains that could be offered in over a connection: from its fiddle yard, or from the location its far box serves. */
+/**
+ * Trains that could be offered in over a connection: those in the place at its far end
+ * (fiddle yard, or a place worked by the far box), or from the roster when the line has no place.
+ */
 export function incomingCandidates(state: AppState, conn: ConnectionDef): Loco[] {
-  return conn.fiddleYardId ? fiddleYardCandidates(state, conn.fiddleYardId) : farBoxLocos(state, conn.id);
+  if (conn.placeId) return placeOccupants(state, conn.placeId);
+  return state.roster.filter((l) => l.location.kind === 'offLayout');
 }
 
+/** Trains a box can send away: in the places it works, or standing at the box. */
 export function stationLocos(state: AppState, boxId: string): Loco[] {
-  return state.roster.filter((l) => l.location.kind === 'station' && l.location.boxId === boxId);
+  return boxLocos(state, boxId);
 }

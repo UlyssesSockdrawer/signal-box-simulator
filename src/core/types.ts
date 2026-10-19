@@ -33,6 +33,11 @@ export interface TrainCodeEntry {
   code: BellCode;
   classLabel: string; // e.g. "Class B" or "Class 2"
   note?: string;
+  /**
+   * Regulating priority of this class of train: higher goes first when two trains are offered at
+   * once (class A above class B, and so on). Ties allowed; absent = not judged.
+   */
+  rank?: number;
 }
 
 export interface CodeSet {
@@ -52,15 +57,13 @@ export interface Working {
   headcode: string; // optional reporting number / lamp code
 }
 
+/** Where a train stands. */
 export type Location =
-  | { kind: 'fiddleYard'; yardId: string; roadId: string }
-  | { kind: 'station'; boxId: string; note: string }
+  /** In a place on a layout (station, sidings, goods yard, depot, fiddle yard…), on one of its roads or ('' ) somewhere in it. */
+  | { kind: 'place'; placeId: string; roadId: string }
+  /** At a signal box that works no place (e.g. a junction box), or one not on a layout. */
+  | { kind: 'atBox'; boxId: string }
   | { kind: 'section'; connectionId: string }
-  /**
-   * The location on the layout served by the far box of a connection that has no fiddle yard
-   * (e.g. another station scene). A stand-in until the layout configurator defines locations.
-   */
-  | { kind: 'farBox'; boxId: string; connectionId: string; note: string }
   | { kind: 'offLayout' };
 
 export interface Loco {
@@ -75,17 +78,41 @@ export interface Loco {
   location: Location;
 }
 
-export interface FiddleYardRoad {
+/*
+ * PLACES: everywhere on a layout that trains stand or are worked: stations, sidings, goods
+ * yards and sheds, loco depots and fiddle yards. A place belongs to one layout; it can be worked
+ * by several signal boxes (e.g. York North and York South), and a box may work no place at all
+ * (a junction box). Each place has roads (platforms, siding roads, shed roads, yard roads),
+ * which may be tied to a track circuit on the layout's track plan.
+ */
+export type PlaceKind = 'station' | 'sidings' | 'goods' | 'depot' | 'fiddleYard' | 'other';
+
+export interface PlaceRoad {
   id: string;
+  /** e.g. "P1", "Bay", "Coal road", "Road 3". */
   name: string;
   notes: string;
+  /** The track circuit this road is on the track plan, if tied to one. */
+  circuitId?: string;
 }
 
-export interface FiddleYard {
+/** A signal box that works a place: one you work, or the far (simulated) box of one of its connections. */
+export type PlaceWorker = { kind: 'box'; boxId: string } | { kind: 'remote'; boxId: string; connectionId: string };
+
+export interface Place {
   id: string;
+  kind: PlaceKind;
   name: string;
-  roads: FiddleYardRoad[];
+  /** Optional short name for tight spaces (e.g. "BEC"). */
+  shortName: string;
+  notes: string;
+  roads: PlaceRoad[];
+  workedBy: PlaceWorker[];
 }
+
+/** A fiddle yard is a place of kind 'fiddleYard'. */
+export type FiddleYard = Place;
+export type FiddleYardRoad = PlaceRoad;
 
 export interface ConnectionDef {
   id: string;
@@ -94,8 +121,11 @@ export interface ConnectionDef {
   /** Short name used in logs, e.g. "FY". */
   neighbourShort: string;
   lineType: LineType;
-  /** Fiddle yard at the far end, or '' when the far box serves a location on the layout instead. */
-  fiddleYardId: string;
+  /**
+   * The place trains run to and come from over this line: a fiddle yard, or a place on the layout
+   * worked by the far box. '' = none: trains come from, and go back to, the roster (off the layout).
+   */
+  placeId: string;
   defaultWorking: WorkingMode;
   /** Where this connection's instrument group sits on the block shelf (0 = leftmost). */
   shelfPosition: number;
@@ -108,8 +138,6 @@ export interface BoxDef {
   layoutId: string;
   shortName: string;
   description: string;
-  /** Free-text notes about station roads/platforms (informational only). */
-  stationNotes: string;
   /** Number of positions on this box's block shelf, left to right. */
   shelfPositions: number;
   connections: ConnectionDef[];
@@ -143,6 +171,12 @@ export interface Settings {
   despatchDelayMs: [number, number];
   /** How long the simulated box waits for a reply before repeating (ms). */
   repeatAfterMs: number;
+  /** An offer (Is line clear) not repeated within this time after it has rung counts as refused (ms). */
+  offerRefusedAfterMs: number;
+  /** How long the simulated box holds a refused train before offering it again (ms). */
+  reofferAfterMs: number;
+  /** When a train is offered on one line, another line may offer one at about the same time (practice in regulating). */
+  coincidingOffers: boolean;
   /** Beat spacing when bells are played (ms). */
   bellBeatMs: number;
   bellGroupPauseMs: number;
@@ -150,6 +184,12 @@ export interface Settings {
   bellSoundDataUrl: string;
   /** Use the synthesised bell instead of a recording. */
   bellSynth: boolean;
+  /** Score the signaller as trains are worked (have-a-go sessions at shows). */
+  scoring: boolean;
+  /** Show the layout's track plan as a diagram board above the block shelf. */
+  boxDiagram: boolean;
+  /** What the diagram board labels its track circuits with. */
+  diagramLabels: 'none' | 'codes' | 'names';
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +244,7 @@ export interface BoxMarker {
 /** Where a track that leaves the scene goes. */
 export type ExitTarget =
   | { kind: 'offScene' }
-  | { kind: 'fiddleYard'; yardId: string }
+  | { kind: 'place'; placeId: string }
   | { kind: 'connection'; boxId: string; connectionId: string };
 
 export type CircuitEnd =
@@ -279,7 +319,8 @@ export type RunningSide = 'left' | 'right';
 export interface Layout {
   id: string;
   name: string;
-  fiddleYards: FiddleYard[];
+  /** Stations, sidings, goods yards, depots and fiddle yards on this layout. */
+  places: Place[];
   /** Drawn in the layout configurator. Empty until the user builds one. */
   trackPlan: TrackPlan;
   /** Which side of a double line trains keep to (default left, as in Britain). */

@@ -1,3 +1,4 @@
+import type { ScoreRuleId } from './score';
 import type { BellCode, InstrumentState } from './types';
 
 /**
@@ -25,12 +26,24 @@ export type LinkMessage =
   | { type: 'operator'; action: 'declareOutgoing'; locoId: string | null; trainTypeId: string | null }
   | { type: 'operator'; action: 'arrivedLocal'; locoId: string | null }
   | { type: 'operator'; action: 'arrivedRemote'; locoId: string | null; roadId: string }
+  /** The box has just cleared another line (sent 2-1): a train the far box is holding may be offered again now. */
+  | { type: 'operator'; action: 'promptReoffer' }
+  /**
+   * Where the far box's offer of the next incoming train stands: its Is line clear has rung (offered),
+   * it took no reply as a refusal and is holding the train (held, offering again at nextAt),
+   * or the train has been accepted. reoffers = how many times it has been offered again.
+   */
+  | { type: 'offer'; state: 'offered' | 'held' | 'accepted'; reoffers: number; nextAt?: number }
   // ---- Bookkeeping / coaching ----
   | { type: 'movementComplete'; direction: 'incoming' | 'outgoing'; locoId: string | null; roadId?: string }
   | { type: 'trainDeparted'; direction: 'incoming' | 'outgoing'; locoId: string | null }
   | { type: 'guidance'; text: string }
   | { type: 'hint'; text: string; level: 'info' | 'warn' }
   | { type: 'irregularity'; text: string }
+  /** Points gained or lost by the signaller (the far box referees). */
+  | { type: 'score'; rule: ScoreRuleId; detail?: string; locoId?: string }
+  /** A train movement on this line has finished; clean = no irregularity on the line since it was last clear. */
+  | { type: 'movementJudged'; locoId?: string; clean: boolean }
   | { type: 'status'; text: string };
 
 export interface LinkEnd {

@@ -1,7 +1,8 @@
 import { BellPlayer } from '../audio/bell';
 import type { Store } from '../core/store';
 import { addBox, canOpenBox } from '../core/boxes';
-import { activeLayout, findLayout, findYard, layoutOfYard, setActiveLayout, unassignedBoxes } from '../core/layouts';
+import { activeLayout, findLayout, setActiveLayout, unassignedBoxes } from '../core/layouts';
+import { layoutOfPlace, placeLocationText } from '../core/places';
 import type { AppState, BoxDef, Loco } from '../core/types';
 import { h, replace, safeRerender, toast } from './dom';
 import { boxScreen } from './screens/box';
@@ -15,7 +16,7 @@ import { trackPlanScreen } from './screens/trackPlan';
 import { tutorialScreen } from './screens/tutorial';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.12';
+export const APP_VERSION = '0.3.23';
 
 export interface Ctx {
   store: Store;
@@ -63,18 +64,10 @@ export function locationText(state: AppState, l: Loco): string {
     const lay = findLayout(state, layoutId);
     return lay && lay.id !== activeLayout(state)?.id ? `${lay.name}: ` : '';
   };
-  if (loc.kind === 'fiddleYard') {
-    const yard = findYard(state, loc.yardId);
-    const road = yard?.roads.find((r) => r.id === loc.roadId);
-    return `${elsewhere(layoutOfYard(state, loc.yardId)?.id)}${yard?.name ?? 'Fiddle yard'}, ${road?.name ?? loc.roadId}`;
-  }
-  if (loc.kind === 'station') {
+  if (loc.kind === 'place') return `${elsewhere(layoutOfPlace(state, loc.placeId)?.id)}${placeLocationText(state, loc)}`;
+  if (loc.kind === 'atBox') {
     const box = state.boxes.find((b) => b.id === loc.boxId);
-    return `${elsewhere(box?.layoutId)}${box?.name ?? loc.boxId} station${loc.note ? ` (${loc.note})` : ''}`;
-  }
-  if (loc.kind === 'farBox') {
-    const conn = state.boxes.find((b) => b.id === loc.boxId)?.connections.find((c) => c.id === loc.connectionId);
-    return `At ${conn?.neighbourName ?? 'another box'}${loc.note ? ` (${loc.note})` : ''}`;
+    return `${elsewhere(box?.layoutId)}At ${box?.name ?? 'a signal box'}`;
   }
   if (loc.kind === 'section') return 'In section';
   return 'Off layout';
@@ -102,10 +95,10 @@ function menuScreen(ctx: Ctx): Screen {
       sub ? h('span', { class: 'mi-sub' }, sub) : null,
     );
   const active = activeLayout(st);
-  const yardIds = new Set((active?.fiddleYards ?? []).map((y) => y.id));
+  const placeIds = new Set((active?.places ?? []).map((p) => p.id));
   const boxIds = new Set(st.boxes.filter((b) => (active && b.layoutId === active.id) || !findLayout(st, b.layoutId)).map((b) => b.id));
-  const fyCount = st.roster.filter((l) => l.location.kind === 'fiddleYard' && yardIds.has(l.location.yardId)).length;
-  const stnCount = st.roster.filter((l) => l.location.kind === 'station' && boxIds.has(l.location.boxId)).length;
+  const onLayout = st.roster.filter((l) => (l.location.kind === 'place' && placeIds.has(l.location.placeId)) || (l.location.kind === 'atBox' && boxIds.has(l.location.boxId))).length;
+  const nPlaces = active?.places.length ?? 0;
   return {
     title: 'Main menu',
     el: h(
@@ -125,7 +118,7 @@ function menuScreen(ctx: Ctx): Screen {
         item('config', 'Box configurator', 'Each box, its shelf and the boxes it is connected to'),
         item('plan', 'Layout configurator', layoutMenuSummary(st)),
         item('roster', 'Locomotive roster', `${st.roster.length} locomotives`),
-        item('layout', 'Fiddle yard & station', `${fyCount} in fiddle yard${(active?.fiddleYards.length ?? 0) > 1 ? 's' : ''}, ${stnCount} in station`),
+        item('layout', 'Trains in places', `${onLayout} ${onLayout === 1 ? 'train' : 'trains'} in ${nPlaces} ${nPlaces === 1 ? 'place' : 'places'}${active ? ` on ${active.name}` : ''}`),
         item('tutorial', 'Tutorial', 'Absolute block and bell codes, step by step'),
         item('help', 'Bell code reference', activeCodeSet(st).name),
         item('settings', 'Settings', `${st.settings.strictness === 'learner' ? 'Learner' : 'Strict'} mode`),
@@ -347,7 +340,10 @@ export function startApp(root: HTMLElement, store: Store): void {
           screen = layoutListScreen(ctx);
           break;
         }
-        screen = trackPlanScreen(ctx, layout.id, route.split('/')[2] === 'details' ? 'details' : undefined);
+        {
+          const t = route.split('/')[2];
+          screen = trackPlanScreen(ctx, layout.id, t === 'details' || t === 'places' ? t : undefined);
+        }
         break;
       }
       case 'help':

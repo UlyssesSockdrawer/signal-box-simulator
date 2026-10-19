@@ -1,10 +1,15 @@
 # Signal Box Simulator
 
 A signal box bell and block instrument simulator for model railways. Boxes, connections, rosters and
-fiddle yards are all set up in the app. It is configured first for **Becton** box on the
-**Becton and Tansley Spa Steam Railway** (OO gauge), where you are the Becton signaller. The app plays the signaller at the fiddle yard, answers your bells,
-offers you incoming trains, and tells you which loco to drive (with its DCC address). The levers,
-interlocking and signals stay on the physical layout.
+fiddle yards are all set up in the app. You are the signaller at a box; the app plays the signallers
+at the boxes either side, answers your bells, offers you incoming trains, and tells you which loco to
+drive (with its DCC address). The levers, interlocking and signals stay on the physical layout.
+
+It ships with an example to try it out: **Sigsim Central**, a station on a single line with a passing
+loop (platforms 1 and 2), a goods siding and a goods shed, between **Fiddle Yard West** and **Fiddle
+Yard East**, with four LMS locomotives (a Princess Coronation, a Black Five, an 8F and a Jinty). The
+Tutorial walks through a session there. Change it into your own layout, or add your own layouts and
+boxes alongside it; **Settings → Reset to defaults** brings the example back.
 
 ## Running it
 
@@ -24,11 +29,11 @@ Laid out like a real box: a **block shelf** with one instrument group per neighb
 (brass nameplate, train describer, block bell, your instrument and commutator, the far box's
 repeater or a token instrument, and the tapper with a bell code card), above a **desk** with the
 next arrival, the departure, the fiddle yard and station, and the train register. Learner-mode
-"Next step" guidance sits above the shelf. The commutator follows a Midland Railway instrument:
+"Next step" guidance sits above the shelf (below the diagram board when it is shown). The commutator follows a Midland Railway instrument:
 Train On Line left, Line Blocked centre, Line Clear right.
 
 Each box sets how many shelf positions it has, and each connection sets its position, in the
-**Box configurator** (main menu). Becton has three, with the Fiddle Yard on the right. Settings holds
+**Box configurator** (main menu). Sigsim Central has three: Fiddle Yard West on the left, Fiddle Yard East on the right. Settings holds
 app-wide options (layout name, learner/strict, bell code set, sound, tapper timing).
 
 The box keeps running while you visit other screens (the bell still rings), so you can open
@@ -70,9 +75,8 @@ On phones the shelf shows one instrument group at a time and the desk becomes ta
 * **Fiddle yard served** is Yes/No. Yes: choose the yard; incoming trains come from it and
   departures run into it. No: the far box serves a location on the layout (another scene).
   Trains you send there stay on the layout at that location (press "Arrived at <box>" when they
-  get there), and trains standing there can be offered back. These locations appear in
-  Fiddle yard & station and in the roster's location lists. When the layout configurator arrives
-  they will become proper layout locations.
+  get there), and trains standing there can be offered back. (Since v0.3.14 both are replaced by
+  **Trains run to and from**: a place on the box's layout, see Places below.)
 * A box with no connected boxes cannot be opened.
 
 ## Layout configurator (v0.3.6)
@@ -194,7 +198,7 @@ joined by junctions. The plan starts empty: build your own.
   a dialog lists what will be cleared and asks you to confirm. Its connections move to the new
   layout's first fiddle yard (or serve a location on the layout if it has none).
 * **Box configurator:** each box has a **Layout** choice. A connection's fiddle yard is chosen from
-  the box's own layout. Fiddle yard & station shows the active layout.
+  the box's own layout. Trains in places (formerly Fiddle yard & station) shows the active layout.
 * **Track worked by connected boxes:** track circuits and points can be given to the far box of a
   connection (worked by the simulated signaller), e.g. sidings it controls. Box areas colours them
   and lists them in the key; Give this branch to works for them too.
@@ -221,9 +225,198 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Fixes (v0.3.23)
+
+* **Catch points at Sigsim Central turned round.** They were laid facing into the yard, so set
+  against a train they would have derailed one *entering* the goods yard. The trap blade now faces
+  the main line: anything running *out* of the yard towards points 2 is derailed, away from the main
+  line, unless they are set for it; trains entering the yard pass them trailing.
+* Tutorial: section 1 is now headed "Absolute block" (it was "Absolute block in one sentence",
+  over two paragraphs).
+
+## Sigsim Central: through express, longer sections, catch points (v0.3.22)
+
+* **Tutorial:** the first exercise after opening the box is now the Duchess express **offered
+  through**: accepted from Fiddle Yard West with its Route set to On to Fiddle Yard East, offered on,
+  run through the station and cleared back to both ends. The 8F is then received into a platform and
+  the Jinty sent east, followed by refusing, regulating, a misdescription and closing the box.
+* **Track plan:** each single line is now two track circuits (far and near, joined by a joint), so
+  a train can later be shown moving through the section when timetables and simulated running come.
+  The goods yard neck has **catch points** (lever 5) protecting the main line from anything running
+  away out of the yard; the trap blade points away from the main line. Circuits are numbered T1–T11
+  west to east.
+* As before, only a fresh install or Settings → Reset to defaults gets the example.
+
+## A generic example to start with: Sigsim Central (v0.3.21)
+
+* The starting data (a fresh install, or **Settings → Reset to defaults**) is no longer the author's
+  own layout. It is **Sigsim Central**: layout and box of that name, a single line from **Fiddle Yard
+  West** through a passing loop to **Fiddle Yard East** (both simulated boxes, absolute block), with
+  platforms **P1** (main line) and **P2** (loop) on an island platform, and a goods yard with a
+  **Goods siding** and a **Goods shed** road. The track plan is drawn (8 track circuits, 4 points,
+  the three signal boxes placed on it) and the station and goods roads are tied to their track
+  circuits, so the Diagram button shows it straight away.
+* Roster: four LMS locomotives of different types and workings: 6233 *Duchess of Sutherland*
+  (Princess Coronation 4-6-2, express passenger) and 8233 (Stanier 8F 2-8-0, mineral) in Fiddle Yard
+  West, 5025 (Stanier Class 5 "Black Five" 4-6-0, ordinary passenger) in Fiddle Yard East, and 7298
+  (Fowler 3F "Jinty" 0-6-0T, light engine) in the goods siding as the station pilot.
+* **Tutorial:** now uses the box you will practise on (the first box of the active layout) and ends
+  with **Try it yourself**: open the box, receive a train, send one, refuse one, regulate two, run one
+  through, misdescribe one on purpose, and close the box, naming the trains from the data.
+* Saved data is not touched: existing layouts, boxes and rosters stay as they are. Only a fresh
+  install or a reset gets the example.
+* The layout configurator now opens a drawn plan fitted to the board, with room for the names of
+  tracks that leave the scene; platform labels on a loop road no longer sit on top of the platform.
+
+## Reset to defaults (v0.3.20)
+
+* **Settings → Reset to defaults** erases everything saved in this browser (layouts with their
+  track plans and places, signal boxes, the locomotive roster and all settings) and starts again
+  with the data the app first came with. A confirmation dialog says what will be erased (with
+  counts) and offers **Download a backup** first; nothing happens unless you press **Erase
+  everything and reset**. The app then returns to the main menu.
+* Resetting (and importing data) now also closes any box left running and forgets the old data's
+  screen state (track plan undo history, open places, open roster entry), so nothing from before
+  can creep back. The old two-press "Reset everything" button in Your data is replaced by this.
+
+## Misdescribing is always penalised (v0.3.19)
+
+* A train offered with the wrong description now always costs −10 (wrong description) and the
+  clean working bonus, however the box finds out: at the offer (train chosen first), when the
+  departing train is chosen or its working changed after it was offered, or at the latest when it
+  arrives (judged by what the arriving train is working as). Before, a train offered before it was
+  chosen in the Departure panel was never checked, and scored as a clean working.
+* Correcting it with 5-3 still costs the −10 and the bonus (the description was wrong); it only
+  avoids the further −10 and the 5-3 report on arrival.
+* No +10 for offering correctly until the description has been checked; a train that is never
+  identified (no train chosen, none named on arrival) gets the benefit of the doubt.
+
+## Misdescribed trains reported on arrival (v0.3.18)
+
+* Offering a train with a valid bell code that is not its own description (e.g. a light engine
+  offered as 3-1) is still accepted as heard, and still costs −10 (wrong description).
+* **If you do not correct it,** the receiving box notices when the train arrives: before clearing
+  back it calls attention and sends **5-3** (Last train signalled incorrectly described). Answer 1,
+  repeat 5-3, then the usual 1 and 2-1 follow. That costs a further −10 (misdescribed_not_corrected).
+* **Correcting it yourself:** before the train departs, send 1 then 5-3 and offer it again with the
+  right code (as before). Once it is on its way, send 1, 5-3, then the correct description; the far
+  box repeats it and nothing is reported on arrival. Learner guidance explains both.
+
+## Refusing trains and regulating (v0.3.17)
+
+* **Refusing a train** is done the prototypical way: answer the far box's call attention (1), but
+  do not repeat its Is line clear code. After a short grace period (Settings → Simulated signaller,
+  default 15 s) the offer counts as refused. There is no phone. A refusal is not a fault:
+  "slow to answer" (no_reply) now applies only to a call attention left unanswered, never to an
+  offer left unanswered.
+* The far box **holds** the refused train and offers it again (call attention, then the code) at
+  intervals (default every 60 s), and soon after you send 2-1 (Train out of section) on another
+  line, when your box is free again. Repeating the held train's code late asks it to offer the
+  train again straight away. On a single line, a held train does not occupy the line: you may
+  send a train the other way first, and the held one is offered again once that is out of section.
+* **Refusal tracker:** each held offer (line, train, first offered, times offered again) shows in
+  the Next arrival panel and the describer ("HELD AT FIDDLE YARD · OFFERED 14:02 · WAITING 3 MIN"),
+  and is cleared when the train is accepted or withdrawn.
+* The **train register** records the time each train was offered and the time it was accepted
+  (with how long it waited and how often it was offered).
+* **Regulating** (incoming offers only): each train class in a code set has a **rank** (data; class A
+  highest in BR 1960, class 1 highest in the numbered set; ties allowed). When two or more offers
+  are outstanding at once, accepting the higher class while a lower one waits scores +5
+  (regulated_ok); accepting a lower class while a higher one waits scores −10 (regulated_wrong,
+  a procedure fault, not safety). Equal ranks are not judged, and a higher class offered after
+  you have accepted a train is no fault. In Learner mode the Next step warns before a lower class
+  acceptance and selects the line to answer first.
+* **Offers can coincide** (Settings → Simulated signaller): when a train is offered on one line,
+  another line offers one of a different class at about the same time, so regulating comes up in
+  practice.
+* Left for the future simulated running module: regulating departures and through trains offered
+  on, and timetable lateness.
+
+## Fixes and a roomier Places tab (v0.3.16)
+
+* **Clean working bonus is judged per train.** A through train worked on two lines gets one bonus
+  for its whole journey through the box, and only if neither line had an irregularity while it
+  was being worked (before, a mistake on the line in rear still left the bonus on the line ahead).
+  The far boxes report each finished movement as clean or not; the box's referee
+  (`src/core/referee.ts`) decides.
+* **Places tab:** each place collapses to one line (name, kind, roads, trains, who works it) and
+  expands again; **Expand all / Collapse all**. Road lists collapse too (fiddle yards start
+  collapsed), and each road is one compact row (name, track circuit, notes, trains, remove). The
+  tab uses the full width of a big monitor or landscape tablet, with places flowing into as many
+  columns as fit.
+* Choosing another place for a line now stops its far box being listed as working the old place.
+
+## Through trains: offering on (v0.3.15)
+
+* A box with more than one line can **offer on** a train it accepts, instead of keeping it.
+  Example: A (simulated) ── B (you) ── C (simulated). A offers an express; you accept it (repeat
+  4, Line Clear); the next step then tells you to offer it on to C (call attention, then 4) and
+  selects C's instruments. When C has accepted and A sends 2, acknowledge it and show Train On
+  Line; as the train passes your box send 2 to C; when its tail lamp has passed press **passed
+  complete** on A's instruments and send 2-1 to A. C clears back with 2-1 when it arrives at C's
+  end (its fiddle yard or station).
+* Each incoming train has a **Route** (in the Next arrival panel): **Stop at <box>** (into a road
+  of the places the box works, or standing at the box) or **On to <line>**. A box that works no
+  place (a junction box) with one other line sends trains on by default; any other box (a
+  terminus, or a station) keeps them, and you can choose to send them on. The Departure panel
+  follows the line the train is being offered on to, and lists it as "Through from <line>".
+* A train routed on can also be stopped at the box first (Train arrived, standing here), cleared
+  back with 2-1, and sent on later. Re-routing a train to stop here withdraws it from the line
+  ahead. A through train never takes over a departure you have already chosen for that line.
+* The Next step bar no longer changes height while a finger or mouse button is down, so tapping a
+  chip on another line's instruments is not lost when the instruments move. A quiet line that is
+  selected while a train is still being worked on another line shows that line's next step.
+
+## Places: stations, sidings, goods yards, depots and fiddle yards (v0.3.14)
+
+* Every layout has **places**: everywhere trains stand or are worked. Kinds: station, sidings,
+  goods yard or shed, loco shed or depot, fiddle yard (fiddle yards are now places too), other.
+  Set them up in the layout configurator's new **Places** tab: name, short name, notes, the
+  **signal boxes that work it** (a station can be worked by several boxes, e.g. North and South;
+  a junction box need not work any place), the **lines that run here** (trains sent along them
+  arrive here and trains here can be offered back), and its **roads** (platforms, siding roads,
+  shed and yard roads), each with notes and optionally tied to a track circuit. Selecting a track
+  circuit on the plan also offers **Road of a place** (or a new road named from its platform).
+* In the box configurator a connection's **Trains run to and from** chooses its place (or none:
+  trains come from, and go back to, the roster). The box case lists the places the box works.
+* In the signal box, **Train arrived complete** now asks which road of the box's places the train
+  is in (a box working no place keeps arrivals "at the box"); departures list trains in the box's
+  places; sending a train shows "Arrived in <place>" and its roads; Trains on layout is grouped by
+  place, the box's own first.
+* **Trains in places** (main menu, and Places in the box's top ribbon) shows what stands on each
+  road of each place, and lets you move trains.
+* Saves from earlier versions are converted: fiddle yards become places; each box's implied
+  station becomes a station worked by it, with platform roads taken from its station notes
+  ("P1: …" lines become road P1 with that note, the rest stays as the station's notes) and trains
+  there put on the matching road; a line with no fiddle yard gets a place named after its far box.
+  Becton's notes no longer live in the app's code: they are ordinary place and road notes.
+
+## Diagram board, desk and scoring (v0.3.13)
+
+* **Diagram board:** the **Diagram** button on the box's top ribbon shows or hides the layout's
+  track plan as a diagram board above the block shelf (remembered between sessions). The box's own
+  track, its block sections and the points it works are drawn in black; track worked by other
+  boxes is drawn faintly. Labels can be turned off or show codes or names. The **Next step** bar
+  now sits between the diagram and the block shelf. On phones the diagram scrolls sideways.
+  Each track circuit on the diagram is tagged, ready for a later simulated running mode that
+  lights up occupied track.
+* **Desk:** Next arrival, Departure, Trains on layout and the Train register are now mahogany cases
+  on the teak shelf, like the configurators, so the Big Four themes recolour them.
+* **Scoring** (Settings → Signalling → Keep score; on by default): the far box referees. Each part
+  of a train working done by the book scores points (opening and closing the box, offering,
+  accepting, Line Clear, Train entering section, Train On Line, Train out of section, Line Blocked
+  again), with a 20-point bonus for a whole train movement with no irregularity. Irregularities
+  lose points, and safety breaches (a train sent without Line Clear or a token, 2-1 before the train
+  has arrived complete, Line Blocked with a train in section, offering into an occupied section,
+  an unsignalled train) lose the most. The running total is the brass **Score** plate on the top
+  ribbon; press it for the score sheet: the total, a verdict, trains received and sent, clean
+  workings, safety breaches, time on duty, points by category and the log of every entry. Start a
+  new score there for the next visitor, or print it. Closing the box (7-5-5) shows the final score
+  sheet. The point values are in `src/core/score.ts`.
+
 ## What's in v0.1
 
-* Main menu, box select (Becton), signal box screen, roster, fiddle yard & station, settings,
+* Main menu, box select (Becton), signal box screen, roster, fiddle yard & station (now Trains in places), settings,
   bell code reference, tutorial.
 * Single line Becton – Fiddle Yard, worked either as **simplified absolute block** (one 3-position
   instrument) or **electric key token** (hold the last beat to give a release; withdraw/replace tokens).
@@ -247,12 +440,19 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   tapDecoder.ts        Tapper rhythm → bell code
   link.ts              Messages between two boxes (the seam for future multiplayer)
   sectionController.ts Your end of a block section: instruments, tokens, log
+  score.ts             Scoring rules (points) and the Scorecard for a box session
+  places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
+  throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
+  referee.ts           Puts each line's points on the box's scorecard; clean working judged per train
   simulatedNeighbour.ts The far signaller: replies, offers trains, coaches you
   selection.ts         Next-train strategies (manual, random; timetable can be added)
   session.ts           Wires controllers + simulated neighbours for a box
   store.ts, defaults.ts  Saved state, migration, starting data
 src/audio/bell.ts      Bell playback (recording or synth)
 src/ui/                Screens (plain TypeScript + DOM, no framework)
+  planDiagram.ts       Read-only track diagram (the box's diagram board)
+  scoreSheet.ts        The score sheet dialog
+  screens/places.ts    The layout configurator's Places tab
 scripts/build.mjs      Builds dist/ (single HTML file, PWA folder, and claude-hosted/ for the hosted copy)
 ```
 
@@ -270,7 +470,7 @@ npm run typecheck
 ## Where it goes next
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
-* Track diagram display.
+* Simulated running: light up occupied track circuits on the diagram board (`setOccupied` in ui/planDiagram.ts) so trains need not move on a real layout.
 * Timetabled workings (exhibition running plans) as a new `IncomingSelector`.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.

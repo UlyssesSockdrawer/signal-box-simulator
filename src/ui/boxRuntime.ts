@@ -1,5 +1,11 @@
 import { realScheduler } from '../core/scheduler';
-import { createBoxSession, type SectionSession } from '../core/session';
+import { Scorecard } from '../core/score';
+import { placesWorkedBy } from '../core/places';
+import { ThroughWorkings } from '../core/throughTrains';
+import { BoxReferee } from '../core/referee';
+import { BoxRegulator } from '../core/regulating';
+import { incomingCandidates } from '../core/selection';
+import { createBoxSession, locoLabel, type SectionSession } from '../core/session';
 import type { BoxDef, Location } from '../core/types';
 import type { Ctx } from './app';
 
@@ -20,6 +26,12 @@ export interface BoxRuntime {
   boxId: string;
   signature: string;
   conns: ConnRuntime[];
+  /** The signaller's score for this session of the box (until it is closed, or a fresh score is started). */
+  score: Scorecard;
+  /** Trains offered on from one line to another (through trains at a box that is not the end of the line). */
+  workings: ThroughWorkings;
+  /** Refusals (trains held at far boxes) and regulating checks across the box's lines. */
+  regulator: BoxRegulator;
   dispose(): void;
   /** Called after the box has been closed (7-5-5) and reset to its cold, unopened state. */
   onReset(fn: () => void): () => void;
@@ -29,6 +41,15 @@ export interface BoxRuntime {
 const RESET_AFTER_CLOSE_MS = 2500;
 
 const cache = new Map<string, BoxRuntime>();
+/** The final score of a box that has just been closed, waiting to be shown. */
+const finishedScores = new Map<string, Scorecard>();
+
+/** The final score of the box's last session, once (it is removed when taken). */
+export function takeFinishedScore(boxId: string): Scorecard | null {
+  const s = finishedScores.get(boxId) ?? null;
+  finishedScores.delete(boxId);
+  return s;
+}
 
 function signatureOf(ctx: Ctx, box: BoxDef): string {
   const modes = box.connections.map((c) => ctx.store.state.settings.workingModes[c.id] ?? c.defaultWorking);
@@ -50,6 +71,7 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
   const offs: Array<() => void> = [];
   const resetListeners = new Set<() => void>();
   let resetTimer: number | null = null;
+  const score = new Scorecard();
   const conns: ConnRuntime[] = sessions.map((session) => {
     const cr: ConnRuntime = { session, lastBell: null, onBeat: null };
     const c = session.controller;
@@ -84,6 +106,7 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
           if (allClosed && resetTimer === null) {
             resetTimer = window.setTimeout(() => {
               resetTimer = null;
+              if (score.entries.length) finishedScores.set(box.id, score.snapshot());
               runtime.dispose();
               for (const fn of [...resetListeners]) fn();
             }, RESET_AFTER_CLOSE_MS);
@@ -95,10 +118,31 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
     return cr;
   });
 
+  // The far boxes referee their lines; the box's referee puts it all on the scorecard (clean working judged per train).
+  const referee = new BoxReferee(sessions, score);
+  const workings = new ThroughWorkings(sessions, {
+    worksPlaces: () => placesWorkedBy(store.state, box.id).length > 0,
+    codeSet: () => store.state.codeSets.find((c) => c.id === store.state.settings.codeSetId) ?? store.state.codeSets[0],
+    trainTypes: () => store.state.trainTypes,
+    locoLabel: (id) => locoLabel(store.state.roster.find((l) => l.id === id)),
+  });
+  const codeSet = () => store.state.codeSets.find((c) => c.id === store.state.settings.codeSetId) ?? store.state.codeSets[0];
+  const regulator = new BoxRegulator(sessions, {
+    scheduler: realScheduler,
+    codeSet,
+    trainTypes: () => store.state.trainTypes,
+    settings: () => store.state.settings,
+    locoLabel: (id) => locoLabel(store.state.roster.find((l) => l.id === id)),
+    candidates: (conn) => incomingCandidates(store.state, conn).map((l) => ({ id: l.id, trainTypeId: l.working.trainTypeId })),
+    score: (s, rule, detail, locoId) => referee.score(s, rule, detail, locoId),
+  });
   const runtime: BoxRuntime = {
     boxId: box.id,
     signature: sig,
     conns,
+    score,
+    workings,
+    regulator,
     onReset: (fn) => {
       resetListeners.add(fn);
       return () => resetListeners.delete(fn);
@@ -107,6 +151,9 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
       if (resetTimer !== null) window.clearTimeout(resetTimer);
       resetTimer = null;
       for (const off of offs) off();
+      workings.dispose();
+      regulator.dispose();
+      referee.dispose();
       for (const s of sessions) s.neighbour?.dispose();
       if (cache.get(box.id) === runtime) cache.delete(box.id);
       // Any train left "in section" goes back where it started.
@@ -128,4 +175,11 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
 /** Stop a box's running state, e.g. when the box is deleted. */
 export function disposeBoxRuntime(boxId: string): void {
   cache.get(boxId)?.dispose();
+}
+
+/** Stop every running box and forget final scores, before all the app's data is replaced (reset or import). */
+export function disposeAllBoxRuntimes(): void {
+  for (const rt of [...cache.values()]) rt.dispose();
+  cache.clear();
+  finishedScores.clear();
 }

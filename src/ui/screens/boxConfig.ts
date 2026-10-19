@@ -10,11 +10,11 @@ import {
   MAX_SHELF_POSITIONS,
   moveConnection,
   removeConnection,
-  servesFiddleYard,
   setShelfPositions,
   SHORT_NAME_MAX,
 } from '../../core/boxes';
-import { findYard, layoutOfBox, layoutOfYard, yardsForBox } from '../../core/layouts';
+import { layoutOfBox } from '../../core/layouts';
+import { kindInfo, PLACE_KINDS, placesForBox, placesWorkedBy, setConnectionPlace } from '../../core/places';
 import { layoutShelf, positionLabel } from '../../core/shelf';
 import type { AppState, BoxDef, ConnectionDef, LineType, WorkingMode } from '../../core/types';
 import { topBar, type Ctx, type Screen } from '../app';
@@ -160,6 +160,17 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
           : 'No layouts yet. Create one in the layout configurator, then put this box on it.',
       ),
     ),
+    (() => {
+      const lay = layoutOfBox(st, box);
+      if (!lay) return null;
+      const worked = placesWorkedBy(st, box.id);
+      return h(
+        'div',
+        { class: 'bc-places' },
+        h('p', { class: 'help' }, worked.length ? `Works ${worked.map((p) => p.name).join(', ')}: arriving trains are put on their roads.` : `Works no place (e.g. a junction box): arriving trains stand at the box.`),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom(`plan/${lay.id}/places`, { route: `config/${box.id}`, label: `${box.name} configuration` }) } }, 'Places on the layout'),
+      );
+    })(),
     st.boxes.length > 1
       ? h(
           'div',
@@ -180,11 +191,9 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
     const mode = st.settings.workingModes[c.id] ?? c.defaultWorking;
     const pos = slots.findIndex((s) => s?.id === c.id);
     const plate = h('span', { class: 'plate' }, c.neighbourName);
-    const fy = servesFiddleYard(c);
-    const yards = yardsForBox(st, box);
-    const curYard = findYard(st, c.fiddleYardId);
-    const yn = (label: string, on: boolean, apply: () => void) =>
-      h('button', { class: 'btn small', type: 'button', 'aria-pressed': String(on), on: { click: () => !on && apply() } }, label);
+    const places = placesForBox(st, box);
+    const cur = places.find((p) => p.id === c.placeId);
+    const lay = layoutOfBox(st, box);
     return h(
       'article',
       { class: 'config-case conn-case', 'aria-label': `Connection to ${c.neighbourName}` },
@@ -239,42 +248,33 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
           ),
           'Absolute block uses one block instrument; key token adds a token instrument (hold the last beat to give a release).',
         ),
-        h(
-          'div',
-          { class: 'field' },
-          h('span', { class: 'field-label', id: `bc_fyq_${c.id}` }, 'Fiddle yard served'),
+        selectField(
+          `bc_place_${c.id}`,
+          'Trains run to and from',
           h(
-            'div',
-            { class: 'seg', role: 'group', 'aria-labelledby': `bc_fyq_${c.id}` },
-            yn('Yes', fy, () => {
-              if (!yards.length) return toast(layoutOfBox(st, box) ? `${layoutOfBox(st, box)!.name} has no fiddle yards yet. Add one in the layout configurator.` : `Put ${box.name} on a layout with a fiddle yard first.`);
-              updConn(c.id, (cc) => (cc.fiddleYardId = yards[0].id));
-            }),
-            yn('No', !fy, () => updConn(c.id, (cc) => (cc.fiddleYardId = ''))),
+            'select',
+            {
+              disabled: !lay,
+              on: {
+                change: (e: Event) => {
+                  disposeBoxRuntime(box.id);
+                  updConn(c.id, (cc, b, a) => setConnectionPlace(a, b, cc, (e.target as HTMLSelectElement).value));
+                },
+              },
+            },
+            option('', 'No place: trains come from, and go back to, the roster', !cur),
+            ...PLACE_KINDS.map((k) => ({ k, ps: places.filter((p) => p.kind === k.kind) }))
+              .filter((g) => g.ps.length)
+              .map((g) => h('optgroup', { label: g.k.plural }, ...g.ps.map((p) => option(p.id, p.name, p.id === c.placeId)))),
           ),
-          h(
-            'small',
-            { class: 'help' },
-            fy
-              ? 'Incoming trains are chosen from this yard, and departures run into it.'
-              : `${c.neighbourName} serves a location on the layout. Trains sent there stay on the layout, and trains standing there can be offered back to ${box.name}.`,
-          ),
+          !lay
+            ? `Put ${box.name} on a layout to choose a place: a fiddle yard, or a station or sidings worked by ${c.neighbourName}.`
+            : cur
+              ? `Trains offered by ${c.neighbourName} come from ${cur.name}${cur.kind === 'fiddleYard' ? '' : ` (${kindInfo(cur.kind).name.toLowerCase()})`}, and trains sent to it arrive there. Places are set up in the layout configurator (Places).`
+              : places.length
+                ? `Choose the fiddle yard, or the place on ${lay.name} that ${c.neighbourName} works. Places are set up in the layout configurator (Places).`
+                : `${lay.name} has no places yet. Add a fiddle yard or station in the layout configurator (Places).`,
         ),
-        fy
-          ? selectField(
-              `bc_fy_${c.id}`,
-              'Connected fiddle yard',
-              h(
-                'select',
-                { on: { change: (e: Event) => updConn(c.id, (cc) => (cc.fiddleYardId = (e.target as HTMLSelectElement).value)) } },
-                ...yards.map((y) => option(y.id, y.name, y.id === c.fiddleYardId)),
-                ...(curYard && !yards.includes(curYard) ? [option(curYard.id, `${curYard.name} (on ${layoutOfYard(st, curYard.id)?.name ?? 'another layout'})`, true)] : []),
-              ),
-              curYard && !yards.includes(curYard)
-                ? `This yard is on ${layoutOfYard(st, curYard.id)?.name ?? 'another layout'}, not ${layoutOfBox(st, box)?.name ?? "this box's layout"}. Choose one of this layout's yards.`
-                : "Each layout's fiddle yards and their roads are set up in the layout configurator (Details).",
-            )
-          : null,
       ),
       h(
         'div',

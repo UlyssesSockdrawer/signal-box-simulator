@@ -111,6 +111,7 @@ const COMMON_SIGNALS: Record<string, BellCode> = {
  * British Railways standard codes as in the Regulations for Train Signalling
  * of 1960 (lettered train classes A–K). Regional variations existed; check
  * against your own railway's appendix and edit as needed.
+ * rank = regulating priority (class A highest, K lowest).
  */
 export const BR_1960: CodeSet = {
   id: 'br1960',
@@ -119,27 +120,27 @@ export const BR_1960: CodeSet = {
     'British Railways standard bell signals from the 1960 Regulations for Train Signalling. Regions (especially the Southern) had local variations, so edit to match your own railway.',
   builtIn: true,
   trainCodes: {
-    express_passenger: { code: '4', classLabel: 'Class A' },
-    ordinary_passenger: { code: '3-1', classLabel: 'Class B' },
-    branch_passenger: { code: '1-3', classLabel: 'Class B', note: 'Where authorised' },
-    railcar: { code: '3-1-3', classLabel: 'Class B', note: 'Where authorised' },
-    parcels: { code: '1-3-1', classLabel: 'Class C' },
-    ecs: { code: '2-2-1', classLabel: 'Class C' },
-    freight_fitted_half: { code: '3-1-1', classLabel: 'Class C' },
-    freight_fitted_third: { code: '5', classLabel: 'Class D' },
-    freight_fitted_four: { code: '1-2-2', classLabel: 'Class E' },
-    freight_unfitted: { code: '3-2', classLabel: 'Class F' },
-    light_engine: { code: '2-3', classLabel: 'Class G' },
-    engine_brake_van: { code: '1-1-3', classLabel: 'Class G' },
-    through_freight: { code: '1-4', classLabel: 'Class H' },
-    mineral: { code: '4-1', classLabel: 'Class J' },
-    pickup_goods: { code: '3', classLabel: 'Class K' },
-    branch_freight: { code: '1-2', classLabel: 'Class K', note: 'Where authorised' },
+    express_passenger: { code: '4', classLabel: 'Class A', rank: 10 },
+    ordinary_passenger: { code: '3-1', classLabel: 'Class B', rank: 9 },
+    branch_passenger: { code: '1-3', classLabel: 'Class B', note: 'Where authorised', rank: 9 },
+    railcar: { code: '3-1-3', classLabel: 'Class B', note: 'Where authorised', rank: 9 },
+    parcels: { code: '1-3-1', classLabel: 'Class C', rank: 8 },
+    ecs: { code: '2-2-1', classLabel: 'Class C', rank: 8 },
+    freight_fitted_half: { code: '3-1-1', classLabel: 'Class C', rank: 8 },
+    freight_fitted_third: { code: '5', classLabel: 'Class D', rank: 7 },
+    freight_fitted_four: { code: '1-2-2', classLabel: 'Class E', rank: 6 },
+    freight_unfitted: { code: '3-2', classLabel: 'Class F', rank: 5 },
+    light_engine: { code: '2-3', classLabel: 'Class G', rank: 4 },
+    engine_brake_van: { code: '1-1-3', classLabel: 'Class G', rank: 4 },
+    through_freight: { code: '1-4', classLabel: 'Class H', rank: 3 },
+    mineral: { code: '4-1', classLabel: 'Class J', rank: 2 },
+    pickup_goods: { code: '3', classLabel: 'Class K', rank: 1 },
+    branch_freight: { code: '1-2', classLabel: 'Class K', note: 'Where authorised', rank: 1 },
   },
   signals: { ...COMMON_SIGNALS },
 };
 
-/** Later BR / Rule Book codes (numbered classes 0–9). */
+/** Later BR / Rule Book codes (numbered classes 0–9). rank = regulating priority (class 1 highest, class 0 light engines lowest). */
 export const BR_MODERN: CodeSet = {
   id: 'brmodern',
   name: 'BR / Rule Book (numbered classes 0–9)',
@@ -147,22 +148,22 @@ export const BR_MODERN: CodeSet = {
     'Later BR and Rule Book bell signals using the numbered train classes. Some descriptions (branch, pick-up goods) no longer exist and are mapped to the nearest current class.',
   builtIn: true,
   trainCodes: {
-    express_passenger: { code: '4', classLabel: 'Class 1' },
-    ordinary_passenger: { code: '3-1', classLabel: 'Class 2' },
-    branch_passenger: { code: '3-1', classLabel: 'Class 2' },
-    railcar: { code: '3-1', classLabel: 'Class 2' },
-    parcels: { code: '1-3-1', classLabel: 'Class 3' },
-    ecs: { code: '2-2-1', classLabel: 'Class 5' },
-    freight_fitted_half: { code: '3-1-1', classLabel: 'Class 4' },
-    freight_fitted_third: { code: '5', classLabel: 'Class 6' },
-    freight_fitted_four: { code: '4-1', classLabel: 'Class 7' },
-    freight_unfitted: { code: '3-2', classLabel: 'Class 8' },
-    light_engine: { code: '2-3', classLabel: 'Class 0' },
-    engine_brake_van: { code: '2-3', classLabel: 'Class 0' },
-    through_freight: { code: '3-2', classLabel: 'Class 8' },
-    mineral: { code: '4-1', classLabel: 'Class 7' },
-    pickup_goods: { code: '3-2', classLabel: 'Class 8' },
-    branch_freight: { code: '3-2', classLabel: 'Class 8' },
+    express_passenger: { code: '4', classLabel: 'Class 1', rank: 10 },
+    ordinary_passenger: { code: '3-1', classLabel: 'Class 2', rank: 9 },
+    branch_passenger: { code: '3-1', classLabel: 'Class 2', rank: 9 },
+    railcar: { code: '3-1', classLabel: 'Class 2', rank: 9 },
+    parcels: { code: '1-3-1', classLabel: 'Class 3', rank: 8 },
+    ecs: { code: '2-2-1', classLabel: 'Class 5', rank: 6 },
+    freight_fitted_half: { code: '3-1-1', classLabel: 'Class 4', rank: 7 },
+    freight_fitted_third: { code: '5', classLabel: 'Class 6', rank: 5 },
+    freight_fitted_four: { code: '4-1', classLabel: 'Class 7', rank: 4 },
+    freight_unfitted: { code: '3-2', classLabel: 'Class 8', rank: 3 },
+    light_engine: { code: '2-3', classLabel: 'Class 0', rank: 1 },
+    engine_brake_van: { code: '2-3', classLabel: 'Class 0', rank: 1 },
+    through_freight: { code: '3-2', classLabel: 'Class 8', rank: 3 },
+    mineral: { code: '4-1', classLabel: 'Class 7', rank: 4 },
+    pickup_goods: { code: '3-2', classLabel: 'Class 8', rank: 3 },
+    branch_freight: { code: '3-2', classLabel: 'Class 8', rank: 3 },
   },
   signals: { ...COMMON_SIGNALS },
 };
@@ -205,6 +206,12 @@ export function trainCode(set: CodeSet, trainTypeId: string): BellCode {
 
 export function signalCode(set: CodeSet, signalId: string): BellCode {
   return set.signals[signalId] ?? COMMON_SIGNALS[signalId] ?? '';
+}
+
+/** Regulating priority of a train type in a code set (higher goes first), or undefined when it has none. */
+export function trainRank(set: CodeSet, trainTypeId: string): number | undefined {
+  const r = set.trainCodes[trainTypeId]?.rank;
+  return typeof r === 'number' && Number.isFinite(r) ? r : undefined;
 }
 
 export function describeCode(code: BellCode, set: CodeSet, trainTypes: TrainType[]): string {

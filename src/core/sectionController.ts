@@ -1,11 +1,13 @@
 import { describeCode } from './bellcodes';
 import type { LinkEnd, LinkMessage } from './link';
+import type { ScoreRuleId } from './score';
 import { Emitter, type Scheduler } from './scheduler';
 import type { BellCode, CodeSet, InstrumentState, LineType, Location, TrainType, WorkingMode } from './types';
 
 export interface LogEntry {
   t: number;
-  kind: 'bellIn' | 'bellOut' | 'status' | 'hint' | 'irregularity' | 'action';
+  /** register: the train register's entries (time offered, time accepted). */
+  kind: 'bellIn' | 'bellOut' | 'status' | 'hint' | 'irregularity' | 'action' | 'register';
   text: string;
   code?: BellCode;
 }
@@ -29,12 +31,30 @@ export interface SectionView {
   tokenInHand: boolean;
   /** Galvanometer needle deflected: neighbour holding plunger, a token can be withdrawn. */
   releaseAvailable: boolean;
-  incoming: { locoId: string; trainTypeId: string; departed: boolean; arrived: boolean } | null;
+  incoming: IncomingView | null;
   /** arrived: the operator has reported it arrived at the far end (reported once only). */
   outgoing: { locoId: string | null; trainTypeId: string | null; departed: boolean; arrived?: boolean } | null;
   guidance: string;
   /** False until the box has been opened with the far box (5-5-5). */
   boxOpen: boolean;
+}
+
+/** The next incoming train, from being requested of the far box until it is out of section. */
+export interface IncomingView {
+  locoId: string;
+  trainTypeId: string;
+  departed: boolean;
+  arrived: boolean;
+  /** When its Is line clear first rang (scheduler time); null while the far box is still calling attention. */
+  offeredAt: number | null;
+  /** When it was accepted (Is line clear repeated); null until then. */
+  acceptedAt: number | null;
+  /** Refused (not accepted in time): the far box is holding it and will offer it again. */
+  held: boolean;
+  /** How many times it has been offered again after a refusal. */
+  reoffers: number;
+  /** While held: when the far box means to offer it again (scheduler time). */
+  nextOfferAt: number | null;
 }
 
 export interface ControllerEvents extends Record<string, unknown> {
@@ -44,6 +64,16 @@ export interface ControllerEvents extends Record<string, unknown> {
   log: LogEntry;
   hint: { text: string; level: 'info' | 'warn' };
   locoMoved: { locoId: string; location: Location };
+  /** Points gained or lost, as judged by the far box. */
+  score: { rule: ScoreRuleId; detail: string; locoId: string | null };
+  /** A train movement on this line has finished, judged clean or not by the far box. */
+  movementJudged: { locoId: string | null; clean: boolean };
+  /** The operator asked the far box to offer a train (Offer next incoming train). */
+  incomingRequested: { locoId: string; trainTypeId: string };
+  /** The signaller accepted the incoming train (repeated its Is line clear). */
+  offerAccepted: { locoId: string; trainTypeId: string; offeredAt: number | null; at: number };
+  /** A train movement on this line is complete (Train out of section exchanged). */
+  sectionCleared: { direction: 'incoming' | 'outgoing'; locoId: string | null };
 }
 
 export interface ControllerOptions {
@@ -52,7 +82,9 @@ export interface ControllerOptions {
   boxId: string;
   connectionId: string;
   /** Fiddle yard at the far end, or '' when the far box serves a location on the layout. */
-  fiddleYardId: string;
+  farPlaceId: string;
+  /** Words for the log: where trains sent along this line go ("Fiddle Yard", "Tansley Spa"). */
+  farPlaceName?: string;
   mode: WorkingMode;
   lineType: LineType;
   neighbourName: string;
@@ -60,6 +92,8 @@ export interface ControllerOptions {
   localShort: string;
   codeSet: () => CodeSet;
   trainTypes: () => TrainType[];
+  /** Words for a train in the register, e.g. '7812 "Erlestoke Manor"'. */
+  locoLabel?: (locoId: string | null) => string;
   tokensPerInstrument?: number;
 }
 
@@ -173,11 +207,23 @@ export class SectionController {
     if (this.v.incoming) return 'An incoming train is already on its way.';
     const singleBusy = this.v.lineType === 'single' && (this.v.outgoing || this.v.tokenWithdrawnHere || this.v.remoteInstrument !== 'LB');
     if (singleBusy) return 'The single line is in use by an outgoing train. Wait until it is out of section.';
-    this.v.incoming = { locoId, trainTypeId, departed: false, arrived: false };
+    this.v.incoming = { locoId, trainTypeId, departed: false, arrived: false, offeredAt: null, acceptedAt: null, held: false, reoffers: 0, nextOfferAt: null };
     this.addLog('action', `Next incoming train requested from ${this.o.neighbourName}`);
     this.o.link.send({ type: 'operator', action: 'offerIncoming', locoId, trainTypeId });
     this.changed();
+    this.events.emit('incomingRequested', { locoId, trainTypeId });
     return null;
+  }
+
+  /** Tell the far box the signaller is free (another line has just been cleared): a train it is holding may be offered again now. */
+  promptReoffer(): void {
+    if (this.v.incoming?.held) this.o.link.send({ type: 'operator', action: 'promptReoffer' });
+  }
+
+  /** An entry in this line's train register made by the box itself (e.g. a regulating decision). */
+  note(kind: 'irregularity' | 'status', text: string): void {
+    if (kind === 'irregularity') this.irregularities.push(text);
+    this.addLog(kind, text);
   }
 
   cancelIncoming(): void {
@@ -188,15 +234,20 @@ export class SectionController {
     this.changed();
   }
 
-  /** Operator has seen the incoming train arrive complete with tail lamp. */
-  confirmIncomingArrived(note = ''): void {
+  /**
+   * Operator has seen the incoming train arrive complete with tail lamp. `at` is where it now
+   * stands: a road (or '' for anywhere) in a place this box works; null = at the box itself
+   * (a box that works no place, or a through train standing at the box before it is sent on).
+   */
+  confirmIncomingArrived(at: { placeId: string; roadId: string } | null = null, opts: { moveLoco?: boolean } = {}): void {
     const inc = this.v.incoming;
     if (!inc || inc.arrived) return;
     inc.arrived = true;
     if (this.v.mode === 'token' && this.v.tokenIndicator === 'coming') this.v.tokenInHand = true;
     this.addLog('action', 'Incoming train arrived complete with tail lamp');
     this.o.link.send({ type: 'operator', action: 'arrivedLocal', locoId: inc.locoId });
-    this.events.emit('locoMoved', { locoId: inc.locoId, location: { kind: 'station', boxId: this.o.boxId, note } });
+    // A through train already sent on into the section ahead stays there (moveLoco false).
+    if (opts.moveLoco !== false) this.events.emit('locoMoved', { locoId: inc.locoId, location: at?.placeId ? { kind: 'place', placeId: at.placeId, roadId: at.roadId } : { kind: 'atBox', boxId: this.o.boxId } });
     this.changed();
   }
 
@@ -213,7 +264,7 @@ export class SectionController {
     if (!this.v.outgoing || this.v.outgoing.arrived) return;
     this.v.outgoing.arrived = true;
     const id = locoId ?? this.v.outgoing?.locoId ?? null;
-    this.addLog('action', this.o.fiddleYardId ? 'Outgoing train arrived in fiddle yard' : `Outgoing train arrived at ${this.o.neighbourName}`);
+    this.addLog('action', `Outgoing train arrived ${this.o.farPlaceId ? `at ${this.o.farPlaceName ?? 'its place'}` : `at ${this.o.neighbourName}`}`);
     this.o.link.send({ type: 'operator', action: 'arrivedRemote', locoId: id, roadId });
     this.changed();
   }
@@ -269,17 +320,23 @@ export class SectionController {
         if (m.direction === 'incoming') {
           this.v.incoming = null;
           this.addLog('status', 'Incoming train complete: section clear of it.');
+          this.events.emit('sectionCleared', { direction: 'incoming', locoId: m.locoId });
         } else {
-          if (m.locoId && this.o.fiddleYardId && m.roadId) {
-            this.events.emit('locoMoved', { locoId: m.locoId, location: { kind: 'fiddleYard', yardId: this.o.fiddleYardId, roadId: m.roadId } });
-          } else if (m.locoId && !this.o.fiddleYardId) {
-            // No fiddle yard on this line: the train stays on the layout, at the location the far box serves.
-            this.events.emit('locoMoved', { locoId: m.locoId, location: { kind: 'farBox', boxId: this.o.boxId, connectionId: this.o.connectionId, note: '' } });
+          if (m.locoId) {
+            // Into the place at the far end of the line (on the road chosen), or back to the roster when the line has none.
+            this.events.emit('locoMoved', {
+              locoId: m.locoId,
+              location: this.o.farPlaceId ? { kind: 'place', placeId: this.o.farPlaceId, roadId: m.roadId ?? '' } : { kind: 'offLayout' },
+            });
           }
           this.v.outgoing = null;
           this.addLog('status', 'Outgoing train complete: section clear of it.');
+          this.events.emit('sectionCleared', { direction: 'outgoing', locoId: m.locoId });
         }
         this.changed();
+        break;
+      case 'offer':
+        this.onOffer(m.state, m.reoffers, m.nextAt);
         break;
       case 'guidance':
         this.v.guidance = m.text;
@@ -296,9 +353,46 @@ export class SectionController {
       case 'status':
         this.addLog('status', m.text);
         break;
+      case 'movementJudged':
+        this.events.emit('movementJudged', { locoId: m.locoId ?? null, clean: m.clean });
+        break;
+      case 'score':
+        this.events.emit('score', { rule: m.rule, detail: m.detail ?? '', locoId: m.locoId ?? null });
+        break;
       default:
         break;
     }
+  }
+
+  /** The far box's offer of the incoming train: offered, refused and held, or accepted. Kept in the train register. */
+  private onOffer(state: 'offered' | 'held' | 'accepted', reoffers: number, nextAt?: number): void {
+    const inc = this.v.incoming;
+    if (!inc) return;
+    const now = this.o.scheduler.now();
+    const set = this.o.codeSet();
+    const code = set.trainCodes[inc.trainTypeId]?.code ?? '';
+    const train = `${this.o.locoLabel?.(inc.locoId) ?? 'train'}, ${(this.o.trainTypes().find((t) => t.id === inc.trainTypeId)?.name ?? 'train').toLowerCase()}`;
+    inc.reoffers = reoffers;
+    if (state === 'offered') {
+      const first = inc.offeredAt === null;
+      if (first) inc.offeredAt = now;
+      inc.held = false;
+      inc.nextOfferAt = null;
+      this.addLog('register', first ? `Offered ${code}: ${train}` : `Offered again (${ordinal(reoffers + 1)} time) ${code}: ${train}`);
+    } else if (state === 'held') {
+      if (!inc.held) this.addLog('register', `Not accepted: ${train} held at ${this.o.neighbourName}`);
+      inc.held = true;
+      inc.nextOfferAt = nextAt ?? null;
+    } else {
+      inc.held = false;
+      inc.nextOfferAt = null;
+      inc.acceptedAt = now;
+      const offered = inc.offeredAt ?? now;
+      const waited = waitingText(now - offered);
+      this.addLog('register', `Accepted ${code}: ${train} · offered ${clockTime(offered, true)} · accepted ${clockTime(now, true)}${waited ? ` · waited ${waited}` : ''}${reoffers ? ` · offered ${reoffers + 1} times` : ''}`);
+      this.events.emit('offerAccepted', { locoId: inc.locoId, trainTypeId: inc.trainTypeId, offeredAt: inc.offeredAt, at: now });
+    }
+    this.changed();
   }
 
   // -------------------------------------------------------------------------
@@ -322,4 +416,21 @@ export class SectionController {
 
 export function instrumentName(s: InstrumentState): string {
   return s === 'LB' ? 'Line Blocked' : s === 'LC' ? 'Line Clear' : 'Train On Line';
+}
+
+/** "14:02" (or "14:02:31") in local time. */
+export function clockTime(t: number, seconds = false): string {
+  const d = new Date(t);
+  return [d.getHours(), d.getMinutes(), ...(seconds ? [d.getSeconds()] : [])].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
+/** How long a train has waited, in words: '' under a minute, else "3 min". */
+export function waitingText(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  return m < 1 ? '' : `${m} min`;
+}
+
+function ordinal(n: number): string {
+  const s = n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th');
+  return `${n}${s}`;
 }

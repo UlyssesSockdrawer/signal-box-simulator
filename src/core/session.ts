@@ -1,4 +1,5 @@
 import { createLinkPair } from './link';
+import { arrivedLabel, farPlace } from './places';
 import type { Scheduler } from './scheduler';
 import { SectionController } from './sectionController';
 import { SimulatedNeighbour } from './simulatedNeighbour';
@@ -25,6 +26,7 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
   return box.connections.map((connection) => {
     const [localEnd, remoteEnd] = createLinkPair();
     const st = getState();
+    const place = farPlace(st, box, connection);
     const mode = st.settings.workingModes[connection.id] ?? connection.defaultWorking;
     const codeSet = () => {
       const s = getState();
@@ -36,7 +38,8 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
       scheduler,
       boxId: box.id,
       connectionId: connection.id,
-      fiddleYardId: connection.fiddleYardId,
+      farPlaceId: place?.id ?? '',
+      farPlaceName: place?.name,
       mode,
       lineType: connection.lineType,
       neighbourName: connection.neighbourName,
@@ -44,6 +47,7 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
       localShort: box.shortName,
       codeSet,
       trainTypes,
+      locoLabel: (id) => locoLabel(getState().roster.find((l) => l.id === id)),
     });
     const neighbour = new SimulatedNeighbour({
       link: remoteEnd,
@@ -55,8 +59,12 @@ export function createBoxSession(box: BoxDef, getState: () => AppState, schedule
       lineType: connection.lineType,
       name: connection.neighbourName,
       localName: box.name,
-      servesFiddleYard: !!connection.fiddleYardId,
+      servesFiddleYard: place?.kind === 'fiddleYard',
+      placeName: place?.name ?? '',
+      arrivedLabel: arrivedLabel(place, connection.neighbourName),
       locoLabel: (id) => locoLabel(getState().roster.find((l) => l.id === id)),
+      otherLines: box.connections.length - 1,
+      trainTypeOf: (id) => getState().roster.find((l) => l.id === id)?.working.trainTypeId ?? null,
     });
     return { connection, controller, neighbour };
   });

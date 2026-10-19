@@ -82,11 +82,13 @@ import {
   type Pt,
 } from '../../core/trackPlan';
 import { findLayout } from '../../core/layouts';
+import { addRoad, kindInfo, roadOfCircuit, tieRoad } from '../../core/places';
 import type { AppState, BoxDef, BoxMarker, ExitTarget, Junction, JunctionKind, Layout, MarkerBox, TrackCircuit, TrackOwner, TrackPlan } from '../../core/types';
 import { topBar, type Ctx, type Screen } from '../app';
 import { confirmButton, h, option, safeRerender, toast } from '../dom';
 import { plusIcon } from './boxConfig';
 import { layoutDetails } from './layouts';
+import { layoutPlaces } from './places';
 
 /*
  * Layout configurator: build the layout's track plan by growing it from its
@@ -109,7 +111,7 @@ const LINE_GREY = '#5f6368';
 /** Box colours on the enamel diagram (all dark enough for white text and to stand out on cream). */
 const BOX_COLOURS = ['#1f4e8c', '#b5541b', '#2e6b3a', '#6a3d8c', '#8a5a00', '#0f6b6b', '#a3271f', '#455a64'];
 
-type Tab = 'plan' | 'areas' | 'details';
+type Tab = 'plan' | 'areas' | 'places' | 'details';
 type Sel = { kind: 'circuit'; id: string } | { kind: 'junction'; id: string } | { kind: 'marker'; id: string } | null;
 type Pick =
   | { kind: 'join'; from: OpenEndRef }
@@ -147,6 +149,14 @@ const redoStack: string[] = [];
 /** The layout the undo history and selection belong to. */
 let uiLayout = '';
 const UNDO_MAX = 60;
+
+/** Forget the editor's session state (undo history, selection, zoom), e.g. when all data is reset. */
+export function resetTrackPlanUi(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  uiLayout = '';
+  Object.assign(ui, { tab: 'plan', sel: null, menu: null, pick: null, zoom: 1, zoomChosen: false, issueIdx: 0, bend: null });
+}
 
 type Hit =
   | { t: 'circuit'; id: string }
@@ -271,7 +281,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     ...layoutBoxes().flatMap((b) => b.connections.map((c) => ({ key: `remote|${b.id}|${c.id}`, box: { kind: 'remote' as const, boxId: b.id, connectionId: c.id }, label: `${c.neighbourName} (simulated, from ${b.name})` }))),
   ];
   const exitText = (to: ExitTarget) => {
-    if (to.kind === 'fiddleYard') return `To ${layout().fiddleYards.find((y) => y.id === to.yardId)?.name ?? 'fiddle yard'}`;
+    if (to.kind === 'place') return `To ${layout().places.find((y) => y.id === to.placeId)?.name ?? 'a place'}`;
     if (to.kind === 'connection') {
       const c = store.state.boxes.find((b) => b.id === to.boxId)?.connections.find((x) => x.id === to.connectionId);
       return `To ${c?.neighbourName ?? 'another box'}`;
@@ -323,18 +333,39 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         },
         label,
       );
-    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('details', 'Details'));
+    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('details', 'Details'));
+  };
+
+  /** The plan's bounds widened so the names of level exits ("To Fiddle Yard West") fit on the board too. */
+  const withExitNames = (p: TrackPlan, b: { minX: number; minY: number; maxX: number; maxY: number }, u: number, font: number) => {
+    let { minX, maxX } = b;
+    for (const c of p.circuits) {
+      c.ends.forEach((e, i) => {
+        if (e.kind !== 'exit') return;
+        const hd = endHeading(p, c, i as 0 | 1);
+        if (!hd || Math.abs(hd.dy) > Math.abs(hd.dx) * 2) return; // upright exits' names run along the line
+        const w = (24 + exitText(e.to).length * font * 0.62) / u;
+        if (hd.dx < 0) minX = Math.min(minX, e.x - w + MARGIN - 0.5);
+        else maxX = Math.max(maxX, e.x + w - MARGIN + 0.5);
+      });
+    }
+    return { ...b, minX, maxX };
   };
 
   const fit = () => {
-    const b = planBounds(plan());
+    const b0 = planBounds(plan());
     const w = boardEl.clientWidth - 8;
-    if (!b || w <= 0) {
+    if (!b0 || w <= 0) {
       ui.zoom = 1;
       return;
     }
-    const z = w / ((b.maxX - b.minX + 2 * MARGIN) * UNIT);
-    ui.zoom = clampZoom(z);
+    // Exit names do not shrink with the plan, so settle the zoom in a few steps.
+    let z = 1;
+    for (let k = 0; k < 4; k++) {
+      const b = withExitNames(plan(), b0, UNIT * z, Math.max(10, Math.round(12 * Math.min(1.4, z))));
+      z = clampZoom(w / ((b.maxX - b.minX + 2 * MARGIN) * UNIT));
+    }
+    ui.zoom = z;
     ui.zoomChosen = true;
   };
   const zoomBy = (f: number) => {
@@ -561,6 +592,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     let b = b0 ?? { minX: 0, minY: 0, maxX: 16, maxY: 8 };
     if (frozenBounds) b = { minX: Math.min(b.minX, frozenBounds.minX), minY: Math.min(b.minY, frozenBounds.minY), maxX: Math.max(b.maxX, frozenBounds.maxX), maxY: Math.max(b.maxY, frozenBounds.maxY) };
     const u = UNIT * ui.zoom;
+    b = withExitNames(p, b, u, Math.max(10, Math.round(12 * Math.min(1.4, ui.zoom))));
     const avail = Math.max(0, boardEl.clientWidth - 4) / u;
     const wUnits = Math.max(b.maxX - b.minX + 2 * MARGIN, avail);
     // Fill the board, so the grid dots reach the bottom even when zoomed out.
@@ -609,7 +641,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
           }
           const tx = X((pp[pb - 1].x + pp[pb].x) / 2);
           const ty = Y((pp[pb - 1].y + pp[pb].y) / 2);
-          platformUp = (pp[pb - 1].y + pp[pb].y) / 2 < (path[Math.min(pb, path.length - 1) - 1].y + path[Math.min(pb, path.length - 1)].y) / 2;
+          // Which side the platform is on, from its own setting (the platform is only drawn along the track's longest straight stretch).
+          platformUp = parallelSideNames(p, c.id).find((x) => x.side === c.platform!.side)?.name === 'above';
           const label = `P${c.platform.number}`;
           const tw = Math.max(22, label.length * 7.5 + 8);
           labels.push(svg('rect', { x: tx - tw / 2, y: ty - 8, width: tw, height: 16, rx: 2, fill: '#f6f1e3', stroke: '#0c0a08', 'stroke-width': 1.5 }));
@@ -824,8 +857,13 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
 
   const renderBoard = (p: TrackPlan = plan()) => {
     // Phones start further out so more of the plan fits; pinch or the buttons change it.
+    // A plan already drawn opens fitted to the board (never larger than normal size).
     if (!ui.zoomChosen && boardEl.clientWidth > 0) {
-      ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
+      const hasPlan = p.circuits.length > 0 || p.junctions.length > 0;
+      if (hasPlan) {
+        fit();
+        ui.zoom = Math.min(ui.zoom, boardEl.clientWidth < 600 ? 0.65 : 1);
+      } else ui.zoom = boardEl.clientWidth < 600 ? 0.65 : 1;
       ui.zoomChosen = true;
     }
     const empty = !p.circuits.length && !p.junctions.length && !(p.markers ?? []).length;
@@ -1594,8 +1632,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     title.id = groupId;
     let extra: HTMLElement | null = null;
     if (e.kind === 'exit') {
-      const val = e.to.kind === 'fiddleYard' ? `fy|${e.to.yardId}` : e.to.kind === 'connection' ? `conn|${e.to.boxId}|${e.to.connectionId}` : 'off';
-      const opts = [option('off', 'Off the scene', val === 'off'), ...layout().fiddleYards.map((y) => option(`fy|${y.id}`, y.name, val === `fy|${y.id}`))];
+      const val = e.to.kind === 'place' ? `fy|${e.to.placeId}` : e.to.kind === 'connection' ? `conn|${e.to.boxId}|${e.to.connectionId}` : 'off';
+      const opts = [option('off', 'Off the scene', val === 'off'), ...layout().places.map((y) => option(`fy|${y.id}`, `${y.name} (${kindInfo(y.kind).name.toLowerCase()})`, val === `fy|${y.id}`))];
       for (const b of layoutBoxes()) for (const cn of b.connections) opts.push(option(`conn|${b.id}|${cn.id}`, `Line to ${cn.neighbourName} (from ${b.name})`, val === `conn|${b.id}|${cn.id}`));
       if (e.to.kind === 'connection' && !onLayout(e.to.boxId)) opts.push(option(val, `Line to ${connOf(e.to.boxId, e.to.connectionId)?.neighbourName ?? '?'} (from ${boxName(e.to.boxId)}, not on this layout)`, true));
       extra = selectField(
@@ -1607,7 +1645,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
             on: {
               change: (ev: Event) => {
                 const [k, a, b] = (ev.target as HTMLSelectElement).value.split('|');
-                const to: ExitTarget = k === 'fy' ? { kind: 'fiddleYard', yardId: a } : k === 'conn' ? { kind: 'connection', boxId: a, connectionId: b } : { kind: 'offScene' };
+                const to: ExitTarget = k === 'fy' ? { kind: 'place', placeId: a } : k === 'conn' ? { kind: 'connection', boxId: a, connectionId: b } : { kind: 'offScene' };
                 edit((p) => setExitTarget(p, c.id, i, to));
                 renderAll();
               },
@@ -1707,6 +1745,69 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     );
   };
 
+  /**
+   * Which place's road this track circuit is (a platform of a station, a siding road, a yard road…).
+   * Arriving trains are put on roads, so tying roads to track lets the signal box (and later
+   * simulated running) know where on the plan a train stands.
+   */
+  const placeRoadSection = (c: TrackCircuit) => {
+    const lay = layout();
+    const tied = roadOfCircuit(lay, c.id);
+    const id = 'tp_placeroad';
+    const val = tied ? `r|${tied.place.id}|${tied.road.id}` : '';
+    /** A name for a new road made from this track: its platform number at a station, else its name. */
+    const suggest = (pl: { kind: string }) => (pl.kind === 'station' && c.platform ? `P${c.platform.number}` : c.name || '');
+    const sel = h(
+      'select',
+      {
+        id,
+        on: {
+          change: (ev: Event) => {
+            const [k, pid, rid] = (ev.target as HTMLSelectElement).value.split('|');
+            store.update((a) => {
+              const l = layoutIn(a);
+              if (k === 'r') tieRoad(l, pid, rid, c.id);
+              else if (k === 'new') {
+                const place = l.places.find((x) => x.id === pid);
+                const sug = place ? suggest(place) : '';
+                const free = sug && !place?.roads.some((r) => r.name.trim().toLowerCase() === sug.toLowerCase()) ? sug : undefined;
+                const road = place ? addRoad(place, free) : null;
+                if (road) tieRoad(l, pid, road.id, c.id);
+                else if (place) toast(`${place.name} already has the most roads allowed.`);
+              } else if (tied) tieRoad(l, tied.place.id, tied.road.id, '');
+            });
+          },
+        },
+      },
+      option('', 'Not a road of any place', !tied),
+      ...lay.places.map((pl) =>
+        h(
+          'optgroup',
+          { label: `${pl.name} (${kindInfo(pl.kind).name.toLowerCase()})` },
+          ...pl.roads.map((r) => {
+            const other = r.circuitId && r.circuitId !== c.id ? findCircuit(plan(), r.circuitId) : undefined;
+            return option(`r|${pl.id}|${r.id}`, `${pl.name} · ${r.name}${other ? ` (now ${other.code})` : ''}`, val === `r|${pl.id}|${r.id}`);
+          }),
+          option(`new|${pl.id}`, `+ New road in ${pl.name}${suggest(pl) ? ` (${suggest(pl)})` : ''}`),
+        ),
+      ),
+    );
+    return h(
+      'div',
+      { class: 'tp-placeroad' },
+      h('div', { class: 'field' }, h('label', { for: id }, 'Road of a place'), sel),
+      h(
+        'small',
+        { class: 'help' },
+        lay.places.length
+          ? tied
+            ? `This track is ${tied.road.name} at ${tied.place.name}. Trains put on that road stand here.`
+            : 'Make this track a platform, siding or yard road of a station or other place. Set up places in the Places tab.'
+          : 'No places yet: add stations, sidings and fiddle yards in the Places tab, then tie their roads to the track here.',
+      ),
+    );
+  };
+
   const circuitCase = (c: TrackCircuit) => {
     const p = plan();
     const els: Array<HTMLElement | null> = [];
@@ -1793,10 +1894,11 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
                   ),
                 ),
               )
-            : h('small', { class: 'help' }, 'Mark station roads with a platform as platforms and number them. The signal box will use the numbers to say where an arriving train stands.'),
+            : h('small', { class: 'help' }, 'Mark station roads with a platform as platforms and number them, so the diagram shows the platform.'),
         ),
       );
     }
+    if (ui.tab === 'plan') els.push(placeRoadSection(c));
     els.push(
       selectField(
         'tp_owner',
@@ -2437,13 +2539,17 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   const renderSide = safeRerender(() => sideEl, renderSideNow);
 
   // ---------------------------------------------------------------- everything
-  const renderDetails = safeRerender(() => detailsEl, () => detailsEl.replaceChildren(layoutDetails(ctx, layoutId)));
+  const pageTab = () => ui.tab === 'details' || ui.tab === 'places';
+  const pageContent = () => (ui.tab === 'places' ? layoutPlaces(ctx, layoutId) : layoutDetails(ctx, layoutId));
+  const renderDetails = safeRerender(() => detailsEl, () => detailsEl.replaceChildren(pageContent()));
   const renderAll = () => {
     // The layout may just have been deleted (the screen is about to be left).
     if (!findLayout(store.state, layoutId)) return;
     const title = top.querySelector('.page-board');
     if (title) title.textContent = layout().name;
-    const details = ui.tab === 'details';
+    const details = pageTab();
+    // The Places tab can use the whole width of a big screen.
+    document.body.classList.toggle('wide-page', ui.tab === 'places');
     shelfEl.hidden = details;
     detailsEl.hidden = !details;
     if (details) {
@@ -2470,16 +2576,18 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     renderAll();
   });
   ctx.onLeave(() => {
+    document.body.classList.remove('wide-page');
     unsub();
     ui.menu = null;
     ui.pick = null;
   });
 
   renderTabs();
-  if (ui.tab === 'details') {
+  document.body.classList.toggle('wide-page', ui.tab === 'places');
+  if (pageTab()) {
     shelfEl.hidden = true;
     detailsEl.hidden = false;
-    detailsEl.replaceChildren(layoutDetails(ctx, layoutId));
+    detailsEl.replaceChildren(pageContent());
   }
   renderToolbar();
   renderPickbar();
@@ -2487,11 +2595,11 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   renderSideNow();
   // The board needs its width, so draw it once the page is on screen.
   window.setTimeout(() => {
-    if (ui.tab === 'details') return;
+    if (pageTab()) return;
     renderBoard();
     if (ui.sel) scrollToSel();
   }, 0);
-  const onResize = () => ui.tab !== 'details' && renderBoard();
+  const onResize = () => !pageTab() && renderBoard();
   window.addEventListener('resize', onResize);
   ctx.onLeave(() => window.removeEventListener('resize', onResize));
 
