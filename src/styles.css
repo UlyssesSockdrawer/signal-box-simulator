@@ -384,6 +384,7 @@ details.loco > summary { cursor: pointer; padding: 12px 16px; display: flex; fle
 details.loco[open] > summary { border-bottom: 1px solid var(--line); }
 .loco-num { font-family: var(--font-display); font-weight: 700; font-size: 1.35rem; min-width: 4.5ch; }
 .loco-name { font-weight: 600; }
+.loco-class { font-weight: 500; }
 .loco-meta { color: var(--muted); font-size: 0.9rem; flex-basis: 100%; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; padding: 16px; }
 details.loco .row.end { padding: 0 16px 16px; }
@@ -2019,3 +2020,5 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .ttp-endless { border-left: 3px solid var(--brass, #c9a54e); padding-left: 10px; margin: 6px 0; }
 .ttp-e-clock { gap: 10px; align-items: flex-start; }
 .ttp-e-clock .field { flex: 1 1 8em; }
+.loco-roles { align-items: center; gap: 6px; flex-wrap: wrap; }
+.loco-roles .field-label { margin-right: 4px; }

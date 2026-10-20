@@ -35,6 +35,10 @@ export interface SectionView {
   /** arrived: the operator has reported it arrived at the far end (reported once only). */
   outgoing: { locoId: string | null; trainTypeId: string | null; departed: boolean; arrived?: boolean } | null;
   guidance: string;
+  /** The part of `guidance` about driving the train to the far end and reporting it arrived ('' if none). */
+  guidanceDrive: string;
+  /** The guidance is the idle "section is clear" kind: nothing being signalled on this line. */
+  guidanceIdle: boolean;
   /** False until the box has been opened with the far box (5-5-5). */
   boxOpen: boolean;
 }
@@ -125,6 +129,8 @@ export class SectionController {
       incoming: null,
       outgoing: null,
       guidance: '',
+      guidanceDrive: '',
+      guidanceIdle: false,
       boxOpen: false,
     };
     o.link.onMessage((m) => this.onMessage(m));
@@ -340,6 +346,8 @@ export class SectionController {
         break;
       case 'guidance':
         this.v.guidance = m.text;
+        this.v.guidanceDrive = m.drive ?? '';
+        this.v.guidanceIdle = !!m.idle;
         this.changed();
         break;
       case 'hint':

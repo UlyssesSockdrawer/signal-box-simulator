@@ -1,3 +1,4 @@
+import { jobText } from '../../core/duties';
 import { activeLayout } from '../../core/layouts';
 import { BUSYNESS, defaultGeneratorOptions, defaultLocos, generateTimetable, MIX_LEVELS, MIX_PRESETS, newSeed, onLayout, type MixCategory } from '../../core/timetableGenerator';
 import { checkTimetableName, findTimetable, fmtTime, issuesSummary, MAX_ENTRIES, MAX_SPEED, MAX_TIMETABLES, parseTime, TIMINGS, timetablesOf, walkTimetable } from '../../core/timetables';
@@ -35,7 +36,7 @@ function jobsText(st: AppState, l: Loco, layout: Layout): string {
   return l.jobs
     .map((j) => {
       const places = j.placeIds.map((id) => layout.places.find((p) => p.id === id)?.shortName || layout.places.find((p) => p.id === id)?.name).filter(Boolean);
-      return `${j.kind === 'pilot' ? 'pilot' : trainTypeName(st, j.trainTypeId).toLowerCase()}${places.length ? ` (${places.join(', ')})` : ''}`;
+      return `${jobText(st, j).toLowerCase()}${places.length ? ` (${places.join(', ')})` : ''}`;
     })
     .join('; ');
 }
@@ -68,7 +69,7 @@ export function generateScreen(ctx: Ctx, forId: string): Screen {
       'main',
       { class: 'page config-page tt-page tt-gen-page' },
       topBar(ctx, found ? `Generate ${found.tt.name} again` : 'Generate a timetable'),
-      h('p', { class: 'muted tt-sub' }, `${layout.name} · made from its places, signal boxes and the locos’ timetable jobs (set in the roster)`),
+      h('p', { class: 'muted tt-sub' }, `${layout.name} · made from its places, signal boxes and the locos’ timetable duties (set in the roster)`),
       shelf,
     ),
   };
@@ -198,7 +199,7 @@ function content(ctx: Ctx, layout: Layout, tt: Timetable | null, draw: () => voi
         ...MIX_PRESETS.map((p) => option(p.id, p.name, p === preset)),
         preset ? null : option('custom', 'My own mix', true),
       ),
-      h('small', { class: 'help' }, 'On top of how often each loco gets each of its jobs (in the roster).'),
+      h('small', { class: 'help' }, 'On top of how often each loco gets each of its duties (in the roster).'),
     ),
     h('div', { class: 'form-grid tight' }, mixLevel('passenger', 'Passenger trains'), mixLevel('goods', 'Goods trains'), mixLevel('shunting', 'Pilots and shunting')),
   );
@@ -211,7 +212,7 @@ function content(ctx: Ctx, layout: Layout, tt: Timetable | null, draw: () => voi
     'article',
     { class: 'config-case', 'aria-labelledby': 'tg_loco_plate' },
     h('span', { class: 'plate', id: 'tg_loco_plate' }, 'Locos taking part'),
-    h('p', { class: 'help' }, `Ticked: the locos on ${layout.name} with timetable jobs. A loco off the layout comes on through a fiddle yard when it is first needed.`),
+    h('p', { class: 'help' }, `Ticked: the locos on ${layout.name} with timetable duties. A loco off the layout comes on through a fiddle yard when it is first needed.`),
     candidates.length
       ? h(
           'ul',
@@ -245,7 +246,7 @@ function content(ctx: Ctx, layout: Layout, tt: Timetable | null, draw: () => voi
           }),
         )
       : h('p', { class: 'muted' }, 'No locos in the roster yet.'),
-    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom('roster', { route: genRoute(ui.forId), label: 'Generate a timetable' }) } }, 'Set jobs in the roster')),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom('roster', { route: genRoute(ui.forId), label: 'Generate a timetable' }) } }, 'Set duties in the roster')),
   );
 
   // ---- the preview

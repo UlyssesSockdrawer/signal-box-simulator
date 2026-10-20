@@ -264,8 +264,10 @@ export class SimulatedNeighbour {
     return false;
   }
 
-  private guide(text?: string): void {
-    this.send({ type: 'guidance', text: text ?? this.idleGuidance() });
+  private guide(text?: string, drive?: string): void {
+    if (text !== undefined) return this.send({ type: 'guidance', text, drive });
+    const idle = this.idleGuidance();
+    this.send({ type: 'guidance', text: idle, idle: this.opened && !this.incoming && !this.outgoing });
   }
 
   private idleGuidance(): string {
@@ -628,7 +630,7 @@ export class SimulatedNeighbour {
     const fix = m
       ? ` You described it as ${m.sent}, but it is ${m.correct} (${this.desc(m.correct)}). To correct it now: call attention (1), send 5-3, then ${m.correct}. Otherwise ${this.o.name} will report it with 5-3 when it arrives.`
       : '';
-    this.guide(`${lead} ${drive}${fix}`);
+    this.guide(`${lead} ${drive}${fix}`, drive);
   }
 
   /** The correct description sent after 5-3 for a train already in the section. */

@@ -639,7 +639,7 @@ export class TimetableRunner {
 
   private activate(it: RunItem): void {
     if (!this.resolveLoco(it)) {
-      it.status = `Waiting for a loco: none with a job for ${this.typeName(it.train?.anyWorking ?? it.entry.trainTypeId).toLowerCase()} is free${it.entry.from.placeId ? ` at ${refText(this.state, it.entry.from)}` : ''}.`;
+      it.status = `Waiting for a loco: none with the duty for ${this.typeName(it.train?.anyWorking ?? it.entry.trainTypeId).toLowerCase()} is free${it.entry.from.placeId ? ` at ${refText(this.state, it.entry.from)}` : ''}.`;
       return;
     }
     const now = this.clockNow();
@@ -1153,6 +1153,37 @@ export class TimetableRunner {
   }
 
   /** Next step guidance for a box (learner): a departure that is due and not yet offered. */
+  /**
+   * Learner guidance for a line with nothing being signalled while the timetable runs: trains come
+   * to you as they are due, so instead of "choose a train and offer it", say what is next on this line.
+   * Null when no timetable is running.
+   */
+  lineText(boxId: string, connId: string): string | null {
+    if (!this.tt || !this.started) return null;
+    const st = this.state;
+    const conn = st.boxes.find((b) => b.id === boxId)?.connections.find((c) => c.id === connId);
+    const far = conn?.neighbourName ?? 'the far box';
+    const timed = this.tt.timing !== 'sequence';
+    const lead = `Timetable${this.paused ? ' (paused)' : ''}: the section is clear. Trains are offered to you, and departures chosen for you, as they fall due.`;
+    for (const it of this.items) {
+      if (it.state !== 'waiting' && it.state !== 'active') continue;
+      if (it.state === 'active' && it.seg > 0) continue;
+      const segs = it.segs.length ? it.segs : this.segmentsFor({ ...it, locoId: it.locoId ?? 'x' });
+      const s = segs.find((x) => (x.kind === 'incoming' || x.kind === 'outgoing') ? x.boxId === boxId && x.connId === connId : x.kind === 'through' ? x.boxId === boxId && (x.fromConnId === connId || x.toConnId === connId) : false);
+      if (!s) continue;
+      const who = `${it.entry.headcode ? `${it.entry.headcode} ` : ''}${it.train?.name ?? 'a train'}${it.locoId || it.train?.locoId ? ` (${this.locoName(it.locoId ?? it.train!.locoId)})` : ''}`;
+      const when = timed && it.entry.dep !== null ? `, due at about ${fmt(it.entry.dep)}` : it.positioning ? ', first' : ` (step ${it.step})`;
+      const what =
+        s.kind === 'outgoing'
+          ? `${who} departs to ${far}${when}: it will be chosen in the Departure panel and Next step will tell you when to offer it.`
+          : s.kind === 'through' && s.toConnId === connId
+            ? `${who} runs through to ${far}${when}: offer it on once you have accepted it from ${st.boxes.find((b) => b.id === boxId)?.connections.find((c) => c.id === s.fromConnId)?.neighbourName ?? 'the line before'}.`
+            : `${who} from ${far}${when}: ${far} will offer it to you (call attention, then its Is line clear code).`;
+      return `${lead} Next on this line: ${what}`;
+    }
+    return `${lead} ${this.endless ? 'Nothing is booked on this line just yet: Endless plans more as it runs.' : 'Nothing more is booked on this line.'}`;
+  }
+
   guidance(boxId: string): { text: string; connId: string } | null {
     const st = this.state;
     const set = st.codeSets.find((c) => c.id === st.settings.codeSetId) ?? st.codeSets[0];

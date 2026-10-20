@@ -1,3 +1,4 @@
+import { canWork, migrateJob, newJob, runsLight } from './duties';
 import { findPlace, findRoad } from './places';
 import type { AppState, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableEntryKind, TimetableTiming, TimetableTrain } from './types';
 
@@ -98,9 +99,9 @@ export function trainLoco(state: AppState, train: TimetableTrain | undefined): L
   return train?.locoId ? state.roster.find((l) => l.id === train.locoId) : undefined;
 }
 
-/** Locos that can work a kind of train: those with a job for it, or (with no jobs set) those working as it now. */
+/** Locos that can work a kind of train: by their duties, or (with none set) those working as it now. Any engine runs light. */
 export function locosFor(state: AppState, trainTypeId: string): Loco[] {
-  return state.roster.filter((l) => (l.jobs?.length ? l.jobs.some((j) => j.kind === 'working' && j.trainTypeId === trainTypeId) : l.working.trainTypeId === trainTypeId));
+  return state.roster.filter((l) => canWork(state, l, trainTypeId));
 }
 
 /** "Train 3" style label with its loco: "Train 3 · 5025", or "Train 3 · any Ordinary passenger loco". */
@@ -270,10 +271,12 @@ export function thenEntry(state: AppState, layout: Layout, tt: Timetable, trainI
     e.from = { ...end };
     const place = findPlace(state, end.placeId);
     const wasLight = last?.trainTypeId === 'light_engine' || last?.kind === 'shunt';
+    // A railcar changes ends and goes back: it has no engine to release.
+    const railcar = train.anyWorking === 'railcar' || runsLight(trainLoco(state, train)) === 'ecs';
     // A train that has arrived somewhere other than a fiddle yard usually releases its engine (light
     // engine); an engine that has gone light to a siding or shed comes back light; once back at a
     // station or in a fiddle yard it works its train again.
-    const lightNext = wasLight ? place?.kind !== 'station' && place?.kind !== 'fiddleYard' : place?.kind !== 'fiddleYard';
+    const lightNext = railcar ? false : wasLight ? place?.kind !== 'station' && place?.kind !== 'fiddleYard' : place?.kind !== 'fiddleYard';
     e.trainTypeId = lightNext ? 'light_engine' : train.anyWorking || 'ordinary_passenger';
     e.kind = lightNext ? 'shunt' : 'run';
     const local = layout.places.filter((p) => p.id !== end.placeId && workedBySameBox(p, place));
@@ -376,12 +379,14 @@ export function sanitiseTimetables(state: AppState): void {
   }
   for (const l of state.roster) {
     if (!Array.isArray(l.jobs)) delete l.jobs;
-    else l.jobs = l.jobs.filter((j) => j && typeof j.id === 'string').map((j) => ({ ...j, placeIds: Array.isArray(j.placeIds) ? j.placeIds : [], weight: ([1, 2, 3] as const).includes(j.weight) ? j.weight : 2, kind: j.kind === 'pilot' ? 'pilot' : 'working' }));
+    // Jobs by kind of train (v0.3.24–25) become duties (v0.3.26); light engine jobs go (any engine runs light).
+    else l.jobs = l.jobs.filter((j) => j && typeof j === 'object').map((j) => migrateJob(state, j)).filter((j): j is LocoJob => !!j);
   }
 }
 
-export function blankJob(kind: LocoJob['kind'] = 'working', trainTypeId = 'ordinary_passenger'): LocoJob {
-  return { id: newId('job'), kind, trainTypeId: kind === 'pilot' ? 'light_engine' : trainTypeId, placeIds: [], weight: 2 };
+/** A new job for the roster: a duty, any working in it, anywhere. */
+export function blankJob(duty: LocoJob['duty'] = 'stopping'): LocoJob {
+  return newJob(duty);
 }
 
 // ---------------------------------------------------------------- routes
@@ -564,7 +569,7 @@ export function walkTimetable(state: AppState, layout: Layout, tt: Timetable): T
     if (train.locoId && !trainLoco(state, train)) trainIssue(train.id, { level: 'error', code: 'noLoco', text: 'Its loco is no longer in the roster. Choose another.' });
     if (!train.locoId && !locosFor(state, train.anyWorking).length) {
       const tn = state.trainTypes.find((t) => t.id === train.anyWorking)?.name ?? 'this kind of train';
-      trainIssue(train.id, { level: 'error', code: 'noSuitableLoco', text: `No loco in the roster has a job for ${tn.toLowerCase()}. Give one that job in the roster, or choose a loco.` });
+      trainIssue(train.id, { level: 'error', code: 'noSuitableLoco', text: `No loco in the roster has the duty for ${tn.toLowerCase()}. Give one that duty in the roster, or choose a loco.` });
     }
   }
   // Starting positions: where each unit's first move begins.

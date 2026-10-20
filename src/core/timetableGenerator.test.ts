@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultState } from './defaults';
 import { createBectonState } from './testState';
+import { dutyOf } from './duties';
 import { defaultGeneratorOptions, generateTimetable, MIX_PRESETS, TimetableGenerator, jobCategory } from './timetableGenerator';
 import { walkTimetable } from './timetables';
 import type { AppState, GeneratorOptions } from './types';
@@ -11,10 +12,10 @@ const opts = (o: Partial<GeneratorOptions>): GeneratorOptions => ({ ...defaultGe
 function becton(): AppState {
   const s = createBectonState();
   const [a, b, c, d] = s.roster;
-  a.jobs = [{ id: 'j1', kind: 'working', trainTypeId: 'ordinary_passenger', placeIds: ['fy1', 'becton-station'], weight: 3 }];
-  b.jobs = [{ id: 'j2', kind: 'working', trainTypeId: 'branch_passenger', placeIds: [], weight: 2 }];
-  c.jobs = [{ id: 'j3', kind: 'working', trainTypeId: 'pickup_goods', placeIds: ['fy1', 'becton-sidings'], weight: 2 }];
-  d.jobs = [{ id: 'j4', kind: 'pilot', trainTypeId: 'light_engine', placeIds: ['becton-sidings', 'becton-station'], weight: 2 }];
+  a.jobs = [{ id: 'j1', duty: 'stopping', trainTypeId: '', placeIds: ['fy1', 'becton-station'], weight: 3 }];
+  b.jobs = [{ id: 'j2', duty: 'stopping', trainTypeId: 'branch_passenger', placeIds: [], weight: 2 }];
+  c.jobs = [{ id: 'j3', duty: 'pickup', trainTypeId: '', placeIds: ['fy1', 'becton-sidings'], weight: 2 }];
+  d.jobs = [{ id: 'j4', duty: 'pilot', trainTypeId: '', placeIds: ['becton-sidings', 'becton-station'], weight: 2 }];
   d.homePlaceId = 'becton-sidings';
   return s;
 }
@@ -80,7 +81,10 @@ describe('timetable generator', () => {
       for (let seed = 1; seed <= 20; seed++) {
         const s = createDefaultState();
         const r = generateTimetable(s, s.layouts[0], opts({ seed, mix, length: 30 }), 'G').tt;
-        for (const t of r.trains) tally[jobCategory({ kind: t.name.startsWith('Pilot') ? 'pilot' : 'working', trainTypeId: t.anyWorking })]++;
+        for (const t of r.trains) {
+          if (t.name.startsWith('Light engine')) continue; // going home at the end
+          tally[t.name.startsWith('Pilot') ? 'shunting' : jobCategory({ duty: dutyOf(s, t.anyWorking) ?? 'goods', trainTypeId: t.anyWorking }, s)]++;
+        }
       }
       return tally;
     };

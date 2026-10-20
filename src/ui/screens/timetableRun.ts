@@ -79,7 +79,7 @@ function endlessFields(redraw: () => void): HTMLElement {
       h('label', { for: 'ttp_e_mix' }, 'Traffic mix'),
       h('select', { id: 'ttp_e_mix', on: { change: (e: Event) => { const p = MIX_PRESETS.find((x) => x.id === (e.target as HTMLSelectElement).value); if (p) o.mix = { ...p.mix }; } } }, ...MIX_PRESETS.map((p) => option(p.id, p.name, p === preset)), preset ? null : option('custom', 'My own mix', true)),
     ),
-    h('small', { class: 'help' }, `Trains are made up as it runs from the locos’ timetable jobs (set in the roster): ${o.timing === 'sequence' ? 'six moves are always lined up ahead' : 'everything due in the next 15 minutes is planned'}. It runs until you stop it, and you can keep what has run as a timetable.`),
+    h('small', { class: 'help' }, `Trains are made up as it runs from the locos’ timetable duties (set in the roster): ${o.timing === 'sequence' ? 'six moves are always lined up ahead' : 'everything due in the next 15 minutes is planned'}. It runs until you stop it, and you can keep what has run as a timetable.`),
   );
 }
 
@@ -432,7 +432,7 @@ function startDialog(ctx: Ctx, layout: Layout, r: TimetableRunner, tt: Timetable
 function startEndless(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
   const { tt, gen } = makeEndless(ctx, layout);
   if (!gen.units.length) {
-    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable jobs in the roster.');
+    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable duties in the roster.');
     return;
   }
   r.loadEndless(tt, gen);
@@ -445,7 +445,7 @@ function switchEndless(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
   const now = r.clockNow();
   const { tt, gen } = makeEndless(ctx, layout, r.positionsAfterUnderWay(), now !== null ? Math.ceil(now) : undefined);
   if (!gen.units.length) {
-    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable jobs in the roster.');
+    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable duties in the roster.');
     return;
   }
   confirmDialog({

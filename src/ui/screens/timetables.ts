@@ -922,7 +922,7 @@ function trainCase(ctx: Ctx, layout: Layout, tt: Timetable, t: TimetableTrain, w
     h('span', { class: 'pl-summary' }, `${plural(moves.length, 'move')} · ${pathText}${issues.length + moveIssues ? ` · ${plural(issues.length + moveIssues, 'thing')} to check` : ''}`),
   );
   const locoOptions = [
-    option('', 'Any loco with a job for…', !t.locoId),
+    option('', 'Any loco with the duty for…', !t.locoId),
     ...[...st.roster].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })).map((l) => option(l.id, `${locoFullName(l)}`, l.id === t.locoId)),
     ...(t.locoId && !st.roster.some((l) => l.id === t.locoId) ? [option(t.locoId, 'A loco no longer in the roster', true)] : []),
   ];
@@ -942,7 +942,7 @@ function trainCase(ctx: Ctx, layout: Layout, tt: Timetable, t: TimetableTrain, w
             { class: 'field' },
             h('label', { for: `tt_tany_${t.id}` }, 'Job'),
             h('select', { id: `tt_tany_${t.id}`, on: { change: (ev: Event) => editT((x) => (x.anyWorking = (ev.target as HTMLSelectElement).value)) } }, ...workingOptions(st, t.anyWorking)),
-            h('small', { class: 'help' }, suitable.length ? `Chosen when it runs from: ${suitable.map(locoName).join(', ')}.` : 'No loco has this job yet: give locos jobs in the roster.'),
+            h('small', { class: 'help' }, suitable.length ? `Chosen when it runs from: ${suitable.map(locoName).join(', ')}.` : 'No loco has this duty yet: give locos duties in the roster.'),
           )
         : null,
       checkedInput(`tt_tcons_${t.id}`, 'Consist', t.consist, 60, () => null, (v) => editT((x) => (x.consist = v)), { placeholder: 'e.g. 4 coaches' }),

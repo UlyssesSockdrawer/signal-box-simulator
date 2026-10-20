@@ -229,7 +229,7 @@ joined by junctions. The plan starts empty: build your own.
 ## Timetables, part 3: generated and Endless timetables, headcode eras (v0.3.26)
 
 **Generate a timetable** (on the Timetables screen) makes one for you from the layout's places,
-the signal boxes that work them and the lines between, and the roster locos' **timetable jobs**:
+the signal boxes that work them and the lines between, and the roster locos' **timetable duties**:
 
 * **What it builds:** through runs from one fiddle yard to another, passing (expresses, goods) or
   calling at (stopping trains) the stations between; trains into a station that turn round, the
@@ -243,13 +243,13 @@ the signal boxes that work them and the lines between, and the roster locos' **t
   how long (moves, or minutes); how busy (quiet, steady, busy); the **traffic mix** (passenger,
   goods, pilots and shunting: none / a little / normal / lots, or a preset such as Busy passenger or
   Mostly goods), on top of how often each loco gets each job; which locos take part (by default
-  those on the layout with jobs); and a **pattern** number (the same pattern and options make the
+  those on the layout with duties); and a **pattern** number (the same pattern and options make the
   same timetable; Try another for a different one). A preview shows what it would make.
 * It saves as an ordinary timetable. A generated timetable's Settings tab has **Generate again…**
   with its options filled in (replace it, or save a new one).
 
 **Endless** (in a box's Timetable panel, top of the list) makes the timetable up as it runs, from
-the same jobs: on a clock everything due in the next **15 minutes** is planned, in an operations
+the same duties: on a clock everything due in the next **15 minutes** is planned, in an operations
 sequence **six moves** are always lined up beyond those under way. Locos with nothing booked are
 picked up from where they really are. It runs until stopped; **Keep this as a timetable** saves what
 it has made. You can switch between Endless and other timetables on the fly.
@@ -272,11 +272,25 @@ had their own variations (the Southern used route discs): these are the standard
 
 The tutorial has a new section 9 on timetables.
 
+**Timetable duties** (roster) replace jobs by kind of train. A loco is given duties: **express
+passenger**, **stopping passenger** (ordinary and branch), **parcels and empty stock**, **express
+goods** (the fitted and express freights), **through goods and mineral**, **pick-up and branch
+goods**, **station pilot**, and **railcar services**, each between the places ticked and sometimes,
+often or mostly. A duty covers all its workings: **Runs as** can pin one ("Mineral only"), or be left
+to any, and the generator picks a suitable one. **Roles** fill in a set in one click: Express
+passenger, Mixed traffic (anything, like a Black Five), Local passenger, Goods, Shunter / pilot,
+Railcar / DMU. Light engine and engine-and-brake-van moves need no duty: any engine makes them (the
+generator sends goods engines to fetch their trains with a brake van). **Railcars** (power DMU) work
+railcar services only, run empty instead of light, and change ends at a terminus instead of running
+round. Old jobs become duties when loaded; light engine jobs are dropped. The roster shows each
+loco's number, name and class, and its duties.
+
 **Bigger example roster:** Sigsim Central now starts with eight engines, adding 5690 *Leander*
-(Jubilee, express passenger and parcels), 2700 (Crab, express goods and some passenger), 542 (ex-MR
-483 Class 2P, stopping trains and empty stock) and 3436 (ex-MR Johnson 3F, pick-up goods and coal),
-each with timetable jobs. Both fiddle yards have six roads. Existing saves keep their own roster:
-**Settings → Reset to defaults** brings in the new example (and replaces everything else).
+(Jubilee: expresses and parcels), 2700 (Crab: mixed traffic, mostly goods), 542 (ex-MR 483 Class 2P:
+stopping trains, parcels and empty stock) and 3436 (ex-MR Johnson 3F: pick-up goods and coal). The
+Black Five is mixed traffic: passenger or goods. Both fiddle yards have six roads. Existing saves
+keep their own roster: **Settings → Reset to defaults** brings in the new example (and replaces
+everything else).
 
 ## Timetables, part 2: running a timetable in the box (v0.3.25)
 
@@ -558,7 +572,8 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
   timetables.ts        Timetables: trains and moves, routes through the boxes, checks, stock positions, poster tables
   timetableRunner.ts   Running a timetable: releasing moves, working them through the boxes, stepping, switching, Endless
-  timetableGenerator.ts Generating timetables from loco jobs (Generate, and Endless as it runs)
+  timetableGenerator.ts Generating timetables from loco duties (Generate, and Endless as it runs)
+  duties.ts            Loco duties, roles, railcars; which locos can work which trains
   headcodes.ts         Headcode eras: lamp codes, reporting numbers, 1960 four-character headcodes
   throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
   referee.ts           Puts each line's points on the box's scorecard; clean working judged per train

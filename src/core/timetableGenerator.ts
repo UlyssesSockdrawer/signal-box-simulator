@@ -1,7 +1,7 @@
 // THE TIMETABLE GENERATOR (v0.3.26). Builds a timetable for a layout from what it knows: the
 // layout's places and roads, the signal boxes that work them and the lines between, and the locos
-// on the roster with their target jobs (the kinds of train they work, between which places, and how
-// often). Used two ways:
+// on the roster with their target jobs (their duties, between which places, and how often; see
+// duties.ts). Used two ways:
 //   - Generate: a whole timetable at once, saved like any other and editable afterwards.
 //   - Endless: the runner asks for a little more at a time while a session runs (see extend()).
 //
@@ -18,6 +18,7 @@
 // timetable never sends two trains at each other. At the end, locos go home (or to a fiddle yard).
 // The result walks through the editor's checks with no problems.
 
+import { dutyOf, jobCategory as dutyCategory, isRailcar, pickWorking, runsLight, type MixCategory } from './duties';
 import { HeadcodeAllocator, destinationOf, eraOf } from './headcodes';
 import { routeBetween, type RouteLeg, type TtPos } from './timetables';
 import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTrain } from './types';
@@ -26,7 +27,7 @@ import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place
 // Options
 // ---------------------------------------------------------------------------
 
-export type MixCategory = 'passenger' | 'goods' | 'shunting';
+export type { MixCategory };
 
 export const MIX_PRESETS: Array<{ id: string; name: string; mix: GeneratorOptions['mix'] }> = [
   { id: 'balanced', name: 'A bit of everything', mix: { passenger: 2, goods: 2, shunting: 2 } },
@@ -48,9 +49,9 @@ export const BUSYNESS: Array<{ id: Busyness; name: string; gap: number; help: st
 const COACHING = new Set(['express_passenger', 'ordinary_passenger', 'branch_passenger', 'railcar', 'parcels', 'ecs']);
 const STOPPING = new Set(['ordinary_passenger', 'branch_passenger', 'railcar', 'pickup_goods', 'branch_freight']);
 
-export function jobCategory(j: Pick<LocoJob, 'kind' | 'trainTypeId'>): MixCategory {
-  if (j.kind === 'pilot' || j.trainTypeId === 'light_engine' || j.trainTypeId === 'engine_brake_van') return 'shunting';
-  return COACHING.has(j.trainTypeId) ? 'passenger' : 'goods';
+/** The traffic-mix category of a loco's job (passenger, goods, or shunting for a pilot). */
+export function jobCategory(j: Pick<LocoJob, 'duty' | 'trainTypeId'>, state: AppState | null = null): MixCategory {
+  return dutyCategory(state, j);
 }
 
 /** Whether a loco is on this layout (in one of its places, at or between its boxes). */
@@ -224,11 +225,16 @@ export class TimetableGenerator {
     this.placeMap = new Map(layout.places.map((p) => [p.id, p]));
     const chosen = opts.locoIds.length ? state.roster.filter((l) => opts.locoIds.includes(l.id)) : defaultLocos(state, layout);
     for (const loco of chosen) this.addUnit(loco, start?.get(loco.id));
-    if (!this.units.length) this.notes.push('No locos are taking part: give some locos on the layout timetable jobs in the roster, or choose locos.');
+    if (!this.units.length) this.notes.push('No locos are taking part: give some locos on the layout timetable duties in the roster, or choose locos.');
   }
 
   private addUnit(loco: Loco, at?: { pos: TtPos; freeAt: number }): void {
-    const jobs: LocoJob[] = (loco.jobs?.length ? loco.jobs : [{ id: 'job-now', kind: 'working', trainTypeId: loco.working.trainTypeId, placeIds: [], weight: 2 } as LocoJob])
+    // A loco with no jobs works as it is working now (if that belongs to a duty).
+    const now = dutyOf(this.state, loco.working.trainTypeId);
+    const own: LocoJob[] = loco.jobs?.length ? loco.jobs : now ? [{ id: 'job-now', duty: now, trainTypeId: loco.working.trainTypeId, placeIds: [], weight: 2 }] : [];
+    const jobs: LocoJob[] = own
+      // A railcar works railcar services only; nothing else works them.
+      .filter((j) => (isRailcar(loco) ? j.duty === 'railcar' : j.duty !== 'railcar'))
       // Jobs between places on other layouts are not for this one.
       .filter((j) => !j.placeIds.length || j.placeIds.some((id) => this.placeMap.has(id)))
       .map((j) => ({ ...j, placeIds: j.placeIds.filter((id) => this.placeMap.has(id)) }))
@@ -241,7 +247,7 @@ export class TimetableGenerator {
     const home = loco.homePlaceId && this.placeMap.has(loco.homePlaceId) ? loco.homePlaceId : pos.kind === 'place' ? pos.placeId : '';
     const u: Unit = { loco, jobs, home, pos, freeAt: Math.max(this.t0, at?.freeAt ?? this.t0), hold: null, holdKey: '', chains: 0 };
     if (!jobs.length) {
-      this.notes.push(`${locoLabel(loco)} has no jobs in the traffic mix chosen, so it stays where it is.`);
+      this.notes.push(`${locoLabel(loco)} has no duties in the traffic mix chosen, so it stays where it is.`);
       return;
     }
     if (pos.kind === 'place') {
@@ -270,8 +276,8 @@ export class TimetableGenerator {
     return this.placeMap.get(id)?.name ?? 'a place';
   }
 
-  private mixWeight(j: Pick<LocoJob, 'kind' | 'trainTypeId'>): number {
-    return this.opts.mix[jobCategory(j)] ?? 0;
+  private mixWeight(j: Pick<LocoJob, 'duty' | 'trainTypeId'>): number {
+    return this.opts.mix[jobCategory(j, this.state)] ?? 0;
   }
 
   // ------------------------------------------------------------------ intervals
@@ -380,6 +386,7 @@ export class TimetableGenerator {
     const signalled = legs.some((l) => l.kind === 'line');
     if (kind === 'shunt' && signalled) kind = 'run';
     if (kind === 'run' && !signalled && legs.length) kind = 'shunt';
+    if (kind === 'shunt' && trainTypeId === 'engine_brake_van') trainTypeId = 'light_engine';
     let timed: { arr: number; calls: TimetableCall[] };
     try {
       timed = legs.length ? this.timeRoute(legs, dep, STOPPING.has(trainTypeId), draft, u.loco.id) : { arr: dep + LOCAL_MIN + 2, calls: [] };
@@ -430,7 +437,7 @@ export class TimetableGenerator {
   /** Where a job can go: its places, else every fiddle yard and the places that suit the work. */
   private jobPlaces(j: LocoJob): string[] {
     if (j.placeIds.length) return j.placeIds;
-    const cat = jobCategory(j);
+    const cat = jobCategory(j, this.state);
     return this.layout.places
       .filter((p) => (cat === 'passenger' ? p.kind === 'fiddleYard' || p.kind === 'station' : cat === 'goods' ? p.kind === 'fiddleYard' || p.kind === 'goods' || p.kind === 'sidings' : p.kind !== 'fiddleYard'))
       .map((p) => p.id);
@@ -462,8 +469,8 @@ export class TimetableGenerator {
    * Plan a chain for a loco and one of its jobs, starting at `t`. Null when the job cannot be worked
    * from here (no route, no free road); throws Conflict when a line is booked (try later).
    */
-  private planChain(u: Unit, j: LocoJob, t: number): Draft | null {
-    const draft = this.newDraft(u, j.kind === 'pilot' ? 'light_engine' : j.trainTypeId);
+  private planChain(u: Unit, j: LocoJob, working: string, t: number): Draft | null {
+    const draft = this.newDraft(u, working);
     const places = this.jobPlaces(j).filter((id) => this.placeMap.has(id));
     if (!places.length) return null;
     // On to the layout first, into a fiddle yard.
@@ -476,23 +483,27 @@ export class TimetableGenerator {
       const to = { placeId: yard, roadId };
       const hold = { from: t - 0.5, to: INF, owner: u.loco.id };
       draft.roads.push({ key: roadKey(to), iv: hold });
-      draft.moves.push({ kind: 'enter', trainTypeId: j.kind === 'pilot' ? 'light_engine' : j.trainTypeId, from: { placeId: '', roadId: '' }, to, dep: t, arr: t + 2, calls: [], notes: 'Comes on to the layout from storage.' });
+      draft.moves.push({ kind: 'enter', trainTypeId: j.duty === 'pilot' ? runsLight(u.loco) : working, from: { placeId: '', roadId: '' }, to, dep: t, arr: t + 2, calls: [], notes: 'Comes on to the layout from storage.' });
       draft.end = { kind: 'place', ...to };
       draft.endKey = roadKey(to);
       draft.endHold = hold;
       t += 4;
     }
     const here = () => (draft.end as { placeId: string }).placeId;
-    // Positioning: a light engine to where the job starts.
+    // Positioning to where the job starts: any engine runs light (or with a brake van, to fetch a
+    // goods train); a railcar runs empty.
     if (!places.includes(here())) {
       const target = this.nearest(here(), places);
       if (!target) return null;
-      const m = this.move(draft, u, 'run', 'light_engine', target, t, INF, `Light engine to ${this.placeName(target)} for its next job.`);
+      const light = runsLight(u.loco);
+      const type = light === 'ecs' ? 'ecs' : jobCategory(j, this.state) === 'goods' ? 'engine_brake_van' : 'light_engine';
+      const why = type === 'ecs' ? `Runs empty to ${this.placeName(target)} for its next service.` : type === 'engine_brake_van' ? `Engine and brake van to ${this.placeName(target)}, to fetch its train.` : `Light engine to ${this.placeName(target)} for its next job.`;
+      const m = this.move(draft, u, 'run', type, target, t, INF, why);
       if (!m) return null;
       t = m.arr + 3;
     }
-    if (j.kind === 'pilot') return this.pilotChain(u, draft, places, t);
-    return this.workingChain(u, j, draft, places, t);
+    if (j.duty === 'pilot') return this.pilotChain(u, draft, places, t);
+    return this.workingChain(u, working, draft, places, t);
   }
 
   private pilotChain(u: Unit, draft: Draft, places: string[], t: number): Draft | null {
@@ -522,9 +533,8 @@ export class TimetableGenerator {
     return draft;
   }
 
-  private workingChain(u: Unit, j: LocoJob, draft: Draft, places: string[], t: number): Draft | null {
+  private workingChain(u: Unit, type: string, draft: Draft, places: string[], t: number): Draft | null {
     const o = (draft.end as { placeId: string }).placeId;
-    const type = j.trainTypeId;
     const cands = places.filter((id) => id !== o && routeBetween(this.state, this.layout, o, id)?.some((l) => l.kind === 'line'));
     // Prefer fiddle yard to fiddle yard for through trains; otherwise anywhere it can go.
     const dests = cands.map((id) => ({ id, k: this.rng() })).sort((a, b) => a.k - b.k).map((x) => x.id);
@@ -550,6 +560,15 @@ export class TimetableGenerator {
     // Into a station or goods yard, then back.
     const back = this.isYard(o) ? (this.rng() < 0.7 ? o : (this.pick(places.filter((id) => this.isYard(id) && id !== d)) ?? o)) : o;
     const passenger = COACHING.has(type) && pd.kind === 'station';
+    if (passenger && isRailcar(u.loco)) {
+      // A railcar has a cab at each end: the driver changes ends and it goes back.
+      const m1 = this.move(draft, u, 'run', type, d, t, INF);
+      if (!m1) return false;
+      const m2 = this.move(draft, u, 'run', type, back, m1.arr + 5 + Math.floor(this.rng() * 5), INF, 'The driver changes ends.');
+      if (!m2) return false;
+      draft.notes = `To ${dName}, where the driver changes ends, and back to ${this.placeName(back)}.`;
+      return true;
+    }
     if (passenger) {
       // The coaches stand in the platform until the train leaves again (we do not know when yet).
       const m1 = this.move(draft, u, 'run', type, d, t, INF);
@@ -639,9 +658,12 @@ export class TimetableGenerator {
           if (r < 0) break;
         }
         const c = cands.splice(k, 1)[0];
-        const draft = this.planWithRetry(c.u, c.j, Math.max(this.now, c.u.freeAt));
+        // The working this time: the job's own, or one of its duty's.
+        const working = pickWorking(this.state, c.j, this.rng);
+        if (!working) continue;
+        const draft = this.planWithRetry(c.u, c.j, working, Math.max(this.now, c.u.freeAt));
         if (draft) {
-          this.commit(c.u, c.j, draft);
+          this.commit(c.u, c.j.duty === 'pilot', working, draft);
           return true;
         }
       }
@@ -651,7 +673,7 @@ export class TimetableGenerator {
     return false;
   }
 
-  private planWithRetry(u: Unit, j: LocoJob, t: number): Draft | null {
+  private planWithRetry(u: Unit, j: LocoJob, working: string, t: number): Draft | null {
     const keep = u.hold?.to ?? 0;
     const putBack = () => {
       if (u.hold) u.hold.to = keep;
@@ -659,7 +681,7 @@ export class TimetableGenerator {
     for (let i = 0; i < 8; i++) {
       let d: Draft | null = null;
       try {
-        d = this.planChain(u, j, t);
+        d = this.planChain(u, j, working, t);
       } catch (e) {
         putBack();
         if (!(e instanceof Conflict)) throw e;
@@ -673,7 +695,7 @@ export class TimetableGenerator {
     return null;
   }
 
-  private commit(u: Unit, j: LocoJob, d: Draft): void {
+  private commit(u: Unit, pilot: boolean, working: string, d: Draft): void {
     if (!d.moves.length) return;
     const first = d.moves[0];
     for (const r of d.roads) this.addIv(this.roads, r.key, r.iv);
@@ -684,8 +706,7 @@ export class TimetableGenerator {
     u.pos = d.end;
     u.freeAt = Math.max(d.freeAt, d.moves[d.moves.length - 1].arr) + 2;
     u.chains++;
-    const working = j.kind === 'pilot' ? 'light_engine' : j.trainTypeId;
-    const base = j.kind === 'pilot' ? 'Pilot' : (TRAIN_NAMES[working] ?? this.state.trainTypes.find((x) => x.id === working)?.name ?? 'Train');
+    const base = pilot ? 'Pilot' : working === 'ecs' && isRailcar(u.loco) ? 'Empty railcar' : (TRAIN_NAMES[working] ?? this.state.trainTypes.find((x) => x.id === working)?.name ?? 'Train');
     const n = (this.names.get(base) ?? 0) + 1;
     this.names.set(base, n);
     const train: TimetableTrain = {
@@ -712,13 +733,14 @@ export class TimetableGenerator {
       if (at === u.home || this.isYard(at)) continue;
       const targets = [u.home, ...this.yards().map((p) => p.id)].filter(Boolean);
       for (const target of targets) {
-        let draft = this.newDraft(u, 'light_engine');
+        const light = runsLight(u.loco);
+        let draft = this.newDraft(u, light);
         let m: Move | null = null;
         let at = Math.max(t, u.freeAt);
         for (let i = 0; i < 6; i++) {
-          draft = this.newDraft(u, 'light_engine');
+          draft = this.newDraft(u, light);
           try {
-            m = this.move(draft, u, 'run', 'light_engine', target, at, INF, target === u.home ? 'Home at the end of the session.' : 'Away to the fiddle yard at the end of the session.');
+            m = this.move(draft, u, 'run', light, target, at, INF, target === u.home ? 'Home at the end of the session.' : 'Away to the fiddle yard at the end of the session.');
             break;
           } catch (e) {
             if (!(e instanceof Conflict)) throw e;
@@ -726,8 +748,8 @@ export class TimetableGenerator {
           }
         }
         if (!m) continue;
-        draft.notes = 'Light engine home at the end of the session.';
-        this.commit(u, { id: 'home', kind: 'working', trainTypeId: 'light_engine', placeIds: [], weight: 1 }, draft);
+        draft.notes = light === 'ecs' ? 'Runs empty home at the end of the session.' : 'Light engine home at the end of the session.';
+        this.commit(u, false, light, draft);
         break;
       }
     }
@@ -857,6 +879,6 @@ export function generateTimetable(state: AppState, layout: Layout, opts: Generat
     toSequence(tt.entries, (e) => unit.get(e.trainId) ?? e.trainId);
   }
   const notes = [...gen.notes];
-  if (gen.units.length && !tt.entries.length) notes.push('No moves could be found: check the locos’ jobs name places on this layout that signal boxes connect.');
+  if (gen.units.length && !tt.entries.length) notes.push('No moves could be found: check the locos’ duties name places on this layout that signal boxes connect.');
   return { tt, notes };
 }

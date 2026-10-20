@@ -82,15 +82,18 @@ export interface Loco {
   homePlaceId?: string;
 }
 
+/** The kinds of work a loco is given in timetables (v0.3.26). See core/duties.ts. */
+export type DutyId = 'express' | 'stopping' | 'parcels' | 'expressGoods' | 'goods' | 'pickup' | 'pilot' | 'railcar' | 'other';
+
 /**
- * A target timetable job for a loco: a kind of train it works (between the places listed), or
- * station pilot / shunter duty in the places listed. Used to find "any loco for …" in a timetable
- * and, later, to build timetables automatically.
+ * A target timetable job for a loco: a duty (express passenger, express goods, station pilot…)
+ * between the places listed (where it shunts, for a pilot). Used to find "any loco for …" in a
+ * timetable and by the timetable generator. Light engine moves need no job: any engine makes them.
  */
 export interface LocoJob {
   id: string;
-  kind: 'working' | 'pilot';
-  /** The kind of train it works on this job (TrainType id). Pilots shunt as light engine. */
+  duty: DutyId;
+  /** One working within the duty (TrainType id), or '' for any of them (the generator chooses). */
   trainTypeId: string;
   /** Places it runs to and from on this job (or shunts, for a pilot). Empty = anywhere. */
   placeIds: string[];
@@ -163,7 +166,7 @@ export interface TimetableTrain {
   id: string;
   /** e.g. "Train 3", or a name such as "The Mid-day Scot". */
   name: string;
-  /** The roster loco that works it; '' = any loco with a job for `anyWorking`, chosen when it runs. */
+  /** The roster loco that works it; '' = any loco with the duty for `anyWorking`, chosen when it runs. */
   locoId: string;
   anyWorking: string;
   /** e.g. "4 coaches". */

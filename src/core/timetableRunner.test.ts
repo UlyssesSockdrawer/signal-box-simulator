@@ -99,6 +99,8 @@ describe('timetable runner', () => {
     const t = setup();
     t.runner.load(t.tt('tt-sgc-sequence'));
     t.runner.start();
+    // Learner prompts for a quiet line say what the timetable brings next on it.
+    expect(t.runner.lineText('sigsim-central', 'sgc-east')).toMatch(/Next on this line: 1E01 The Express .* runs through to Fiddle Yard East \(step 1\): offer it on once you have accepted it from Fiddle Yard West/);
     // Step 1: the express is offered by Fiddle Yard West and routed through to the east.
     expect(t.west.view.incoming).toMatchObject({ locoId: 'lms6233', trainTypeId: 'express_passenger' });
     expect(t.workings.route('sgc-west')).toBe('sgc-east');
@@ -328,6 +330,13 @@ describe('timetable runner', () => {
     expect(t.east.view.outgoing?.departed).toBe(true);
     expect(t.runner.autoArrivalAt('sigsim-central', 'sgc-east')).not.toBeNull();
     expect(t.runner.items[0].status).toMatch(/simulated operator reports it arrived/);
+    // The far box's "drive it in and press Arrived" part of the learner prompt is marked, so the box
+    // can say the simulated operator does it instead.
+    expect(t.east.view.guidanceDrive).toMatch(/press "Arrived/);
+    expect(t.east.view.guidance).toContain(t.east.view.guidanceDrive);
+    // The quiet west line says what is next there, not "choose a train and offer it".
+    expect(t.west.view.guidanceIdle).toBe(true);
+    expect(t.runner.lineText('sigsim-central', 'sgc-west')).toMatch(/^Timetable: the section is clear/);
     t.tick(9000);
     expect(t.east.view.outgoing?.arrived).toBe(true);
     t.tick(5000);

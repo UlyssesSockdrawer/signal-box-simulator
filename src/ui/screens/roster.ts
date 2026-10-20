@@ -1,14 +1,31 @@
 import { activeLayout, findLayout } from '../../core/layouts';
 import { placesWorkedBy } from '../../core/places';
 import { newId } from '../../core/store';
+import { applyRole, dutiesFor, dutyInfo, dutyOf, dutyTypes, isRailcar, rolesFor, type RoleInfo } from '../../core/duties';
 import { blankJob } from '../../core/timetables';
-import type { AppState, Location, Loco, LocoJob } from '../../core/types';
-import { activeCodeSet, locationText, topBar, trainTypeName, type Ctx, type Screen } from '../app';
-import { confirmButton, field, h, option } from '../dom';
+import type { AppState, DutyId, Location, Loco, LocoJob } from '../../core/types';
+import { activeCodeSet, locationText, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
+import { confirmButton, confirmDialog, field, h, option } from '../dom';
+
+const WEIGHT: Record<number, string> = { 1: 'sometimes', 2: 'often', 3: 'mostly' };
 
 const POWER_TYPES = ['Steam (tender)', 'Steam (tank)', 'Diesel', 'DMU', 'Electric', 'Other'];
 
 let openId: string | null = null;
+
+/** Changing to or from a DMU changes what it can work: a railcar works railcar services only. */
+function setPower(l: Loco, power: string): void {
+  const was = l.powerType === 'DMU';
+  l.powerType = power;
+  const now = power === 'DMU';
+  if (now && !was) {
+    if (l.jobs?.length) l.jobs = l.jobs.some((j) => j.duty === 'railcar') ? l.jobs.filter((j) => j.duty === 'railcar') : [blankJob('railcar')];
+    if (l.working.trainTypeId !== 'ecs') l.working.trainTypeId = 'railcar';
+  } else if (was && !now) {
+    if (l.jobs) l.jobs = l.jobs.filter((j) => j.duty !== 'railcar');
+    if (l.working.trainTypeId === 'railcar') l.working.trainTypeId = 'ordinary_passenger';
+  }
+}
 
 /** Encode a Location as a select value. */
 /** Forget which roster entry was open, e.g. when all data is reset. */
@@ -89,8 +106,10 @@ export function rosterScreen(ctx: Ctx): Screen {
         'summary',
         null,
         h('span', { class: 'loco-num' }, l.number || '—'),
-        h('span', { class: 'loco-name' }, l.name || l.locoClass || '(unnamed)'),
-        h('span', { class: 'loco-meta' }, `DCC ${l.dccAddress || '—'} · ${trainTypeName(st, l.working.trainTypeId)} · ${locationText(st, l)}${l.jobs?.length ? ` · ${l.jobs.length} timetable job${l.jobs.length === 1 ? '' : 's'}` : ''}`),
+        // Number, then name (if it has one) and class, the same way for every loco.
+        l.name ? h('span', { class: 'loco-name' }, `“${l.name}”`) : null,
+        h('span', { class: 'loco-class' }, l.locoClass || (l.name ? '' : '(no class given)')),
+        h('span', { class: 'loco-meta' }, `DCC ${l.dccAddress || '—'} · ${trainTypeName(st, l.working.trainTypeId)} · ${locationText(st, l)}${l.jobs?.length ? ` · ${[...new Set(l.jobs.map((j) => dutyInfo(j.duty).name.toLowerCase()))].join(', ')}` : ''}`),
       ),
       h(
         'div',
@@ -98,7 +117,7 @@ export function rosterScreen(ctx: Ctx): Screen {
         text(l, 'number', 'Number'),
         text(l, 'name', 'Name'),
         text(l, 'locoClass', 'Class / type'),
-        field('Power', h('select', { id: `r_${l.id}_power`, on: { change: (e: Event) => upd(l.id, (x) => (x.powerType = (e.target as HTMLSelectElement).value)) } }, ...POWER_TYPES.map((p) => option(p, p, p === l.powerType)))),
+        field('Power', h('select', { id: `r_${l.id}_power`, on: { change: (e: Event) => upd(l.id, (x) => setPower(x, (e.target as HTMLSelectElement).value)) } }, ...POWER_TYPES.map((p) => option(p, p, p === l.powerType)))),
         text(l, 'dccAddress', 'DCC address'),
         field(
           'Working as',
@@ -118,7 +137,7 @@ export function rosterScreen(ctx: Ctx): Screen {
     return editor;
   };
 
-  // ---------------------------------------------------------------- timetable jobs
+  // ---------------------------------------------------------------- timetable duties
   const updJob = (locoId: string, jobId: string, fn: (j: LocoJob) => void) =>
     upd(locoId, (x) => {
       const j = x.jobs?.find((y) => y.id === jobId);
@@ -126,28 +145,41 @@ export function rosterScreen(ctx: Ctx): Screen {
     });
   const jobsSection = (l: Loco) => {
     const jobs = l.jobs ?? [];
+    const railcar = isRailcar(l);
+    const duties = dutiesFor(st, l);
     const placeGroups = st.layouts.filter((lay) => lay.places.length);
     const jobRow = (j: LocoJob) => {
       const jid = `r_${l.id}_job_${j.id}`;
+      const types = j.duty === 'pilot' ? [] : dutyTypes(st, j.duty);
+      const offered = duties.some((d) => d.id === j.duty) ? duties : [dutyInfo(j.duty), ...duties];
       return h(
         'li',
         { class: 'loco-job' },
         h(
           'div',
           { class: 'form-grid' },
-          j.kind === 'working'
-            ? field('Works', h('select', { id: `${jid}_tt`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.trainTypeId = (e.target as HTMLSelectElement).value)) } }, ...st.trainTypes.map((t) => option(t.id, t.name, t.id === j.trainTypeId))))
-            : h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Duty'), h('strong', null, 'Station pilot / shunter'), h('small', { class: 'help' }, 'Shunts as a light engine in the places ticked.')),
+          field(
+            'Duty',
+            h('select', { id: `${jid}_duty`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => ((x.duty = (e.target as HTMLSelectElement).value as DutyId), (x.trainTypeId = ''))) } }, ...offered.map((d) => option(d.id, d.name, d.id === j.duty))),
+            dutyInfo(j.duty).help,
+          ),
+          types.length > 1
+            ? field(
+                'Runs as',
+                h('select', { id: `${jid}_tt`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.trainTypeId = (e.target as HTMLSelectElement).value)) } }, option('', 'Any of them (the generator chooses)', !j.trainTypeId), ...types.map((id) => option(id, `${trainTypeName(st, id)} only`, id === j.trainTypeId))),
+              )
+            : null,
           field(
             'How often',
             h('select', { id: `${jid}_w`, on: { change: (e: Event) => updJob(l.id, j.id, (x) => (x.weight = Number((e.target as HTMLSelectElement).value) as LocoJob['weight'])) } }, option('1', 'Sometimes', j.weight === 1), option('2', 'Often', j.weight === 2), option('3', 'Mostly', j.weight === 3)),
           ),
         ),
+        railcar && j.duty !== 'railcar' ? h('p', { class: 'config-warn' }, 'A railcar only works railcar services: this duty is not used.') : null,
         placeGroups.length
           ? h(
               'fieldset',
               { class: 'loco-job-places' },
-              h('legend', null, j.kind === 'pilot' ? 'Where it shunts' : 'Between (none ticked = anywhere)'),
+              h('legend', null, j.duty === 'pilot' ? 'Where it shunts' : 'Between (none ticked = anywhere)'),
               ...placeGroups.map((lay) =>
                 h(
                   'div',
@@ -166,21 +198,43 @@ export function rosterScreen(ctx: Ctx): Screen {
               ),
             )
           : null,
-        h('div', { class: 'row end' }, h('button', { class: 'btn danger small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = (x.jobs ?? []).filter((y) => y.id !== j.id))) } }, 'Remove job')),
+        h('div', { class: 'row end' }, h('button', { class: 'btn danger small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = (x.jobs ?? []).filter((y) => y.id !== j.id))) } }, 'Remove duty')),
       );
+    };
+    const giveRole = (r: RoleInfo) => {
+      const go = () => upd(l.id, (x) => applyRole(x, r.id));
+      if (!jobs.length) return go();
+      confirmDialog({
+        title: `Make ${locoName(l)} ${r.name.toLowerCase().startsWith('railcar') ? 'a railcar' : `a ${r.name.toLowerCase()} engine`}?`,
+        body: [`Its ${jobs.length === 1 ? 'duty is' : `${jobs.length} duties are`} replaced by: ${r.jobs.map(([d, w]) => `${dutyInfo(d).name.toLowerCase()} (${WEIGHT[w]})`).join(', ')}. Places are left as anywhere: tick them afterwards if you want.`],
+        confirmLabel: 'Replace',
+        confirmClass: 'btn primary',
+        onDone: (ok) => ok && go(),
+      });
     };
     const homeOpts = [option('', 'Wherever it is', !l.homePlaceId), ...st.layouts.flatMap((lay) => lay.places.map((p) => option(p.id, st.layouts.length > 1 ? `${lay.name}: ${p.name}` : p.name, p.id === l.homePlaceId)))];
     return h(
       'section',
       { class: 'loco-jobs' },
-      h('h3', { class: 'loco-jobs-head' }, 'Timetable jobs'),
-      h('p', { class: 'muted small' }, 'The work this loco is given in timetables. A train worked by “any loco” is given to a loco with a job for it; the timetable generator (coming soon) uses these jobs too.'),
-      jobs.length ? h('ul', { class: 'plain loco-job-list' }, ...jobs.map(jobRow)) : h('p', { class: 'muted small' }, 'No jobs yet: it is chosen for “any loco” trains of the kind it is working as now.'),
+      h('h3', { class: 'loco-jobs-head' }, 'Timetable duties'),
+      h(
+        'p',
+        { class: 'muted small' },
+        railcar
+          ? 'A railcar works railcar services, runs empty (not light) when it moves without passengers, and changes ends at a terminus. A train worked by “any loco” goes to a loco with the duty, and the timetable generator uses these duties.'
+          : 'The kinds of work this loco is given in timetables. A train worked by “any loco” goes to a loco with the duty, and the timetable generator uses these duties. Any engine can run light, or with a brake van, without a duty for it.',
+      ),
+      h(
+        'div',
+        { class: 'row loco-roles' },
+        h('span', { class: 'field-label' }, 'Give it a role:'),
+        ...rolesFor(l).map((r) => h('button', { class: 'btn small', type: 'button', title: r.help, on: { click: () => giveRole(r) } }, r.name)),
+      ),
+      jobs.length ? h('ul', { class: 'plain loco-job-list' }, ...jobs.map(jobRow)) : h('p', { class: 'muted small' }, 'No duties yet: it is chosen for “any loco” trains of the kind it is working as now. Give it a role, or add duties one at a time.'),
       h(
         'div',
         { class: 'row' },
-        h('button', { class: 'btn small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = [...(x.jobs ?? []), blankJob('working', x.working.trainTypeId)])) } }, '+ Add a train job'),
-        h('button', { class: 'btn small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = [...(x.jobs ?? []), blankJob('pilot')])) } }, '+ Station pilot duty'),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => upd(l.id, (x) => (x.jobs = [...(x.jobs ?? []), blankJob(railcar ? 'railcar' : (dutyOf(st, x.working.trainTypeId) ?? 'stopping'))])) } }, '+ Add a duty'),
       ),
       field('Home', h('select', { id: `r_${l.id}_home`, on: { change: (e: Event) => upd(l.id, (x) => ((e.target as HTMLSelectElement).value ? (x.homePlaceId = (e.target as HTMLSelectElement).value) : delete x.homePlaceId)) } }, ...homeOpts), 'Where it stables between jobs.'),
     );

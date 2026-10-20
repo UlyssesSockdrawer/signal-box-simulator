@@ -1317,7 +1317,27 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     arrBody,
     depBody,
     regBody,
-    guidance: () => ({ text: c.view.guidance, hint: lastHint || ttHint() }),
+    guidance: () => {
+      // The learner prompts follow how the session is being run: with a timetable running, a quiet
+      // line says what is next instead of "choose a train"; with a simulated fiddle yard operator,
+      // the train is driven into the yard and reported arrived for you.
+      let text = c.view.guidance;
+      const r = runner();
+      const at = r?.autoArrivalAt(box.id, conn.id);
+      const drive = c.view.guidanceDrive;
+      if (at && drive && text.includes(drive)) {
+        const out = c.view.outgoing;
+        const loco = out?.locoId ? st().roster.find((l) => l.id === out.locoId) : undefined;
+        const place = st().layouts.flatMap((l) => l.places).find((p) => p.id === conn.placeId)?.name ?? conn.neighbourName;
+        text = text.replace(
+          drive,
+          `The simulated fiddle yard operator brings ${loco ? locoName(loco) : 'the train'} into ${place} and reports it arrived at about ${clockTime(at, true)} (or press the arrived button yourself if it gets there first). Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`,
+        );
+        return { text, hint: lastHint };
+      }
+      if (c.view.guidanceIdle) text = r?.lineText(box.id, conn.id) ?? text;
+      return { text, hint: lastHint || ttHint() };
+    },
     ttHint,
     busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
     name: conn.neighbourName,
