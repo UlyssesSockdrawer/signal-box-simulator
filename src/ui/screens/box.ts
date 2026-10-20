@@ -47,6 +47,8 @@ interface ConnectionUI {
   ttHint(): string;
   /** A train is being offered or worked on this line. */
   busy(): boolean;
+  /** Opened with the far box (5-5-5). */
+  isOpen(): boolean;
   name: string;
   tapPress(): void;
   tapRelease(): void;
@@ -119,8 +121,9 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const reg = runtime.regulator.advice();
     // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
     const tg = runtime.workings.guidance();
-    // A quiet line selected while a train is still being worked on another: show that line's next step.
-    const other = !tg && !ui.busy() ? uis.find((u) => u !== ui && u.busy()) : undefined;
+    // A quiet line selected while a train is still being worked on another, or another line is not
+    // yet open (nothing can run, a timetable cannot start, until every line is): show that line's next step.
+    const other = !tg && !ui.busy() ? (uis.find((u) => u !== ui && u.busy()) ?? (ui.isOpen() ? uis.find((u) => u !== ui && !u.isOpen()) : undefined)) : undefined;
     // A departure the timetable says is due, when nothing else needs doing first.
     const ttg = !reg && !tg && !other && !ui.busy() ? peekRunner(layoutId())?.guidance(box.id) : null;
     const g = reg
@@ -1336,10 +1339,21 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         return { text, hint: lastHint };
       }
       if (c.view.guidanceIdle) text = r?.lineText(box.id, conn.id) ?? text;
+      // Once you have reported the train arrived (or passed, for a through train), the far box still
+      // waits for Train out of section: say just that, not "drive it in".
+      const inc = c.view.incoming;
+      if (inc?.arrived && /press "Train arrived"/.test(text)) {
+        const l = inc.locoId ? st().roster.find((x) => x.id === inc.locoId) : undefined;
+        const passed = workings.through(conn.id)?.stage === 'passed';
+        const v = c.view;
+        const token = v.mode === 'token' && v.tokenInHand ? ' Put the token back in the instrument first (Replace token).' : '';
+        text = `${l ? locoName(l) : 'The train'} has ${passed ? 'passed' : 'arrived'} complete with its tail lamp.${token} Call attention (1), then send 2-1 (Train out of section) to ${conn.neighbourName}${v.mode === 'ab' && v.myInstrument !== 'LB' ? ', and put your instrument back to LINE BLOCKED' : ''}.`;
+      }
       return { text, hint: lastHint || ttHint() };
     },
     ttHint,
     busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
+    isOpen: () => c.view.boxOpen,
     name: conn.neighbourName,
     tapPress: press,
     tapRelease: release,

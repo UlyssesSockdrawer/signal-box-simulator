@@ -190,7 +190,7 @@ export class ThroughWorkings {
         };
       }
       if (t.stage === 'sentOn') {
-        return { connId: t.fromConnId, text: `${who} has gone on towards ${toName}. When its tail lamp has passed, press "passed complete" on the ${fromName} instruments, then call attention (${signalCode(set, 'call_attention')}) and send ${signalCode(set, 'train_out_of_section')} (Train out of section) to ${fromName}.` };
+        return { connId: t.fromConnId, text: `${who} has gone on towards ${toName}. When its tail lamp has passed, press "Train passed complete" (in the Next arrival panel, ${fromName}), then call attention (${signalCode(set, 'call_attention')}) and send ${signalCode(set, 'train_out_of_section')} (Train out of section) to ${fromName}.` };
       }
     }
     return null;
