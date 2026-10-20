@@ -14,6 +14,8 @@ import {
 import type { AppState, Layout, Timetable, TimetableEntry } from '../../core/types';
 import { activeCodeSet, locoFullName, trainTypeName, type Ctx } from '../app';
 import { h, option } from '../dom';
+import { eraOf, lampClass, usesLamps } from '../../core/headcodes';
+import { lampDiagram } from '../lampDiagram';
 
 /*
  * Printable views of a timetable, styled as railway paperwork (the same in every theme, like the
@@ -82,6 +84,22 @@ export function posterView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement
   const timed = isTimed(tt);
   const elapsed = tt.timing === 'session' && tt.elapsed;
   const used = new Set(passenger.flatMap((t) => t.cols.map((c) => c.entry.trainTypeId)));
+  const era = eraOf(layout);
+  const lamps = usesLamps(era);
+  // Lamp eras: a key to the lamp headcodes of the trains on the poster, in class order.
+  const lampKinds = lamps
+    ? [...new Set([...passenger.flatMap((t) => t.cols.map((c) => c.entry.trainTypeId)), ...other.map(({ e }) => e.trainTypeId)])]
+        .filter((id) => lampClass(era, id))
+        .sort((a, b) => lampClass(era, a)!.localeCompare(lampClass(era, b)!))
+    : [];
+  const lampKey = lampKinds.length
+    ? h(
+        'div',
+        { class: 'pp-lampkey' },
+        h('p', { class: 'pp-lampkey-title' }, 'Engine head lamps'),
+        h('ul', { class: 'plain' }, ...lampKinds.map((id) => h('li', null, lampDiagram(era, id, 'pp-lamps'), h('span', null, h('strong', null, `${lampClass(era, id)} `), trainTypeName(st, id))))),
+      )
+    : null;
 
   const table = (t: PosterTable, small: boolean) => {
     const cols = t.cols;
@@ -184,7 +202,7 @@ export function posterView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement
                   'tr',
                   { class: 'pp-line' },
                   h('td', { class: 'pp-t' }, timed ? posterTime(e.dep, tt).text : String(order)),
-                  h('td', { class: 'pp-train' }, h('strong', null, e.headcode || findTrain(tt, e.trainId)?.name || ''), ' ', h('em', null, trainTypeName(st, e.trainTypeId))),
+                  h('td', { class: 'pp-train' }, lamps ? lampDiagram(era, e.trainTypeId, 'pp-lamps') : null, h('strong', null, e.headcode || findTrain(tt, e.trainId)?.name || ''), ' ', h('em', null, trainTypeName(st, e.trainTypeId))),
                   h('td', { class: 'pp-l' }, layout.places.find((p) => p.id === e.from.placeId)?.name ?? ''),
                   h('td', { class: 'pp-l' }, layout.places.find((p) => p.id === e.to.placeId)?.name ?? ''),
                   timed ? h('td', { class: 'pp-t' }, posterTime(e.arr, tt).text) : null,
@@ -213,6 +231,7 @@ export function posterView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement
       other.length ? h('h3', { class: 'pp-section' }, passenger.length ? 'Goods and other trains' : 'Goods and other trains', h('small', null, ' (not for passengers)')) : null,
       otherTable,
       nothing ? null : h('ul', { class: 'plain pp-key' }, ...key),
+      nothing ? null : lampKey,
       tt.notes ? h('p', { class: 'pp-notes' }, tt.notes) : null,
       h('div', { class: 'pp-rule thin', 'aria-hidden': 'true' }),
       h('p', { class: 'pp-order' }, 'By Order'),
@@ -383,6 +402,12 @@ export function cardsView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement 
     if (e.kind === 'note') return 'note';
     return `${trainTypeName(st, e.trainTypeId).toLowerCase()} to ${refText(st, e.to.placeId ? e.to : e.from)}`;
   };
+  const era = eraOf(layout);
+  const lamps = usesLamps(era);
+  const lampRow = (trainTypeId: string): HTMLElement | null => {
+    const d = lampDiagram(era, trainTypeId, 'tc-lamps');
+    return d ? h('span', { class: 'tc-lamp-row' }, d, h('span', null, d.getAttribute('aria-label')!.replace(/^Class (\w) headcode: /, 'Class $1: '))) : null;
+  };
   const card = (s: (typeof steps)[number]) => {
     const e = s.entry;
     const train = findTrain(tt, e.trainId);
@@ -412,6 +437,7 @@ export function cardsView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement 
         train ? row('Train', train.name + (train.consist ? ` · ${train.consist}` : '')) : null,
         e.kind !== 'note' ? row('Loco', loco ? `${locoFullName(loco)}${loco.dccAddress ? ` · DCC ${loco.dccAddress}` : ''}` : train ? `Any ${trainTypeName(st, train.anyWorking).toLowerCase()} loco` : '—') : null,
         e.kind !== 'note' ? row(e.kind === 'run' ? 'Runs as' : 'Working', `${trainTypeName(st, e.trainTypeId)}${code ? ` · bell ${code}` : ''}`) : null,
+        e.kind !== 'note' && lamps ? row('Lamps', lampRow(e.trainTypeId)) : null,
         e.kind === 'run' || e.kind === 'shunt' || e.kind === 'leave' ? row('From', refText(st, e.from)) : null,
         e.kind === 'run' || e.kind === 'enter' || (e.kind === 'shunt' && e.to.placeId) ? row(e.kind === 'enter' ? 'Comes on at' : 'To', refText(st, e.to)) : null,
         e.calls.length ? row('Calls', e.calls.map((c) => `${refText(st, c)} (${c.stop ? 'stops' : 'passes'})`).join('; ')) : null,

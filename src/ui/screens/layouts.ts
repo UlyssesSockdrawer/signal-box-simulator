@@ -4,9 +4,11 @@ import { kindInfo, PLACE_KINDS, placeOccupants } from '../../core/places';
 import type { AppState, Layout, Loco } from '../../core/types';
 import { locoFullName, topBar, type Ctx, type Screen } from '../app';
 import { disposeBoxRuntime } from '../boxRuntime';
-import { confirmButton, confirmDialog, h, toast } from '../dom';
+import { confirmButton, confirmDialog, h, option, toast } from '../dom';
 import { plusIcon } from './boxConfig';
 import { timetablesOf } from '../../core/timetables';
+import { eraInfo, eraOf, HEADCODE_ERAS } from '../../core/headcodes';
+import type { HeadcodeEra } from '../../core/types';
 
 /*
  * Layouts: the layout configurator opens on a list of the layouts set up in the
@@ -343,6 +345,17 @@ export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
     h('span', { class: 'plate' }, 'Timetables'),
     h('p', { class: 'help' }, tts.length ? `${plural(tts.length, 'timetable')} for ${layout.name}:` : `No timetables for ${layout.name} yet.`),
     tts.length ? h('ul', { class: 'plain ld-places' }, ...tts.map((t) => h('li', null, h('strong', null, t.name), h('small', { class: 'help' }, ` · ${plural(t.trains.length, 'train')} · ${plural(t.entries.length, 'move')}`)))) : null,
+    h(
+      'div',
+      { class: 'field' },
+      h('label', { for: 'ld_era' }, 'Headcodes'),
+      h(
+        'select',
+        { id: 'ld_era', on: { change: (e: Event) => upd((l) => (l.headcodeEra = (e.target as HTMLSelectElement).value as HeadcodeEra)) } },
+        ...HEADCODE_ERAS.map((e) => option(e.id, `${e.name} (${e.years})`, e.id === eraOf(layout))),
+      ),
+      h('small', { class: 'help' }, `${eraInfo(eraOf(layout)).description} Used by the timetable editor, the generator, the poster and the train cards. Changing it keeps the numbers already in timetables: use Fill in headcodes in a timetable to renumber.`),
+    ),
     h(
       'div',
       { class: 'row' },

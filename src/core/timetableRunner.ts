@@ -3,6 +3,8 @@ import { Emitter, type Scheduler } from './scheduler';
 import type { SectionController } from './sectionController';
 import type { SectionSession } from './session';
 import type { ThroughWorkings } from './throughTrains';
+import { eraOf, HeadcodeAllocator } from './headcodes';
+import { toSequence, type TimetableGenerator } from './timetableGenerator';
 import { findTrain, locosFor, refText, routeBetween, walkTimetable, type RouteLeg, type TtPos } from './timetables';
 import type { AppState, Layout, Location, Loco, PlaceRef, Timetable, TimetableEntry, TimetableTrain, Working } from './types';
 
@@ -27,6 +29,11 @@ import type { AppState, Layout, Location, Loco, PlaceRef, Timetable, TimetableEn
  *             fiddle yard operator, or is a card you press Done on when you are the operator
  *   note      an instruction card (OK)
  * A segment through a box you are not working (its screen has not been opened) is done as auto.
+ *
+ * ENDLESS (v0.3.26): the timetable is made up as it runs by the timetable generator. The runner keeps
+ * it topped up: on a clock, everything due in the next 15 minutes is planned; in an operations
+ * sequence, six moves wait beyond those under way. Locos with nothing booked are lined up with where
+ * they really are first, so a train moved by hand is picked up from there. It never finishes.
  *
  * Stepping: Release now (do not wait), Skip, Mark done (as if it had run). Pausing stops new
  * releases and the session clock. Switching to another timetable lets moves already under way
@@ -148,6 +155,8 @@ export class TimetableRunner {
   private pausedTotal = 0;
   private timer: number | null = null;
   private disposed = false;
+  /** Endless running: the generator that keeps the timetable topped up. */
+  private endless: { gen: TimetableGenerator; alloc: HeadcodeAllocator } | null = null;
 
   constructor(private o: RunnerOptions) {}
 
@@ -187,6 +196,79 @@ export class TimetableRunner {
     this.tt = tt;
     this.items = this.itemsFor(tt);
     this.emit();
+  }
+
+  /** Load an Endless timetable: `tt` starts empty (or nearly) and `gen` keeps adding to it as it runs. */
+  loadEndless(tt: Timetable, gen: TimetableGenerator): void {
+    this.load(tt);
+    this.setEndless(gen);
+    this.topUp();
+    this.emit();
+  }
+
+  /** True while running Endless. */
+  get isEndless(): boolean {
+    return !!this.endless;
+  }
+
+  private setEndless(gen: TimetableGenerator | null): void {
+    const layout = this.layout;
+    this.endless = gen && layout ? { gen, alloc: new HeadcodeAllocator(eraOf(layout), layout, this.tt?.entries.map((e) => e.headcode) ?? []) } : null;
+  }
+
+  /** Where locos will stand once the moves under way have finished (for starting Endless part way through). */
+  positionsAfterUnderWay(): Map<string, TtPos> {
+    const out = new Map<string, TtPos>();
+    for (const it of this.items) {
+      if (it.state !== 'active' || !it.locoId || !this.underWay(it)) continue;
+      const p = endPos(it.entry);
+      if (p) out.set(it.locoId, p);
+    }
+    return out;
+  }
+
+  /**
+   * Endless: plan more moves when the lookahead runs short (15 minutes of clock, or six moves waiting
+   * in a sequence) and add them to the timetable and the run.
+   */
+  private topUp(): void {
+    const e = this.endless;
+    const tt = this.tt;
+    if (!e || !tt) return;
+    const { gen } = e;
+    const seq = tt.timing === 'sequence';
+    const at = seq ? gen.now : (this.clockNow() ?? gen.now);
+    // Locos with nothing booked: start them from where they really are.
+    for (const u of gen.units) {
+      if (gen.hasPending(u.loco.id)) continue;
+      const booked = this.items.some((it) => (it.state === 'waiting' || it.state === 'active') && (it.locoId ?? it.train?.locoId) === u.loco.id);
+      if (booked) continue;
+      const loco = this.state.roster.find((l) => l.id === u.loco.id);
+      const p = loco ? locPos(loco.location) : null;
+      if (p) gen.resync(u.loco.id, p, at);
+    }
+    const fresh: TimetableEntry[] = [];
+    if (seq) {
+      const waiting = () => this.items.filter((it) => it.state === 'waiting' && !it.positioning).length + fresh.length;
+      for (let guard = 0; waiting() < 6 && guard < 30; guard++) {
+        if (!gen.addChain() && !gen.pending()) break;
+        fresh.push(...gen.take(Number.POSITIVE_INFINITY, e.alloc));
+      }
+      const unit = new Map(gen.trains.map((t) => [t.id, t.locoId]));
+      toSequence(fresh, (x) => unit.get(x.trainId) ?? x.trainId);
+    } else {
+      const horizon = at + 15;
+      for (let guard = 0; gen.now <= horizon && guard < 30; guard++) if (!gen.addChain()) break;
+      fresh.push(...gen.take(horizon, e.alloc));
+    }
+    if (!fresh.length) return;
+    for (const t of gen.trains) if (!tt.trains.some((x) => x.id === t.id)) tt.trains.push(structuredClone(t));
+    let step = Math.max(0, ...this.items.map((x) => x.step));
+    for (const entry of fresh) {
+      tt.entries.push(entry);
+      if (!entry.withPrevious || !seq) step++;
+      this.items.push(this.itemFor(tt, entry, step));
+    }
   }
 
   /** Start the loaded timetable, optionally with positioning moves first and earlier real-time moves skipped. */
@@ -249,6 +331,7 @@ export class TimetableRunner {
     this.paused = false;
     this.finished = false;
     this.anyLoco.clear();
+    this.endless = null;
   }
 
   private loop(): void {
@@ -306,7 +389,7 @@ export class TimetableRunner {
    * Switch to another timetable on the fly. Moves under way finish (under the old timetable); moves
    * not yet started are dropped. The new timetable starts now, after any positioning moves.
    */
-  switchTo(tt: Timetable, opts: { positioning?: Positioning[]; past?: PastMode; operator?: RunOperator } = {}): void {
+  switchTo(tt: Timetable, opts: { positioning?: Positioning[]; past?: PastMode; operator?: RunOperator; endless?: TimetableGenerator } = {}): void {
     const old = this.tt;
     const finishing = this.items.filter((it) => it.state === 'active' && this.underWay(it));
     for (const it of this.items) {
@@ -322,6 +405,8 @@ export class TimetableRunner {
     this.tt = tt;
     this.anyLoco = new Map([...this.anyLoco].filter(([trainId]) => finishing.some((f) => f.train?.id === trainId)));
     this.items = [...finishing, ...this.itemsFor(tt)];
+    this.setEndless(opts.endless ?? null);
+    this.topUp();
     this.note(`Switched from ${old?.name ?? 'no timetable'} to ${tt.name}${finishing.length ? `: ${finishing.length} move${finishing.length === 1 ? '' : 's'} under way will finish first` : ''}.`);
     this.started = false;
     this.start({ operator, past: opts.past, positioning: opts.positioning });
@@ -472,6 +557,7 @@ export class TimetableRunner {
       if (this.pausedAt !== null) this.pausedAt = this.startedAt;
       if (this.layoutBoxes().length) this.note(`${this.layoutBoxes().map((b) => b.name).join(' and ')} open: ${this.tt.name} begins${this.tt.timing === 'session' ? ` (clock ${fmt(this.clockNow())})` : ''}.`);
     }
+    this.topUp();
     for (const it of this.items) if (it.state === 'active') this.checkSeg(it);
     if (!this.paused) {
       for (const it of this.items) {
@@ -480,7 +566,7 @@ export class TimetableRunner {
       }
     }
     this.logProgress();
-    if (!this.finished && this.items.length && this.items.every((it) => it.state === 'done' || it.state === 'skipped')) {
+    if (!this.endless && !this.finished && this.items.length && this.items.every((it) => it.state === 'done' || it.state === 'skipped')) {
       this.finished = true;
       this.note(`${this.tt.name}: every move has run.`);
     }
@@ -1089,14 +1175,18 @@ export class TimetableRunner {
   private itemsFor(tt: Timetable): RunItem[] {
     const layout = this.layout;
     const w = layout ? walkTimetable(this.state, layout, tt) : null;
-    return tt.entries.map((e, i) => ({
+    return tt.entries.map((e, i) => this.itemFor(tt, e, w?.steps[i]?.step ?? i + 1));
+  }
+
+  private itemFor(tt: Timetable, e: TimetableEntry, step: number): RunItem {
+    return {
       id: e.id,
       entry: structuredClone(e),
       train: findTrain(tt, e.trainId) ?? null,
       positioning: false,
       finishing: false,
-      step: w?.steps[i]?.step ?? i + 1,
-      state: 'waiting' as ItemState,
+      step,
+      state: 'waiting',
       locoId: null,
       segs: [],
       seg: 0,
@@ -1106,7 +1196,7 @@ export class TimetableRunner {
       forced: false,
       startedAt: null,
       doneAt: null,
-    }));
+    };
   }
 
   private positioningItem(p: Positioning): RunItem {

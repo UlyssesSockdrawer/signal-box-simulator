@@ -1,7 +1,8 @@
 import { findLayout } from '../../core/layouts';
-import { applyStockPositions, fmtTime, isTimed, stockPositions, timetablesOf, timingInfo } from '../../core/timetables';
+import { BUSYNESS, defaultGeneratorOptions, MIX_PRESETS, newSeed, TimetableGenerator } from '../../core/timetableGenerator';
+import { applyStockPositions, checkTimetableName, fmtTime, isTimed, MAX_ENTRIES, MAX_SPEED, MAX_TIMETABLES, parseTime, stockPositions, TIMINGS, timetablesOf, timingInfo, type TtPos } from '../../core/timetables';
 import type { Positioning, RunItem, RunOperator, TimetableRunner, PastMode } from '../../core/timetableRunner';
-import type { BoxDef, Layout, Timetable } from '../../core/types';
+import type { BoxDef, GeneratorOptions, Layout, Timetable, TimetableTiming } from '../../core/types';
 import { locoFullName, type Ctx } from '../app';
 import { confirmButton, confirmDialog, h, option, toast } from '../dom';
 import { getRunner, peekRunner } from '../timetableRuntime';
@@ -19,6 +20,108 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 const choice: { ttId: string; operator: RunOperator } = { ttId: '', operator: 'simulated' };
 /** The panel's fold-outs stay as you left them while it redraws (it redraws as the timetable moves on). */
 const panelOpen = { log: true, closed: false };
+
+/** Endless (v0.3.26): chosen in the timetable list as this id. Its options are kept for the app session. */
+const ENDLESS = '__endless';
+const endlessOpts: GeneratorOptions = { ...defaultGeneratorOptions('sequence'), timing: 'session' };
+
+/** A new, empty Endless timetable and its generator, starting from where the locos are (or will be). */
+function makeEndless(ctx: Ctx, layout: Layout, start?: Map<string, TtPos>, startAt?: number): { tt: Timetable; gen: TimetableGenerator } {
+  const o: GeneratorOptions = { ...structuredClone(endlessOpts), seed: newSeed() };
+  if (o.timing === 'clock') {
+    const d = new Date();
+    o.startAt = d.getHours() * 60 + d.getMinutes() + 1;
+  }
+  if (startAt !== undefined && o.timing !== 'sequence') o.startAt = startAt;
+  const t0 = o.timing === 'sequence' ? 0 : o.startAt;
+  const gen = new TimetableGenerator(ctx.store.state, layout, o, start ? new Map([...start].map(([id, pos]) => [id, { pos, freeAt: t0 + 10 }])) : undefined);
+  const tt: Timetable = {
+    id: `endless_${layout.id}`,
+    name: 'Endless',
+    timing: o.timing,
+    startAt: o.timing === 'sequence' ? 9 * 60 : o.startAt,
+    elapsed: false,
+    speed: o.timing === 'session' ? o.speed : 1,
+    validity: 'Endless',
+    notes: 'Made up as it ran by the timetable generator (Endless).',
+    trains: [],
+    entries: [],
+    generated: o,
+  };
+  return { tt, gen };
+}
+
+/** The settings for Endless in the panel: how it runs, how busy, the traffic mix. */
+function endlessFields(redraw: () => void): HTMLElement {
+  const o = endlessOpts;
+  const preset = MIX_PRESETS.find((p) => p.mix.passenger === o.mix.passenger && p.mix.goods === o.mix.goods && p.mix.shunting === o.mix.shunting);
+  return h(
+    'div',
+    { class: 'ttp-endless' },
+    h(
+      'div',
+      { class: 'field' },
+      h('label', { for: 'ttp_e_timing' }, 'How it runs'),
+      h('select', { id: 'ttp_e_timing', on: { change: (e: Event) => ((o.timing = (e.target as HTMLSelectElement).value as TimetableTiming), redraw()) } }, ...TIMINGS.map((t) => option(t.timing, t.name, t.timing === o.timing))),
+    ),
+    o.timing === 'session'
+      ? h(
+          'div',
+          { class: 'row ttp-e-clock' },
+          h('div', { class: 'field' }, h('label', { for: 'ttp_e_start' }, 'Clock starts at'), h('input', { id: 'ttp_e_start', type: 'text', maxlength: 5, value: fmtTime(o.startAt, { timing: 'clock', elapsed: false }), on: { change: (e: Event) => { const v = parseTime((e.target as HTMLInputElement).value); if (v !== null && !Number.isNaN(v)) o.startAt = v; else toast('A time such as 09:00.'); redraw(); } } })),
+          h('div', { class: 'field' }, h('label', { for: 'ttp_e_speed' }, 'Speed'), h('select', { id: 'ttp_e_speed', on: { change: (e: Event) => (o.speed = Number((e.target as HTMLSelectElement).value)) } }, ...Array.from({ length: MAX_SPEED }, (_, i) => i + 1).map((n) => option(String(n), n === 1 ? '×1' : `×${n}`, n === o.speed)))),
+        )
+      : null,
+    h('div', { class: 'field' }, h('label', { for: 'ttp_e_busy' }, 'How busy'), h('select', { id: 'ttp_e_busy', on: { change: (e: Event) => (o.busyness = (e.target as HTMLSelectElement).value as GeneratorOptions['busyness']) } }, ...BUSYNESS.map((b) => option(b.id, `${b.name}: ${b.help.toLowerCase()}`, b.id === o.busyness)))),
+    h(
+      'div',
+      { class: 'field' },
+      h('label', { for: 'ttp_e_mix' }, 'Traffic mix'),
+      h('select', { id: 'ttp_e_mix', on: { change: (e: Event) => { const p = MIX_PRESETS.find((x) => x.id === (e.target as HTMLSelectElement).value); if (p) o.mix = { ...p.mix }; } } }, ...MIX_PRESETS.map((p) => option(p.id, p.name, p === preset)), preset ? null : option('custom', 'My own mix', true)),
+    ),
+    h('small', { class: 'help' }, `Trains are made up as it runs from the locos’ timetable jobs (set in the roster): ${o.timing === 'sequence' ? 'six moves are always lined up ahead' : 'everything due in the next 15 minutes is planned'}. It runs until you stop it, and you can keep what has run as a timetable.`),
+  );
+}
+
+/** Save what an Endless run has made so far as an ordinary timetable. */
+function keepDialog(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
+  const tt = r.tt;
+  if (!tt) return;
+  const base = `Endless ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
+  let name = base;
+  for (let n = 2; checkTimetableName(layout, name, null); n++) name = `${base} (${n})`;
+  const input = h('input', { id: 'ttp_keep_name', type: 'text', value: name, maxlength: 60 });
+  const count = Math.min(tt.entries.length, MAX_ENTRIES);
+  confirmDialog({
+    title: 'Keep this as a timetable?',
+    body: [
+      `Saves the ${plural(count, 'move')} made so far${tt.entries.length > MAX_ENTRIES ? ` (the first ${MAX_ENTRIES})` : ''}, done and still to come, as a timetable of ${layout.name} to edit, print and run again. Endless carries on.`,
+      h('div', { class: 'field' }, h('label', { for: 'ttp_keep_name' }, 'Name'), input),
+    ],
+    confirmLabel: 'Keep it',
+    confirmClass: 'btn primary',
+    onDone: (ok) => {
+      if (!ok) return;
+      const n = input.value.trim();
+      const err = checkTimetableName(layout, n, null);
+      if (err) return toast(err);
+      if (timetablesOf(layout).length >= MAX_TIMETABLES) return toast(`${layout.name} has the most timetables allowed (${MAX_TIMETABLES}).`);
+      const copy: Timetable = structuredClone(tt);
+      copy.id = `tt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      copy.name = n;
+      copy.validity = '';
+      copy.entries = copy.entries.slice(0, MAX_ENTRIES);
+      const used = new Set(copy.entries.map((e) => e.trainId));
+      copy.trains = copy.trains.filter((t) => used.has(t.id));
+      if (copy.generated) copy.generated = { ...copy.generated, length: copy.timing === 'sequence' ? copy.entries.length : 120 };
+      ctx.store.update((a) => {
+        const l = a.layouts.find((x) => x.id === layout.id);
+        if (l) timetablesOf(l).push(copy);
+      });
+      toast(`Kept as ${n}: find it under Timetables.`);
+    },
+  });
+}
 
 function layoutOf(ctx: Ctx, box: BoxDef): Layout | undefined {
   const b = ctx.store.state.boxes.find((x) => x.id === box.id) ?? box;
@@ -120,19 +223,14 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
   const list = timetablesOf(layout);
   const r = getRunner(ctx, layout.id);
   const back = { route: `box/${box.id}`, label: `${box.name} box` };
-  if (!list.length) {
-    return h(
-      'div',
-      { class: 'ttp' },
-      h('p', null, `${layout.name} has no timetables yet.`),
-      h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.goFrom('timetables', back) } }, 'Make a timetable'),
-    );
-  }
-  if (!choice.ttId || !list.some((t) => t.id === choice.ttId)) choice.ttId = r.tt && list.some((t) => t.id === r.tt!.id) ? r.tt.id : list[0].id;
+  let root: HTMLElement | null = null;
+  const redraw = () => root?.replaceWith(timetablePanel(ctx, box));
+  if (!choice.ttId || (choice.ttId !== ENDLESS && !list.some((t) => t.id === choice.ttId))) choice.ttId = r.tt && list.some((t) => t.id === r.tt!.id) ? r.tt.id : (list[0]?.id ?? ENDLESS);
   const ttSelect = (id: string, exclude?: string) =>
     h(
       'select',
-      { id, on: { change: (e: Event) => (choice.ttId = (e.target as HTMLSelectElement).value) } },
+      { id, on: { change: (e: Event) => ((choice.ttId = (e.target as HTMLSelectElement).value), redraw()) } },
+      exclude === ENDLESS ? null : option(ENDLESS, 'Endless: made up as it runs', choice.ttId === ENDLESS),
       ...list.filter((t) => t.id !== exclude).map((t) => option(t.id, `${t.name} (${timingInfo(t.timing).short.toLowerCase()})`, t.id === choice.ttId)),
     );
   const operatorField = () =>
@@ -158,26 +256,34 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
     );
 
   if (!r.tt || !r.started) {
-    if (choice.ttId && choice.ttId !== '' && list.every((t) => t.id !== choice.ttId)) choice.ttId = list[0].id;
-    return h(
+    const endless = choice.ttId === ENDLESS;
+    root = h(
       'div',
       { class: 'ttp' },
       h('h2', { class: 'ttp-title' }, 'Run a timetable'),
       h('p', { class: 'muted small' }, `Trains are offered to you, due departures are chosen for you, and shunts and fiddle yard moves come up as cards, as the timetable says. ${layout.name}'s boxes take part while they are open.`),
       h('div', { class: 'field' }, h('label', { for: 'ttp_tt' }, 'Timetable'), ttSelect('ttp_tt')),
+      endless ? endlessFields(redraw) : null,
       operatorField(),
       h(
         'div',
         { class: 'row' },
-        h('button', { class: 'btn primary', type: 'button', on: { click: () => startDialog(ctx, layout, r, list.find((t) => t.id === choice.ttId)!) } }, 'Start…'),
-        h('button', { class: 'btn', type: 'button', on: { click: () => ctx.goFrom(`tt/${choice.ttId}`, back) } }, 'Edit it'),
+        endless
+          ? h('button', { class: 'btn primary', type: 'button', id: 'ttp_start_endless', on: { click: () => startEndless(ctx, layout, r) } }, 'Start Endless')
+          : h('button', { class: 'btn primary', type: 'button', on: { click: () => startDialog(ctx, layout, r, list.find((t) => t.id === choice.ttId)!) } }, 'Start…'),
+        endless ? null : h('button', { class: 'btn', type: 'button', on: { click: () => ctx.goFrom(`tt/${choice.ttId}`, back) } }, 'Edit it'),
       ),
+      list.length ? null : h('p', { class: 'muted small' }, `${layout.name} has no timetables of its own yet.`),
+      h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom('timetables', back) } }, list.length ? 'Timetables' : 'Make a timetable')),
     );
+    return root;
   }
 
   const tt = r.tt;
+  const endlessNow = r.isEndless;
   const others = list.filter((t) => t.id !== tt.id);
-  if (others.length && (!choice.ttId || choice.ttId === tt.id)) choice.ttId = others[0].id;
+  if (!choice.ttId || choice.ttId === tt.id || (endlessNow && choice.ttId === ENDLESS)) choice.ttId = others[0]?.id ?? (endlessNow ? '' : ENDLESS);
+  const canSwitch = others.length > 0 || !endlessNow;
   const itemRow = (it: RunItem) =>
     h(
       'li',
@@ -209,7 +315,7 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
     );
   const open = r.items.filter((x) => x.state === 'waiting' || x.state === 'active');
   const closed = r.items.filter((x) => x.state === 'done' || x.state === 'skipped');
-  return h(
+  root = h(
     'div',
     { class: 'ttp' },
     h(
@@ -217,7 +323,7 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
       { class: 'ttp-run' },
       h('div', { class: 'ttp-run-head' }, h('h2', { class: 'ttp-title' }, tt.name), h('span', { class: 'tts-clock' }, runClock(r)), r.paused ? h('span', { class: 'tts-badge' }, 'Paused') : null, r.finished ? h('span', { class: 'tts-badge done' }, 'Finished') : null),
       r.waitingForOpen() ? h('p', { class: 'config-warn' }, `Waiting for ${r.waitingForOpen()} to be opened on every line (call attention, then 5-5-5 to each box). The timetable begins then.`) : null,
-      h('p', { class: 'muted small' }, `${timingInfo(tt.timing).name}${tt.timing === 'session' && tt.speed > 1 ? `, fast clock ×${tt.speed}` : ''} · ${plural(closed.length, 'move')} done of ${r.items.length}`),
+      h('p', { class: 'muted small' }, `${endlessNow ? 'Endless, ' : ''}${endlessNow ? timingInfo(tt.timing).name.toLowerCase() : timingInfo(tt.timing).name}${tt.timing === 'session' && tt.speed > 1 ? `, fast clock ×${tt.speed}` : ''} · ${plural(closed.length, 'move')} done of ${r.items.length}${endlessNow ? ' so far' : ''}`),
       h(
         'div',
         { class: 'row ttp-btns' },
@@ -228,13 +334,15 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
           toast(`${tt.name} stopped. Trains already offered or under way carry on as ordinary trains.`);
         }, 'btn danger small'),
       ),
+      endlessNow ? h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', id: 'ttp_keep', disabled: !tt.entries.length, on: { click: () => keepDialog(ctx, layout, r) } }, 'Keep this as a timetable…')) : null,
       operatorField(),
-      others.length
+      canSwitch
         ? h(
             'div',
             { class: 'field ttp-switch' },
             h('label', { for: 'ttp_sw' }, 'Switch to'),
-            h('div', { class: 'row' }, ttSelect('ttp_sw', tt.id), h('button', { class: 'btn small', type: 'button', on: { click: () => switchDialog(ctx, layout, r, list.find((t) => t.id === choice.ttId)!) } }, 'Switch…')),
+            h('div', { class: 'row' }, ttSelect('ttp_sw', endlessNow ? ENDLESS : tt.id), h('button', { class: 'btn small', type: 'button', on: { click: () => (choice.ttId === ENDLESS ? switchEndless(ctx, layout, r) : switchDialog(ctx, layout, r, list.find((t) => t.id === choice.ttId)!)) } }, 'Switch…')),
+            !endlessNow && choice.ttId === ENDLESS ? endlessFields(redraw) : null,
           )
         : null,
     ),
@@ -249,6 +357,7 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
       h('ol', { class: 'plain' }, ...r.log.slice(-60).reverse().map((l) => h('li', null, h('time', null, clockOf(l.t)), ' ', l.text))),
     ),
   );
+  return root;
 }
 
 const clockOf = (t: number) => {
@@ -316,6 +425,41 @@ function startDialog(ctx: Ctx, layout: Layout, r: TimetableRunner, tt: Timetable
       r.load(tt);
       r.start({ operator: choice.operator, past: pastMode, positioning });
       toast(`${tt.name} started.`);
+    },
+  });
+}
+
+function startEndless(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
+  const { tt, gen } = makeEndless(ctx, layout);
+  if (!gen.units.length) {
+    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable jobs in the roster.');
+    return;
+  }
+  r.loadEndless(tt, gen);
+  r.start({ operator: choice.operator });
+  toast(`Endless started${gen.notes.length ? `. ${gen.notes.join(' ')}` : '.'}`);
+}
+
+function switchEndless(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
+  const finishing = r.items.filter((x) => r.underWay(x));
+  const now = r.clockNow();
+  const { tt, gen } = makeEndless(ctx, layout, r.positionsAfterUnderWay(), now !== null ? Math.ceil(now) : undefined);
+  if (!gen.units.length) {
+    toast(gen.notes[0] ?? 'No locos can take part: give locos on the layout timetable jobs in the roster.');
+    return;
+  }
+  confirmDialog({
+    title: 'Switch to Endless?',
+    body: [
+      finishing.length ? `${plural(finishing.length, 'move')} under way will finish first; then trains are made up as it runs.` : 'It starts straight away: trains are made up as it runs.',
+      `Moves of ${r.tt?.name ?? 'the current timetable'} not yet started are dropped.`,
+    ],
+    confirmLabel: 'Switch',
+    confirmClass: 'btn primary',
+    onDone: (ok) => {
+      if (!ok) return;
+      r.switchTo(tt, { operator: choice.operator, endless: gen });
+      toast('Switched to Endless.');
     },
   });
 }

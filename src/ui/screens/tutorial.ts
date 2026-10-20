@@ -3,6 +3,8 @@ import { activeLayout } from '../../core/layouts';
 import { canOpenBox } from '../../core/boxes';
 import { placesWorkedBy } from '../../core/places';
 import { incomingCandidates, stationLocos } from '../../core/selection';
+import { eraInfo, eraOf, usesLamps } from '../../core/headcodes';
+import { timetablesOf } from '../../core/timetables';
 import type { Loco } from '../../core/types';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
@@ -128,6 +130,57 @@ export function tutorialScreen(ctx: Ctx): Screen {
     );
   }
 
+  // ---------------------------------------------------------------- timetables
+  const tts = layout ? timetablesOf(layout) : [];
+  const era = eraOf(layout);
+  const sample = tts[0];
+  const ttSection: HTMLElement[] = [
+    h('h2', null, '9. Timetables'),
+    h(
+      'p',
+      null,
+      `A timetable says which trains run, in what order or at what times, and which loco works each. It belongs to a layout${layout ? ` (${layout.name} has ${tts.length === 1 ? 'one' : tts.length || 'none yet'})` : ''}. Open `,
+      h('strong', null, 'Timetables'),
+      ' on the main menu to see them.',
+    ),
+    h(
+      'ul',
+      null,
+      h('li', null, h('strong', null, 'Trains and moves. '), 'A train is a chain of moves worked by one loco: say an ordinary passenger into a platform, the engine running light to a siding and back on to its coaches, and the train working back to the fiddle yard. Add a train with + New train, and its next move with + Then this train…, which starts where the last move ended.'),
+      h('li', null, h('strong', null, 'How it runs. '), 'An operations sequence has no times: each move is released when the one before has finished (like a card order). Real time runs by the clock on the wall. A session clock starts when you begin, from a time you choose, and can run fast.'),
+      h('li', null, h('strong', null, 'Checks. '), 'As you edit, the timetable is walked through move by move: a loco starting somewhere its last move did not leave it, no route between two places, two trains on one road. Step through shows where everything stands after each move.'),
+      h('li', null, h('strong', null, 'Headcodes. '), `${layout ? `${layout.name} is set to ` : ''}${eraInfo(era).name.toLowerCase()} (${eraInfo(era).years}): ${eraInfo(era).description} ${usesLamps(era) ? 'The lamps are drawn on the moves, the poster and the train cards.' : ''} Change it on the layout’s Details tab; Fill in ${usesLamps(era) ? 'reporting numbers' : 'headcodes'} under the moves numbers them for you.`),
+      h('li', null, h('strong', null, 'Printing. '), 'The Poster tab is a letterpress public timetable, fitted to the paper you choose (right to the edges if you like, for exhibition props). Train cards gives one card per move to hand to operators.'),
+    ),
+    h('h3', null, 'Let the app make one'),
+    h(
+      'p',
+      null,
+      'Give locos ',
+      h('strong', null, 'timetable jobs'),
+      ' in the roster: the kinds of train each works (between which places) and how often, or pilot duty. Then ',
+      h('strong', null, 'Generate a timetable'),
+      ' on the Timetables screen makes one from the layout’s places, its signal boxes and those jobs: through trains, trains that terminate and have their engine released, goods out and back, pilot shunts, light engines home at the end. Choose how it runs, how long and how busy, and the traffic mix; the preview shows what it would make, and Try another gives a different pattern. It saves as an ordinary timetable, to edit as you like.',
+    ),
+    h('h3', null, 'Running a timetable'),
+    h(
+      'p',
+      null,
+      `Open ${boxName} box and press `,
+      h('strong', null, 'Timetable'),
+      ` on its top bar. Choose a timetable${sample ? ` (try ${sample.name})` : ''} and who works the fiddle yards: simulated (trains come and go by themselves) or you (press Done when you have moved them). Start it, and open the box with each neighbour: nothing happens until then. Trains are then offered to you when due, the Departure panel picks the train that is due away, and shunts come up as cards in the strip under the Next step bar. The panel lets you release a move early, skip one, mark one done, pause, or switch to another timetable (moves under way finish first).`,
+    ),
+    h(
+      'p',
+      null,
+      h('strong', null, 'Endless'),
+      ' in the same list makes the timetable up as it runs, from the same jobs: on a clock it plans the next 15 minutes, in a sequence it keeps six moves lined up. It carries on until you stop it, and ',
+      h('strong', null, 'Keep this as a timetable'),
+      ' saves what it has made to run again or print.',
+    ),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.goFrom('timetables', { route: 'tutorial', label: 'tutorial' }) } }, 'Timetables'), h('button', { class: 'btn', type: 'button', on: { click: () => ctx.goFrom('ttgen', { route: 'tutorial', label: 'tutorial' }) } }, 'Generate a timetable')),
+  ];
+
   return {
     title: 'Tutorial',
     el: h(
@@ -141,7 +194,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
           ? h(
               'p',
               { class: 'lead' },
-              `This page explains absolute block signalling and the bell codes, then takes you through a session at ${boxName} step by step (section 8). You can open the box and try it at any point.`,
+              `This page explains absolute block signalling and the bell codes, then takes you through a session at ${boxName} step by step (section 8) and explains timetables (section 9). You can open the box and try it at any point.`,
             )
           : null,
         tryButton(),
@@ -215,6 +268,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
         h('p', null, 'In Learner mode the box shows the next step and explains mistakes. Strict mode removes the prompts and logs irregularities instead. Either way the score plate counts points for working by the book.'),
         ...session,
         session.length ? null : tryButton(),
+        ...ttSection,
       ),
     ),
   };

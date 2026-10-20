@@ -1995,3 +1995,27 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .ttp-radios { display: flex; flex-direction: column; gap: 4px; }
 .confirm-dialog .ttp-radios .check { color: var(--btn-fg); }
 .confirm-dialog .ttp-radios input { accent-color: var(--brass); flex: 0 0 auto; }
+
+/* ==========================================================================
+   v0.3.26 Headcode eras (lamp diagrams), the timetable generator and
+   Endless running.
+   ========================================================================== */
+.lamp-code { display: inline-block; width: 2.6em; height: auto; vertical-align: middle; flex: 0 0 auto; overflow: visible; }
+.tt-row-lamps { width: 3em; color: var(--btn-fg); }
+.tt-lamps { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.tt-form-lamps { width: 3.6em; color: var(--btn-fg); }
+.tt-hc-warn { color: #e9cf8a; }
+.tc-lamp-row { display: inline-flex; align-items: center; gap: 8px; }
+.tc-lamps { width: 2.8em; }
+.pp-lamps { width: 2.5em; margin-right: 6px; }
+.pp-lampkey { margin-top: 10px; text-align: center; }
+.pp-lampkey-title { font-family: 'Alfa Slab One', 'Rockwell', 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.85rem; margin: 0 0 4px; }
+.tt-poster .pp-lampkey ul { display: flex; flex-direction: row; margin: 0; padding: 0; flex-wrap: wrap; justify-content: center; gap: 6px 18px; }
+.tt-poster .pp-lampkey li { display: inline-flex; align-items: center; gap: 4px; font-size: 0.88rem; }
+.tg-trains li { padding: 3px 0; }
+.tg-when { display: inline-block; min-width: 3.6em; font-family: var(--font-mono); font-weight: 600; }
+.tg-seed { font-family: var(--font-mono); font-weight: 600; }
+.tg-locos li { padding: 3px 0; }
+.ttp-endless { border-left: 3px solid var(--brass, #c9a54e); padding-left: 10px; margin: 6px 0; }
+.ttp-e-clock { gap: 10px; align-items: flex-start; }
+.ttp-e-clock .field { flex: 1 1 8em; }

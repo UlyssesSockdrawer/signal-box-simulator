@@ -15,10 +15,11 @@ import { layoutListScreen, layoutMenuSummary, moveBoxToLayout } from './screens/
 import { trackPlanScreen } from './screens/trackPlan';
 import { tutorialScreen } from './screens/tutorial';
 import { timetableListScreen, timetableScreen, timetablesMenuSummary } from './screens/timetables';
+import { generateScreen } from './screens/timetableGenerate';
 import { findTimetable } from '../core/timetables';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.25';
+export const APP_VERSION = '0.3.26';
 
 export interface Ctx {
   store: Store;
@@ -363,6 +364,11 @@ export function startApp(root: HTMLElement, store: Store): void {
         screen = timetableScreen(ctx, arg, t === 'poster' || t === 'cards' || t === 'settings' ? t : 'moves');
         break;
       }
+      case 'ttgen':
+        // Generate a timetable: #ttgen, or #ttgen/<id> to generate a timetable again.
+        if (arg && !findTimetable(store.state, arg)) history.replaceState(null, '', '#ttgen');
+        screen = generateScreen(ctx, arg && findTimetable(store.state, arg) ? arg : '');
+        break;
       case 'help':
         screen = helpScreen(ctx);
         break;

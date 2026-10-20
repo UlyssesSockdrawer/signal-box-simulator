@@ -186,6 +186,27 @@ export interface Timetable {
   notes: string;
   trains: TimetableTrain[];
   entries: TimetableEntry[];
+  /** Set when the timetable was made by the generator: what it was asked for, so it can be generated again. */
+  generated?: GeneratorOptions;
+}
+
+/** How busy a generated timetable is: the usual gap between trains. */
+export type Busyness = 'quiet' | 'steady' | 'busy';
+
+/** What the timetable generator is asked for (v0.3.26). */
+export interface GeneratorOptions {
+  timing: TimetableTiming;
+  /** Session clock start (minutes after midnight); real time: the first train (minutes after midnight). */
+  startAt: number;
+  speed: number;
+  /** How long: a number of moves (operations sequence), or minutes of timetable (timed). */
+  length: number;
+  busyness: Busyness;
+  /** Locos taking part; [] = every loco on the layout with timetable jobs. */
+  locoIds: string[];
+  /** Traffic mix, on top of each loco's own how-often: 0 none, 1 a little, 2 normal, 3 lots. */
+  mix: { passenger: number; goods: number; shunting: number };
+  seed: number;
 }
 
 /*
@@ -437,7 +458,12 @@ export interface Layout {
   running?: RunningSide;
   /** Timetables for this layout (v0.3.24; filled in when loading older saves). */
   timetables?: Timetable[];
+  /** How its trains show what they are (v0.3.26): lamp headcodes and reporting numbers, or 1960 headcodes. Absent = 'br1960'. */
+  headcodeEra?: HeadcodeEra;
 }
+
+/** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */
+export type HeadcodeEra = 'grouping' | 'brLamps' | 'br1960';
 
 export interface AppState {
   schemaVersion: number;

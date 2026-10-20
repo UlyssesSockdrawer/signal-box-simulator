@@ -45,7 +45,10 @@ import type { AppState, Layout, PlaceRef, Timetable, TimetableCall, TimetableEnt
 import { activeCodeSet, locoFullName, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { confirmButton, confirmDialog, h, option, toast } from '../dom';
 import { plusIcon } from './boxConfig';
+import { checkHeadcode, eraOf, fillHeadcodes, headcodeClassWarning, headcodeLabel, headcodePlaceholder, usesLamps, wantsHeadcode } from '../../core/headcodes';
+import { lampDiagram } from '../lampDiagram';
 import { cardsView, posterView } from './timetablePrint';
+import { genRoute } from './timetableGenerate';
 
 /*
  * TIMETABLES: the list of a layout's timetables, and the timetable editor. The editor's Moves tab
@@ -176,6 +179,13 @@ export function timetableListScreen(ctx: Ctx): Screen {
       ),
     ),
   );
+  const genTile = h(
+    'button',
+    { class: 'add-tile box-add tt-add tt-gen-tile', type: 'button', id: 'tl_generate', disabled: full, on: { click: () => ctx.goFrom(genRoute(), { route: 'timetables', label: 'timetables' }) } },
+    plusIcon(),
+    h('span', { class: 'mi-label' }, 'Generate a timetable'),
+    h('span', { class: 'mi-sub' }, `Made for you from ${layout.name}'s places and the locos’ timetable jobs: then edit it as you like.`),
+  );
   return {
     title: 'Timetables',
     el: h(
@@ -187,7 +197,7 @@ export function timetableListScreen(ctx: Ctx): Screen {
         { class: 'muted layout-intro' },
         `Timetables for ${layout.name}. Each is a list of moves, train by train: where each train runs, what it runs as, and which loco works it. An operations sequence has no times (each move follows the one before); real-time and session-clock timetables run to the clock.`,
       ),
-      h('nav', { class: 'menu-shelf box-shelf', 'aria-label': `Timetables for ${layout.name}` }, h('h2', { class: 'nameboard section-board box-group-board' }, layout.name), switcher, ...list.map(tile), addTile),
+      h('nav', { class: 'menu-shelf box-shelf', 'aria-label': `Timetables for ${layout.name}` }, h('h2', { class: 'nameboard section-board box-group-board' }, layout.name), switcher, ...list.map(tile), addTile, genTile),
     ),
   };
 }
@@ -475,9 +485,37 @@ function movesTab(ctx: Ctx, layout: Layout, tt: Timetable, upd: Upd): HTMLElemen
         },
         '+ Note',
       ),
+      h('button', { class: 'btn', type: 'button', id: 'tt_fill_hc', on: { click: () => fillInHeadcodes(layout, tt, upd) } }, `Fill in ${usesLamps(eraOf(layout)) ? 'reporting numbers' : 'headcodes'}`),
     ),
   );
   return shelf;
+}
+
+/** Number the moves that should carry a headcode: blank ones, or (asked first) all of them. */
+function fillInHeadcodes(layout: Layout, tt: Timetable, upd: Upd): void {
+  const era = eraOf(layout);
+  const what = usesLamps(era) ? 'reporting numbers' : 'headcodes';
+  const blanks = tt.entries.filter((e) => wantsHeadcode(era, e) && !e.headcode.trim()).length;
+  if (blanks) {
+    let n = 0;
+    upd((t, l, a) => (n = fillHeadcodes(a, l, t, false)));
+    toast(n ? `Filled in ${n} ${what}. Press again to renumber them all.` : `No ${what} to fill in.`);
+    return;
+  }
+  confirmDialog({
+    title: `Renumber all the ${what}?`,
+    body: [
+      `Every move that carries ${usesLamps(era) ? 'a reporting number' : 'a headcode'} gets a new one${usesLamps(era) ? ' (1xx passenger, 5xx goods)' : ': the class of train, a letter for where it is going, and a number'}. Numbers you typed yourself are replaced.`,
+    ],
+    confirmLabel: 'Renumber all',
+    confirmClass: 'btn primary',
+    onDone: (ok) => {
+      if (!ok) return;
+      let n = 0;
+      upd((t, l, a) => (n = fillHeadcodes(a, l, t, true)));
+      toast(n ? `Renumbered ${n} moves.` : `The ${what} were already in order.`);
+    },
+  });
 }
 
 /** Where every loco stands after a step (or before the first, at -1), grouped by place. */
@@ -682,6 +720,7 @@ function entryRow(ctx: Ctx, layout: Layout, tt: Timetable, e: TimetableEntry, st
     h('span', { class: 'pl-chev', 'aria-hidden': 'true' }),
     h('span', { class: `tt-no${isTimed(tt) ? ' time' : ''}`, title: isTimed(tt) ? 'Departs' : e.withPrevious ? 'Released with the move before it' : 'Step' }, no),
     e.headcode ? h('span', { class: 'tt-headcode' }, e.headcode) : null,
+    e.kind !== 'note' && usesLamps(eraOf(layout)) ? lampDiagram(eraOf(layout), e.trainTypeId, 'tt-row-lamps') : null,
     h(
       'span',
       { class: 'tt-what' },
@@ -742,7 +781,16 @@ function entryForm(ctx: Ctx, layout: Layout, tt: Timetable, e: TimetableEntry, s
   const fields: Array<HTMLElement | null> = [kindSel, tt.trains.length ? trainSel : null];
   if (e.kind !== 'note') {
     fields.push(h('div', { class: 'field' }, h('label', { for: id('tt') }, e.kind === 'run' ? 'Runs as' : 'Working'), h('select', { id: id('tt'), on: { change: (ev: Event) => edit((x) => (x.trainTypeId = (ev.target as HTMLSelectElement).value)) } }, ...workingOptions(st, e.trainTypeId)), h('small', { class: 'help' }, 'Sets its description and bell code for this move.')));
-    fields.push(checkedInput(id('hc'), 'Reporting number', e.headcode, 8, () => null, (v) => edit((x) => (x.headcode = v.toUpperCase())), { placeholder: 'e.g. 2B05', help: 'Optional. Shown on the poster and train cards.' }));
+    const era = eraOf(layout);
+    const hc = checkedInput(id('hc'), headcodeLabel(era), e.headcode, 8, () => null, (v) => edit((x) => (x.headcode = v.toUpperCase())), {
+      placeholder: headcodePlaceholder(era),
+      help: wantsHeadcode(era, e) ? `Optional. Shown on the poster and train cards. Fill in ${usesLamps(era) ? 'reporting numbers' : 'headcodes'} (below the moves) numbers them for you.` : usesLamps(era) ? 'Light engines and shunts carry no reporting number: their lamps say what they are.' : 'Shunts usually carry none.',
+    });
+    const warn = checkHeadcode(era, e.headcode) ?? headcodeClassWarning(era, e.headcode, e.trainTypeId);
+    if (warn) hc.append(h('small', { class: 'help tt-hc-warn' }, `! ${warn}`));
+    const lamps = usesLamps(era) ? lampDiagram(era, e.trainTypeId, 'tt-form-lamps') : null;
+    if (lamps) hc.append(h('div', { class: 'tt-lamps' }, lamps, h('small', { class: 'help' }, lamps.getAttribute('aria-label') ?? '')));
+    fields.push(hc);
   }
   if (timed) {
     fields.push(timeInput(id('dep'), e.kind === 'note' ? 'At' : e.kind === 'run' ? 'Departs' : 'Starts', tt, e.dep, (v) => edit((x) => (x.dep = v), true)));
@@ -1013,6 +1061,7 @@ function settingsTab(ctx: Ctx, layout: Layout, tt: Timetable, upd: Upd): HTMLEle
         },
         'Make a copy',
       ),
+      tt.generated ? h('button', { class: 'btn', type: 'button', id: 'tts_regen', on: { click: () => ctx.goFrom(genRoute(tt.id), { route: ttRoute(tt.id, 'settings'), label: tt.name }) } }, 'Generate again…') : null,
       h('span', { class: 'tt-spacer' }),
       confirmButton('Delete this timetable', 'Press again to delete it', () => {
         ctx.store.update((a) => deleteTimetable(a, tt.id));

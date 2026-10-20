@@ -5,8 +5,9 @@ import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
 import { ThroughWorkings } from './throughTrains';
 import { TimetableRunner } from './timetableRunner';
-import { addTimetable, addTrain, findTimetable } from './timetables';
-import type { AppState, Location } from './types';
+import { addTimetable, addTrain, findTimetable, walkTimetable } from './timetables';
+import { defaultGeneratorOptions, TimetableGenerator } from './timetableGenerator';
+import type { AppState, Location, Timetable } from './types';
 
 /** Sigsim Central with its box being worked (both lines opened), and a runner for its layout. */
 function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated' | 'me'; open?: boolean } = {}) {
@@ -336,5 +337,47 @@ describe('timetable runner', () => {
     t.tick();
     expect(t.runner.items[0].state).toBe('done');
     expect(t.loco('lms7298').location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road3' });
+  });
+
+  it('runs Endless: keeps six moves waiting in a sequence, and never finishes', () => {
+    const t = setup({ worked: false });
+    const opts = { ...defaultGeneratorOptions('sequence'), seed: 5 };
+    const tt: Timetable = { id: 'endless', name: 'Endless', timing: 'sequence', startAt: 540, elapsed: false, speed: 1, validity: '', notes: '', trains: [], entries: [], generated: opts };
+    t.runner.loadEndless(tt, new TimetableGenerator(t.state, t.state.layouts[0], opts));
+    expect(t.runner.items.filter((x) => x.state === 'waiting').length).toBeGreaterThanOrEqual(6);
+    t.runner.start({ operator: 'simulated' });
+    for (let i = 0; i < 400; i++) {
+      t.tick(2000);
+      // Shunts and notes are cards: press Done as an operator would.
+      for (const it of t.runner.items) if (it.state === 'active' && it.card) t.runner.done(it.id);
+    }
+    const done = t.runner.items.filter((x) => x.state === 'done').length;
+    expect(done).toBeGreaterThan(12);
+    expect(t.runner.items.filter((x) => x.state === 'waiting').length).toBeGreaterThanOrEqual(6);
+    expect(t.runner.finished).toBe(false);
+    // What has run so far is a proper timetable (Keep this as a timetable).
+    const w = walkTimetable(t.state, t.state.layouts[0], t.runner.tt!);
+    expect(w.errors).toBe(0);
+  });
+
+  it('runs Endless on a session clock: plans the next 15 minutes as the clock goes', () => {
+    const t = setup({ worked: false });
+    const opts = { ...defaultGeneratorOptions('session'), seed: 9, startAt: 600, speed: 12 };
+    const tt: Timetable = { id: 'endless', name: 'Endless', timing: 'session', startAt: 600, elapsed: false, speed: 12, validity: '', notes: '', trains: [], entries: [], generated: opts };
+    t.runner.loadEndless(tt, new TimetableGenerator(t.state, t.state.layouts[0], opts));
+    const first = t.runner.items.length;
+    expect(first).toBeGreaterThan(0);
+    expect(Math.max(...t.runner.items.map((x) => x.entry.dep!))).toBeLessThan(600 + 15);
+    t.runner.start({ operator: 'simulated' });
+    for (let i = 0; i < 300; i++) {
+      t.tick(1000);
+      for (const it of t.runner.items) if (it.state === 'active' && it.card) t.runner.done(it.id);
+    }
+    // 300 s at twelve times = an hour of clock: more trains planned, none beyond 15 minutes ahead.
+    const now = t.runner.clockNow()!;
+    expect(now).toBeGreaterThan(650);
+    expect(t.runner.items.length).toBeGreaterThan(first);
+    expect(Math.max(...t.runner.items.map((x) => x.entry.dep!))).toBeLessThan(now + 15 + 1);
+    expect(t.runner.items.filter((x) => x.state === 'done').length).toBeGreaterThan(4);
   });
 });

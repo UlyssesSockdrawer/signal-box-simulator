@@ -337,6 +337,7 @@ export function sortByTime(tt: Timetable): void {
 export function sanitiseTimetables(state: AppState): void {
   for (const layout of state.layouts) {
     layout.timetables = (Array.isArray(layout.timetables) ? layout.timetables : []).filter((t) => t && typeof t === 'object' && typeof t.id === 'string');
+    if (layout.headcodeEra !== undefined && !['grouping', 'brLamps', 'br1960'].includes(layout.headcodeEra)) delete layout.headcodeEra;
     for (const tt of layout.timetables) {
       tt.name = String(tt.name ?? '').trim() || 'Timetable';
       if (!TIMINGS.some((x) => x.timing === tt.timing)) tt.timing = 'sequence';
@@ -345,6 +346,7 @@ export function sanitiseTimetables(state: AppState): void {
       tt.speed = Number.isFinite(tt.speed) ? Math.max(1, Math.min(MAX_SPEED, Math.round(tt.speed))) : 1;
       tt.validity ??= '';
       tt.notes ??= '';
+      if (tt.generated && (typeof tt.generated !== 'object' || !Number.isFinite(tt.generated.seed))) delete tt.generated;
       tt.trains = Array.isArray(tt.trains) ? tt.trains.filter((t) => t && typeof t.id === 'string') : [];
       for (const t of tt.trains) {
         t.name ??= 'Train';
