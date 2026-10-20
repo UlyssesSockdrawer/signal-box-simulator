@@ -7,7 +7,8 @@ drive (with its DCC address). The levers, interlocking and signals stay on the p
 
 It ships with an example to try it out: **Sigsim Central**, a station on a single line with a passing
 loop (platforms 1 and 2), a goods siding and a goods shed, between **Fiddle Yard West** and **Fiddle
-Yard East**, with four LMS locomotives (a Princess Coronation, a Black Five, an 8F and a Jinty). The
+Yard East**, with eight LMS and ex-Midland locomotives (a Princess Coronation, a Jubilee, a Black Five,
+a Crab, an 8F, a Jinty, an ex-MR 483 Class 2P and an ex-MR Johnson 3F). The
 Tutorial walks through a session there. Change it into your own layout, or add your own layouts and
 boxes alongside it; **Settings → Reset to defaults** brings the example back.
 
@@ -224,6 +225,133 @@ joined by junctions. The plan starts empty: build your own.
   automatically, including any already in saved plans.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
+
+## Timetables, part 3: generated and Endless timetables, headcode eras (v0.3.26)
+
+**Generate a timetable** (on the Timetables screen) makes one for you from the layout's places,
+the signal boxes that work them and the lines between, and the roster locos' **timetable duties**:
+
+* **What it builds:** through runs from one fiddle yard to another, passing (expresses, goods) or
+  calling at (stopping trains) the stations between; trains into a station that turn round, the
+  engine released to a siding, goods yard or depot the same box works (or running round) and back
+  on to its coaches; goods to goods yards that shunt and go back (minerals with the empties); pilot
+  shunts between the places a pilot works; a light engine first when a loco is not where its job
+  starts, or a move on to the layout through a fiddle yard for a loco that is off it. One train on a
+  road at a time, one train on a single line at a time; at the end locos go home (or to a fiddle
+  yard). Headcodes are filled in, and it passes the editor's checks.
+* **Options:** name; how it runs (sequence, real time, session clock with its start and speed);
+  how long (moves, or minutes); how busy (quiet, steady, busy); the **traffic mix** (passenger,
+  goods, pilots and shunting: none / a little / normal / lots, or a preset such as Busy passenger or
+  Mostly goods), on top of how often each loco gets each job; which locos take part (by default
+  those on the layout with duties); and a **pattern** number (the same pattern and options make the
+  same timetable; Try another for a different one). A preview shows what it would make.
+* It saves as an ordinary timetable. A generated timetable's Settings tab has **Generate again…**
+  with its options filled in (replace it, or save a new one).
+
+**Endless** (in a box's Timetable panel, top of the list) makes the timetable up as it runs, from
+the same duties: on a clock everything due in the next **15 minutes** is planned, in an operations
+sequence **six moves** are always lined up beyond those under way. Locos with nothing booked are
+picked up from where they really are. It runs until stopped; **Keep this as a timetable** saves what
+it has made. You can switch between Endless and other timetables on the fly.
+
+**Headcodes by era**, chosen per layout (Details tab, Timetables case), used by the editor, the
+generator, the poster and the train cards:
+
+* **Grouping era (1923–1947):** engines carry a **lamp headcode** for their class of train (the
+  GWR 1936 / LMS 1937 standard codes), and trains a three-digit **reporting number** (e.g. 123:
+  1xx passenger, 5xx goods). Light engines and shunts carry lamps only.
+* **BR steam era (1948–1960):** lamp headcodes as BR rearranged them in the 1950s, and a
+  reporting number.
+* **BR 1960 onwards:** the four-character headcode (class digit, destination letter, number, e.g.
+  2E11) replaces the lamps. Each place gets its own destination letter (the first letter of the last
+  word of its name where it can: Fiddle Yard East → E).
+
+Lamp eras draw the lamps (as you face the engine) on each move, on the train cards and in a key on
+the poster. **Fill in headcodes** (below the moves) numbers the blank ones, or all of them. Railways
+had their own variations (the Southern used route discs): these are the standard codes.
+
+The tutorial has a new section 9 on timetables.
+
+**Timetable duties** (roster) replace jobs by kind of train. A loco is given duties: **express
+passenger**, **stopping passenger** (ordinary and branch), **parcels and empty stock**, **express
+goods** (the fitted and express freights), **through goods and mineral**, **pick-up and branch
+goods**, **station pilot**, and **railcar services**, each between the places ticked and sometimes,
+often or mostly. A duty covers all its workings: **Runs as** can pin one ("Mineral only"), or be left
+to any, and the generator picks a suitable one. **Roles** fill in a set in one click: Express
+passenger, Mixed traffic (anything, like a Black Five), Local passenger, Goods, Shunter / pilot,
+Railcar / DMU. Light engine and engine-and-brake-van moves need no duty: any engine makes them (the
+generator sends goods engines to fetch their trains with a brake van). **Railcars** (power DMU) work
+railcar services only, run empty instead of light, and change ends at a terminus instead of running
+round. Old jobs become duties when loaded; light engine jobs are dropped. The roster shows each
+loco's number, name and class, and its duties.
+
+**Bigger example roster:** Sigsim Central now starts with eight engines, adding 5690 *Leander*
+(Jubilee: expresses and parcels), 2700 (Crab: mixed traffic, mostly goods), 542 (ex-MR 483 Class 2P:
+stopping trains, parcels and empty stock) and 3436 (ex-MR Johnson 3F: pick-up goods and coal). The
+Black Five is mixed traffic: passenger or goods. Both fiddle yards have six roads. Existing saves
+keep their own roster: **Settings → Reset to defaults** brings in the new example (and replaces
+everything else).
+
+## Timetables, part 2: running a timetable in the box (v0.3.25)
+
+Open a signal box and press **Timetable** (header) to choose a timetable for the session and start
+it. A **timetable strip** under the Next step bar shows its clock (or the step of an operations
+sequence), moves waiting for you with their **Done** buttons, what is under way and what is next.
+
+* **Releasing:** an operations sequence gives out each step once the one before has finished (moves
+  "released with the previous" together); real-time and session-clock timetables release moves at
+  their times. A train's moves always follow one another. **Pause** holds the session clock.
+* **How each move is worked** follows its route through the boxes: a train coming in is **offered
+  by the simulated box** (its working and bell code set from the timetable; the arrival road chosen
+  for you); a train leaving is **chosen in the Departure panel**, with the road at the far end, and
+  Next step says to offer it; a train passing through is offered on; a **shunt** in your box's area
+  is a card you press Done on. Trains entering or leaving the layout, and moves no box you work
+  signals, happen by themselves (**simulated fiddle yard operator**) or as cards for you (**Me**),
+  chosen when you start. A box nobody has open is simulated too.
+* **Stepping:** Release next now, or for any move Release now, Mark done (as if it ran) and Skip.
+  A train cancelled in the box can be offered again.
+* **Starting:** the Start dialog checks the stock: add positioning moves first, put the locos there
+  in the app, or start as they are. A real-time timetable started late can skip the moves whose
+  time has passed, or run them late (shown as late).
+* **Switching on the fly:** moves under way finish; the new timetable then starts, with positioning
+  moves (light engine and fiddle yard moves) for locos that are not where it starts them.
+* "Any loco" trains get a loco with the job, standing where the move starts.
+
+The timetable runs for the app session (like the boxes): reloading the page stops it.
+
+## Timetables, part 1: the editor, poster and train cards (v0.3.24)
+
+**Timetables** on the main menu lists the active layout's timetables. A timetable belongs to one
+layout and is a list of **moves**, train by train. Each move is a **Run** (signalled from one place
+to another over the lines between boxes), a **Shunt / change working** (within one box's area, or
+a change of working where the train stands), **Enter from off layout**, **Leave the layout**, or a
+**Note**. Each has a working (its description and bell code), an optional reporting number, from
+and to (place and road), places it calls at or passes, and notes for the operators.
+
+* A **train** is a chain of moves worked by one loco (or "any loco" with a job for its working).
+  **+ Then this train…** adds its next move starting where the last one ended, so a terminus
+  turnaround is quick: ordinary passenger into a platform, light engine to the shed, light engine
+  back on to the coaches, ordinary passenger out again.
+* Three ways to run: **Operations sequence** (no times: each move is released when the one before
+  has finished, or *with* it), **Real time** (system clock) and **Session clock** (from a start time
+  or as minutes after the start, at real speed or as a fast clock up to ×12).
+* The **Moves** tab shows the moves **In order** or **By train**, checks them as you edit (a loco
+  starting somewhere its last move did not leave it, a road or place that no longer exists, no route
+  between two places, a loco booked on two trains at once, a road another train still stands on,
+  backwards times), shows the **route** each move takes through the boxes, and lists the **stock at
+  the start** (with a button to put the locos there in the app). **Step through** shows where every
+  loco stands after each move.
+* **Poster**: a letterpress public timetable (the layout as a railway company, a table per direction,
+  goods and other trains listed below). **Train cards**: one card per move, as in a card-order
+  system. Both print.
+* **Locomotive roster → Timetable jobs**: the work each loco is given (train jobs between places,
+  or station pilot duty) and its home. "Any loco" trains are given to locos with the job; the
+  timetable generator will use them too.
+* Sigsim Central ships with two example timetables (a session-clock morning service and the same
+  moves as an operations sequence). Existing saves keep their data and start with none.
+
+Running a timetable in the box (choosing it for a session, offers and departures from the
+timetable, switching on the fly) is the next version; dynamic timetables come after that.
 
 ## Fixes (v0.3.23)
 
@@ -442,6 +570,11 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   sectionController.ts Your end of a block section: instruments, tokens, log
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
+  timetables.ts        Timetables: trains and moves, routes through the boxes, checks, stock positions, poster tables
+  timetableRunner.ts   Running a timetable: releasing moves, working them through the boxes, stepping, switching, Endless
+  timetableGenerator.ts Generating timetables from loco duties (Generate, and Endless as it runs)
+  duties.ts            Loco duties, roles, railcars; which locos can work which trains
+  headcodes.ts         Headcode eras: lamp codes, reporting numbers, 1960 four-character headcodes
   throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
   referee.ts           Puts each line's points on the box's scorecard; clean working judged per train
   simulatedNeighbour.ts The far signaller: replies, offers trains, coaches you
@@ -453,6 +586,9 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   planDiagram.ts       Read-only track diagram (the box's diagram board)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
+  screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
+  screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
+  screens/timetableGenerate.ts  Generate a timetable; lampDiagram.ts draws lamp headcodes
 scripts/build.mjs      Builds dist/ (single HTML file, PWA folder, and claude-hosted/ for the hosted copy)
 ```
 
@@ -471,7 +607,6 @@ npm run typecheck
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
 * Simulated running: light up occupied track circuits on the diagram board (`setOccupied` in ui/planDiagram.ts) so trains need not move on a real layout.
-* Timetabled workings (exhibition running plans) as a new `IncomingSelector`.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.
 * Android APK via Capacitor wrapping `dist/pwa/`.

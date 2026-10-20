@@ -209,7 +209,7 @@ export function safeRerender(root: () => Element | null, render: () => void, scr
  * mahogany case. `onDone(true)` runs when they confirm, `onDone(false)` when they cancel
  * (Cancel, Escape or a click outside).
  */
-export function confirmDialog(opts: { title: string; body: Array<string | HTMLElement>; confirmLabel: string; cancelLabel?: string; onDone: (ok: boolean) => void }): void {
+export function confirmDialog(opts: { title: string; body: Array<string | HTMLElement>; confirmLabel: string; cancelLabel?: string; confirmClass?: string; onDone: (ok: boolean) => void }): void {
   const dlg = h('dialog', { class: 'config-case confirm-dialog', 'aria-labelledby': 'cd_title' });
   let done = false;
   const finish = (ok: boolean) => {
@@ -226,7 +226,7 @@ export function confirmDialog(opts: { title: string; body: Array<string | HTMLEl
       'div',
       { class: 'row end' },
       h('button', { class: 'btn', type: 'button', on: { click: () => finish(false) } }, opts.cancelLabel ?? 'Cancel'),
-      h('button', { class: 'btn danger armed', type: 'button', on: { click: () => finish(true) } }, opts.confirmLabel),
+      h('button', { class: opts.confirmClass ?? 'btn danger armed', type: 'button', on: { click: () => finish(true) } }, opts.confirmLabel),
     ),
   );
   dlg.addEventListener('cancel', (e) => {

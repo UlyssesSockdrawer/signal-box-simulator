@@ -37,7 +37,12 @@ export type LinkMessage =
   // ---- Bookkeeping / coaching ----
   | { type: 'movementComplete'; direction: 'incoming' | 'outgoing'; locoId: string | null; roadId?: string }
   | { type: 'trainDeparted'; direction: 'incoming' | 'outgoing'; locoId: string | null }
-  | { type: 'guidance'; text: string }
+  /**
+   * Learner guidance. `drive`: the part that tells you to drive the train to the far end and report it
+   * arrived (left out when someone else, e.g. a simulated fiddle yard operator, does that); `idle`: the
+   * section is clear and nothing is being signalled on this line.
+   */
+  | { type: 'guidance'; text: string; drive?: string; idle?: boolean }
   | { type: 'hint'; text: string; level: 'info' | 'warn' }
   | { type: 'irregularity'; text: string }
   /** Points gained or lost by the signaller (the far box referees). */

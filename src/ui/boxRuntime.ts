@@ -172,6 +172,11 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
   return runtime;
 }
 
+/** A box's running state if it is being worked (its screen has been opened), without starting it. */
+export function peekBoxRuntime(boxId: string): BoxRuntime | undefined {
+  return cache.get(boxId);
+}
+
 /** Stop a box's running state, e.g. when the box is deleted. */
 export function disposeBoxRuntime(boxId: string): void {
   cache.get(boxId)?.dispose();

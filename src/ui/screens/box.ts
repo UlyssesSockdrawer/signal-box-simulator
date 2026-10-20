@@ -18,6 +18,9 @@ import { activeCodeSet, locationText, locoFullName, locoName, trainTypeName, typ
 import { confirmButton, h, option, replace, safeRerender, toast } from '../dom';
 import { codeReference } from './help';
 import { layoutEditor } from './layout';
+import { timetablePanel, timetableStrip } from './timetableRun';
+import { fmtTime } from '../../core/timetables';
+import { onRunnerChange, peekRunner } from '../timetableRuntime';
 
 /*
  * The signal box console.
@@ -40,12 +43,18 @@ interface ConnectionUI {
   depBody: HTMLElement;
   regBody: HTMLElement;
   guidance(): { text: string; hint: string };
+  /** The timetable's note for this line (when a train should reach the box…), or ''. */
+  ttHint(): string;
   /** A train is being offered or worked on this line. */
   busy(): boolean;
+  /** Opened with the far box (5-5-5). */
+  isOpen(): boolean;
   name: string;
   tapPress(): void;
   tapRelease(): void;
   setSelected(on: boolean, many: boolean): void;
+  /** Redraw what depends on the timetable (arrival road, due departure). */
+  refresh(): void;
 }
 
 export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
@@ -72,6 +81,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 
   let selected = 0;
   let tab: DeskTab = 'arr';
+  const layoutId = () => store.state.boxes.find((b) => b.id === box.id)?.layoutId ?? box.layoutId;
 
   // ---------------------------------------------------------------- next step
   const nextStep = h('div', { class: 'next-step', role: 'status', 'aria-live': 'polite' });
@@ -111,15 +121,20 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const reg = runtime.regulator.advice();
     // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
     const tg = runtime.workings.guidance();
-    // A quiet line selected while a train is still being worked on another: show that line's next step.
-    const other = !tg && !ui.busy() ? uis.find((u) => u !== ui && u.busy()) : undefined;
+    // A quiet line selected while a train is still being worked on another, or another line is not
+    // yet open (nothing can run, a timetable cannot start, until every line is): show that line's next step.
+    const other = !tg && !ui.busy() ? (uis.find((u) => u !== ui && u.busy()) ?? (ui.isOpen() ? uis.find((u) => u !== ui && !u.isOpen()) : undefined)) : undefined;
+    // A departure the timetable says is due, when nothing else needs doing first.
+    const ttg = !reg && !tg && !other && !ui.busy() ? peekRunner(layoutId())?.guidance(box.id) : null;
     const g = reg
       ? { text: reg.text, hint: '' }
       : tg
-        ? { text: tg.text, hint: '' }
+        ? { text: tg.text, hint: uis.map((u) => u.ttHint()).find(Boolean) ?? '' }
         : other
           ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` }
-          : ui.guidance();
+          : ttg
+            ? { text: ttg.text, hint: '' }
+            : ui.guidance();
     nextStep.hidden = false;
     replace(
       nextStep,
@@ -136,6 +151,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   // ---------------------------------------------------------------- connections
   let uis: ConnectionUI[] = [];
   uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection)));
+  // The timetable (if one is running on this box's layout) hears about every change in the box at once.
+  for (const s of sessions) ctx.onLeave(s.controller.events.on('change', () => peekRunner(layoutId())?.poke()));
 
 
   // ---------------------------------------------------------------- header
@@ -160,8 +177,39 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     }),
   );
 
-  const side = sidePanel(ctx, box.id);
+  const side = sidePanel(ctx, box);
   ctx.onLeave(side.dispose);
+
+  // ---------------------------------------------------------------- timetable strip
+  const strip = timetableStrip(ctx, box, () => side.open('timetable'));
+  let ready = false;
+  // When the timetable moves on: the strip, the desk (arrival roads, due departures) and the next step.
+  let lastTtKey = '';
+  let lastArrKey = '';
+  ctx.onLeave(
+    onRunnerChange((lid) => {
+      if (!ready || lid !== layoutId()) return;
+      strip.render();
+      for (const u of uis) u.refresh();
+      // A departure the timetable has made due: show it in the Departure panel once.
+      const ttg = peekRunner(lid)?.guidance(box.id);
+      const k = ttg ? `${ttg.connId}|${ttg.text}` : '';
+      if (k !== lastTtKey) {
+        lastTtKey = k;
+        const i = ttg ? sessions.findIndex((x) => x.connection.id === ttg.connId) : -1;
+        if (i >= 0 && depIdx !== i) showLine('dep', i, !uis[selected]?.busy());
+      }
+      // A train the timetable has had offered: show its line in the Next arrival panel once.
+      const r = peekRunner(lid);
+      const ai = r ? sessions.findIndex((x) => x.controller.view.incoming && r.forLine(box.id, x.connection.id)?.item.locoId === x.controller.view.incoming.locoId) : -1;
+      const ak = ai >= 0 ? `${ai}|${sessions[ai].controller.view.incoming?.locoId}` : '';
+      if (ak !== lastArrKey) {
+        lastArrKey = ak;
+        if (ai >= 0 && arrIdx !== ai) showLine('arr', ai, false);
+      }
+      renderNextStep();
+    }),
+  );
 
   // ---------------------------------------------------------------- score
   const score = runtime.score;
@@ -249,6 +297,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       { class: 'head-tools' },
       scoreBtn,
       diagramBtn,
+      h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('timetable') } }, 'Timetable'),
       h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('codes') } }, 'Bell codes'),
       h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: () => side.toggle('layout') } }, 'Places'),
       h('button', { class: 'btn small', type: 'button', on: { click: () => ctx.goFrom('settings', { route: `box/${box.id}`, label: `${box.name} box` }) } }, 'Settings'),
@@ -483,6 +532,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   }
   renderYard();
   renderNextStep();
+  strip.render();
+  ready = true;
 
   return {
     title: `${box.name} box`,
@@ -494,6 +545,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       soundBanner,
       diagramEl,
       nextStep,
+      strip.el,
       h('div', { class: 'console-main' }, shelf, desk),
       side.el,
     ),
@@ -523,6 +575,20 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   let arrRoad = '';
   let lastHint = '';
   let hintAt = 0;
+  /** The timetable's choices are applied once per train, so the signaller can still change them. */
+  let arrHintFor = '';
+  let roadHintFor = '';
+  const runner = () => peekRunner(st().boxes.find((b) => b.id === box.id)?.layoutId ?? box.layoutId);
+  /** "Timetable: 2W10 The Stopper · due 09:15 · 3 min late" for the move a line is working, if any. */
+  const ttNote = () => {
+    const r = runner();
+    const f = r?.forLine(box.id, conn.id);
+    if (!r || !f) return null;
+    const it = f.item;
+    const due = r.tt && r.tt.timing !== 'sequence' && it.entry.dep !== null ? fmtTime(it.entry.dep, r.tt) : '';
+    const text = [`Timetable: ${[it.entry.headcode, it.train?.name ?? (it.positioning ? 'positioning move' : '')].filter(Boolean).join(' ')}`, due ? `due ${due}` : '', it.late ? `${it.late} min late` : ''].filter(Boolean).join(' · ');
+    return h('p', { class: 'tt-desk-note' }, text);
+  };
 
   /** Where a train in this box's places stands, briefly: "P1", "Sigsim Central goods yard · Goods siding". */
   const whereAtBox = (l: Loco) => {
@@ -912,10 +978,22 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   const renderIncoming = () => {
     const v = c.view;
     const state = st();
+    // The timetable says where an incoming train goes: choose that road (once per train).
+    if (v.incoming && arrHintFor !== v.incoming.locoId) {
+      const hint = runner()?.arrivalHint(box.id, conn.id, v.incoming.locoId);
+      if (hint) {
+        arrHintFor = v.incoming.locoId;
+        const choices = arrivalChoices(state, box.id).filter((x) => x.placeId === hint.placeId);
+        const occ = new Set(state.roster.flatMap((l) => (l.location.kind === 'place' ? [`${l.location.placeId}|${l.location.roadId}`] : [])));
+        const pick = hint.roadId ? choices.find((x) => x.roadId === hint.roadId) : (choices.find((x) => !occ.has(`${x.placeId}|${x.roadId}`)) ?? choices[0]);
+        if (pick) arrAt = `${pick.placeId}|${pick.roadId}`;
+      }
+    }
     const candidates = incomingCandidates(state, conn);
     if (incSel && !candidates.some((l) => l.id === incSel) && !v.incoming) incSel = '';
     const thr = workings.through(conn.id);
-    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey()]);
+    const ttn = ttNote();
+    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey(), arrAt, ttn?.textContent ?? '']);
     mount(arrBody, key, () => {
       const title = null; // the panel's line bar names the line ("Next arrival from …")
       if (!v.incoming) {
@@ -985,6 +1063,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         replace(
           arrBody,
           title,
+          ttn,
           trainCard(inc.locoId, inc.trainTypeId),
           routeField(),
           h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, status),
@@ -1014,7 +1093,20 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     const accepted = v.mode === 'ab' ? v.remoteInstrument === 'LC' : v.tokenWithdrawnHere || v.releaseAvailable;
     const occupied = new Set(state.roster.flatMap((l) => (l.location.kind === 'place' && l.location.placeId === place?.id ? [l.location.roadId] : [])));
     if (!arrRoad || !place?.roads.some((r) => r.id === arrRoad)) arrRoad = place?.roads.find((r) => !occupied.has(r.id))?.id ?? place?.roads[0]?.id ?? '';
-    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, place?.name, place?.roads, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id, workings.throughTo(conn.id)]);
+    const r = runner();
+    const ttMove = r?.forLine(box.id, conn.id);
+    // A departure the timetable has made due is chosen in the panel.
+    if (v.outgoing?.locoId && !v.outgoing.departed && v.outgoing.locoId !== outSel && ttMove?.item.locoId === v.outgoing.locoId) outSel = v.outgoing.locoId;
+    // …and the road it is to run into at the far end (once per train).
+    if (v.outgoing?.locoId && roadHintFor !== v.outgoing.locoId) {
+      const road = r?.departureRoad(box.id, conn.id, v.outgoing.locoId);
+      if (road && place?.roads.some((x) => x.id === road)) {
+        arrRoad = road;
+        roadHintFor = v.outgoing.locoId;
+      }
+    }
+    const ttn = ttNote();
+    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, place?.name, place?.roads, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id, workings.throughTo(conn.id), ttn?.textContent ?? '']);
     mount(depBody, key, () => {
       const title = null; // the panel's line bar names the line ("Departure to …")
       const out = v.outgoing;
@@ -1027,6 +1119,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
         replace(
           depBody,
           title,
+          ttn,
           out.locoId ? trainCard(out.locoId, out.trainTypeId ?? state.roster.find((l) => l.id === out.locoId)?.working.trainTypeId ?? '') : h('p', null, 'Train on line.'),
           out.arrived
             ? h('p', { class: 'status go' }, `Arrived at ${place?.name ?? conn.neighbourName}. ${conn.neighbourName} will call attention and send 2-1 (Train out of section).`)
@@ -1071,6 +1164,7 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
       replace(
         depBody,
         title,
+        ttn,
         h('div', { class: 'field' }, h('label', { for: sel.id }, 'Departing train'), sel),
         chosen ? workingEditor(chosen.id, 'Working for this departure') : null,
         chosen
@@ -1206,19 +1300,70 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   ctx.onLeave(unsub);
   renderAll();
 
+  /** What the timetable adds to Next step for this line: when a train should reach the box, or be reported arrived. */
+  const ttHint = (): string => {
+    const r = runner();
+    const at = r?.autoArrivalAt(box.id, conn.id);
+    const auto = at ? `Timetable: the simulated fiddle yard operator reports it arrived at about ${clockTime(at, true)}, or press the arrived button yourself.` : '';
+    // When a timetabled train on its way should reach your box (until there is track to watch it on).
+    const due = r?.dueAtBox(box.id, conn.id);
+    const inc = c.view.incoming;
+    const soon = due && inc && !inc.arrived
+      ? Date.now() < due.at
+        ? `Timetable: due to ${due.through ? 'pass' : 'reach'} ${box.name} at about ${clockTime(due.at, true)}.`
+        : `Timetable: it should be ${due.through ? 'passing' : 'at'} ${box.name} now.`
+      : '';
+    return auto || soon;
+  };
   return {
     caseEl,
     arrBody,
     depBody,
     regBody,
-    guidance: () => ({ text: c.view.guidance, hint: lastHint }),
+    guidance: () => {
+      // The learner prompts follow how the session is being run: with a timetable running, a quiet
+      // line says what is next instead of "choose a train"; with a simulated fiddle yard operator,
+      // the train is driven into the yard and reported arrived for you.
+      let text = c.view.guidance;
+      const r = runner();
+      const at = r?.autoArrivalAt(box.id, conn.id);
+      const drive = c.view.guidanceDrive;
+      if (at && drive && text.includes(drive)) {
+        const out = c.view.outgoing;
+        const loco = out?.locoId ? st().roster.find((l) => l.id === out.locoId) : undefined;
+        const place = st().layouts.flatMap((l) => l.places).find((p) => p.id === conn.placeId)?.name ?? conn.neighbourName;
+        text = text.replace(
+          drive,
+          `The simulated fiddle yard operator brings ${loco ? locoName(loco) : 'the train'} into ${place} and reports it arrived at about ${clockTime(at, true)} (or press the arrived button yourself if it gets there first). Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`,
+        );
+        return { text, hint: lastHint };
+      }
+      if (c.view.guidanceIdle) text = r?.lineText(box.id, conn.id) ?? text;
+      // Once you have reported the train arrived (or passed, for a through train), the far box still
+      // waits for Train out of section: say just that, not "drive it in".
+      const inc = c.view.incoming;
+      if (inc?.arrived && /press "Train arrived"/.test(text)) {
+        const l = inc.locoId ? st().roster.find((x) => x.id === inc.locoId) : undefined;
+        const passed = workings.through(conn.id)?.stage === 'passed';
+        const v = c.view;
+        const token = v.mode === 'token' && v.tokenInHand ? ' Put the token back in the instrument first (Replace token).' : '';
+        text = `${l ? locoName(l) : 'The train'} has ${passed ? 'passed' : 'arrived'} complete with its tail lamp.${token} Call attention (1), then send 2-1 (Train out of section) to ${conn.neighbourName}${v.mode === 'ab' && v.myInstrument !== 'LB' ? ', and put your instrument back to LINE BLOCKED' : ''}.`;
+      }
+      return { text, hint: lastHint || ttHint() };
+    },
+    ttHint,
     busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
+    isOpen: () => c.view.boxOpen,
     name: conn.neighbourName,
     tapPress: press,
     tapRelease: release,
     setSelected: (on, many) => {
       caseEl.classList.toggle('selected', on);
       caseEl.classList.toggle('selectable', many);
+    },
+    refresh: () => {
+      renderIncoming();
+      renderOutgoing();
     },
   };
 }
@@ -1227,14 +1372,15 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
 // Side panel: bell code reference, and fiddle yard / station editing
 // =============================================================================
 
-type SideTab = 'codes' | 'layout';
+type SideTab = 'codes' | 'layout' | 'timetable';
 
-function sidePanel(ctx: Ctx, boxId: string): { el: HTMLElement; toggle(tab: SideTab): void; dispose(): void } {
+function sidePanel(ctx: Ctx, box: BoxDef): { el: HTMLElement; toggle(tab: SideTab): void; open(tab: SideTab): void; dispose(): void } {
+  const boxId = box.id;
   let tab: SideTab = 'codes';
   const body = h('div', { class: 'side-body' });
   const tabBtn = (t: SideTab, label: string) =>
     h('button', { class: 'btn small side-tab', type: 'button', role: 'tab', 'data-tab': t, on: { click: () => { tab = t; render(); } } }, label);
-  const tabs = h('div', { class: 'side-tabs', role: 'tablist' }, tabBtn('codes', 'Bell codes'), tabBtn('layout', 'Trains in places'));
+  const tabs = h('div', { class: 'side-tabs', role: 'tablist' }, tabBtn('timetable', 'Timetable'), tabBtn('codes', 'Bell codes'), tabBtn('layout', 'Trains in places'));
   const el = h(
     'aside',
     { id: 'side-panel', class: 'side-panel', hidden: true, 'aria-label': 'Reference and layout' },
@@ -1245,7 +1391,7 @@ function sidePanel(ctx: Ctx, boxId: string): { el: HTMLElement; toggle(tab: Side
   const render = () => {
     if (el.hidden) return;
     for (const b of tabs.querySelectorAll<HTMLElement>('.side-tab')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    replace(body, tab === 'codes' ? codeReference(ctx, true) : layoutEditor(ctx, true, ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId ?? ""));
+    replace(body, tab === 'codes' ? codeReference(ctx, true) : tab === 'timetable' ? timetablePanel(ctx, box) : layoutEditor(ctx, true, ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId ?? ""));
   };
   // Data changes rebuild the panel once focus has moved on, keeping the user's place.
   const rerender = safeRerender(() => body, render, () => body);
@@ -1266,11 +1412,23 @@ function sidePanel(ctx: Ctx, boxId: string): { el: HTMLElement; toggle(tab: Side
   };
   window.addEventListener('keydown', onKey);
   const unsub = ctx.store.subscribe(() => rerender());
+  // The Timetable tab follows the timetable as it runs (at most once a second while nothing else changes).
+  let ttKey = '';
+  const unsubRun = onRunnerChange(() => {
+    if (el.hidden || tab !== 'timetable') return;
+    const r = peekRunner(ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId);
+    const k = r ? JSON.stringify([r.tt?.id, r.started, r.paused, r.finished, r.items.map((x) => [x.id, x.state, x.status, x.card?.text, x.late]), r.log.length]) : '';
+    if (k === ttKey) return;
+    ttKey = k;
+    rerender();
+  });
   return {
     el,
     toggle: (t) => (!el.hidden && tab === t ? close() : open(t)),
+    open,
     dispose: () => {
       unsub();
+      unsubRun();
       window.removeEventListener('keydown', onKey);
       document.body.classList.remove('side-open');
     },
