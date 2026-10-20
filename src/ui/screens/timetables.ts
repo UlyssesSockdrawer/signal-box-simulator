@@ -1021,7 +1021,7 @@ function settingsTab(ctx: Ctx, layout: Layout, tt: Timetable, upd: Upd): HTMLEle
       }, 'btn danger small'),
     ),
   );
-  return h('div', { class: 'config-shelf tt-shelf' }, caseEl, h('p', { class: 'shelf-help' }, `Belongs to ${layout.name}. Running a timetable in a signal box (picking it for a session, releasing moves, switching on the fly) is coming in the next version.`));
+  return h('div', { class: 'config-shelf tt-shelf' }, caseEl, h('p', { class: 'shelf-help' }, `Belongs to ${layout.name}. To run it, open one of ${layout.name}'s signal boxes and use its Timetable panel: trains are offered to you and due departures chosen as the timetable says.`));
 }
 
 function setTiming(t: Timetable, timing: TimetableTiming): void {

@@ -225,6 +225,33 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Timetables, part 2: running a timetable in the box (v0.3.25)
+
+Open a signal box and press **Timetable** (header) to choose a timetable for the session and start
+it. A **timetable strip** under the Next step bar shows its clock (or the step of an operations
+sequence), moves waiting for you with their **Done** buttons, what is under way and what is next.
+
+* **Releasing:** an operations sequence gives out each step once the one before has finished (moves
+  "released with the previous" together); real-time and session-clock timetables release moves at
+  their times. A train's moves always follow one another. **Pause** holds the session clock.
+* **How each move is worked** follows its route through the boxes: a train coming in is **offered
+  by the simulated box** (its working and bell code set from the timetable; the arrival road chosen
+  for you); a train leaving is **chosen in the Departure panel**, with the road at the far end, and
+  Next step says to offer it; a train passing through is offered on; a **shunt** in your box's area
+  is a card you press Done on. Trains entering or leaving the layout, and moves no box you work
+  signals, happen by themselves (**simulated fiddle yard operator**) or as cards for you (**Me**),
+  chosen when you start. A box nobody has open is simulated too.
+* **Stepping:** Release next now, or for any move Release now, Mark done (as if it ran) and Skip.
+  A train cancelled in the box can be offered again.
+* **Starting:** the Start dialog checks the stock: add positioning moves first, put the locos there
+  in the app, or start as they are. A real-time timetable started late can skip the moves whose
+  time has passed, or run them late (shown as late).
+* **Switching on the fly:** moves under way finish; the new timetable then starts, with positioning
+  moves (light engine and fiddle yard moves) for locos that are not where it starts them.
+* "Any loco" trains get a loco with the job, standing where the move starts.
+
+The timetable runs for the app session (like the boxes): reloading the page stops it.
+
 ## Timetables, part 1: the editor, poster and train cards (v0.3.24)
 
 **Timetables** on the main menu lists the active layout's timetables. A timetable belongs to one
@@ -477,6 +504,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
   timetables.ts        Timetables: trains and moves, routes through the boxes, checks, stock positions, poster tables
+  timetableRunner.ts   Running a timetable: releasing moves, working them through the boxes, stepping, switching
   throughTrains.ts     Offering trains on from one line to another (routes, stages, guidance)
   referee.ts           Puts each line's points on the box's scorecard; clean working judged per train
   simulatedNeighbour.ts The far signaller: replies, offers trains, coaches you
@@ -489,6 +517,7 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
   screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
+  screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
 scripts/build.mjs      Builds dist/ (single HTML file, PWA folder, and claude-hosted/ for the hosted copy)
 ```
 

@@ -1923,3 +1923,74 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
   .pp-table th, .pp-table td { padding: 2px 5px; }
   .pp-border { outline-offset: 3px; }
 }
+
+/* =====================================================================
+   v0.3.25 Running a timetable in the box: the timetable strip under the
+   Next step bar, the side panel's Timetable tab, and notes on the desk.
+   ===================================================================== */
+.console > .tt-strip { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.tt-strip {
+  flex: 0 0 auto;
+  background: var(--wood-case);
+  color: var(--case-text);
+  border-bottom: 3px solid var(--ink);
+  padding-block: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.tts-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tts-head .btn { margin-left: auto; background: var(--wood-shelf); }
+.tts-tag { font-family: var(--font-plate); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; background: var(--brass); color: var(--brass-ink); border-radius: 3px; padding: 3px 8px 1px; }
+.tts-name { font-weight: 700; }
+.tts-clock { font-family: var(--font-mono); font-weight: 600; background: var(--describer); color: var(--amber); border: 1px solid var(--ink); border-radius: 4px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+.tts-badge { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; border: 1px solid #e9cf8a; color: #e9cf8a; border-radius: 99px; padding: 1px 8px; }
+.tts-badge.done { border-color: #9be3b4; color: #9be3b4; }
+.tts-cards { display: flex; flex-direction: column; gap: 6px; }
+.tts-card { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; background: var(--enamel); color: var(--enamel-ink); border-radius: 4px; padding: 6px 10px; border-left: 6px solid #1d4f7a; }
+.tts-card.operator { border-left-color: #2e6b3d; }
+.tts-card.note { border-left-color: var(--amber); }
+.tts-when { font-family: var(--font-mono); font-weight: 600; font-size: 0.85rem; }
+.tts-text { flex: 1 1 240px; font-weight: 600; }
+.tts-line { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: 0.88rem; color: var(--case-muted); }
+.tts-under { color: var(--case-text); }
+.tt-desk-note { margin: 0 0 6px; font-weight: 700; font-size: 0.88rem; color: var(--btn-fg); background: var(--shelf-bg); border-left: 4px solid var(--brass); border-radius: 3px; padding: 4px 8px; }
+@media (max-width: 700px) {
+  .tt-strip { max-height: 26vh; padding-block: 4px; }
+  .tts-line { display: none; }
+  .tts-text { font-size: 0.92rem; }
+}
+
+/* Side panel: Timetable tab */
+.ttp { display: flex; flex-direction: column; gap: 12px; }
+.ttp-title { margin: 0; font-size: 1.35rem; }
+.ttp-run { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: var(--surface); }
+.ttp-run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.ttp-run-head .tts-badge { color: var(--caution); border-color: var(--caution); }
+.ttp-run-head .tts-badge.done { color: var(--clear); border-color: var(--clear); }
+.ttp-btns { gap: 6px; }
+.ttp-switch .row { flex-wrap: nowrap; }
+.ttp-switch select { flex: 1 1 auto; min-width: 0; }
+.ttp-items { display: flex; flex-direction: column; gap: 8px; }
+.ttp-item { border: 1px solid var(--line); border-left: 6px solid var(--line); border-radius: var(--radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; background: var(--surface); }
+.ttp-item.active { border-left-color: var(--brass); }
+.ttp-item.needs { border-left-color: #1d4f7a; background: var(--hint-bg); }
+.ttp-item.done, .ttp-item.skipped { opacity: 0.75; }
+.ttp-item p { margin: 0; }
+.ttp-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ttp-when { font-family: var(--font-mono); font-weight: 600; }
+.ttp-state { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; border-radius: 99px; padding: 1px 8px; border: 1px solid var(--line); color: var(--muted); }
+.ttp-state.active { border-color: var(--caution); color: var(--caution); }
+.ttp-state.done { border-color: var(--clear); color: var(--clear); }
+.ttp-late { font-size: 0.8rem; font-weight: 700; color: var(--danger); }
+.ttp-what { font-weight: 600; }
+.ttp-status { font-size: 0.9rem; color: var(--muted); }
+.ttp-closed summary, .ttp-log summary { cursor: pointer; font-weight: 600; }
+.ttp-log li { font-size: 0.85rem; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.ttp-log time { font-family: var(--font-mono); color: var(--muted); }
+.ttp-q { font-weight: 600; margin: 8px 0 4px; }
+.ttp-radios { display: flex; flex-direction: column; gap: 4px; }
+.confirm-dialog .ttp-radios .check { color: var(--btn-fg); }
+.confirm-dialog .ttp-radios input { accent-color: var(--brass); flex: 0 0 auto; }

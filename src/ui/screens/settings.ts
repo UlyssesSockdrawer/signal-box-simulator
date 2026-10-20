@@ -6,6 +6,7 @@ import { disposeAllBoxRuntimes } from '../boxRuntime';
 import { resetPlacesUi } from './places';
 import { resetRosterUi } from './roster';
 import { resetTimetablesUi } from './timetables';
+import { disposeAllRunners } from '../timetableRuntime';
 import { resetTrackPlanUi } from './trackPlan';
 
 export function settingsScreen(ctx: Ctx): Screen {
@@ -139,6 +140,7 @@ export function settingsScreen(ctx: Ctx): Screen {
   // ---------------------------------------------------------------- data
   /** Before all the app's data is replaced (reset or import): close running boxes and forget screen state belonging to the old data. */
   const freshStart = () => {
+    disposeAllRunners();
     disposeAllBoxRuntimes();
     resetTrackPlanUi();
     resetPlacesUi();
