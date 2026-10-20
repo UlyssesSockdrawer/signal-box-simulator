@@ -43,6 +43,8 @@ interface ConnectionUI {
   depBody: HTMLElement;
   regBody: HTMLElement;
   guidance(): { text: string; hint: string };
+  /** The timetable's note for this line (when a train should reach the box…), or ''. */
+  ttHint(): string;
   /** A train is being offered or worked on this line. */
   busy(): boolean;
   name: string;
@@ -124,7 +126,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const g = reg
       ? { text: reg.text, hint: '' }
       : tg
-        ? { text: tg.text, hint: '' }
+        ? { text: tg.text, hint: uis.map((u) => u.ttHint()).find(Boolean) ?? '' }
         : other
           ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` }
           : ttg
@@ -1295,17 +1297,28 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
   ctx.onLeave(unsub);
   renderAll();
 
+  /** What the timetable adds to Next step for this line: when a train should reach the box, or be reported arrived. */
+  const ttHint = (): string => {
+    const r = runner();
+    const at = r?.autoArrivalAt(box.id, conn.id);
+    const auto = at ? `Timetable: the simulated fiddle yard operator reports it arrived at about ${clockTime(at, true)}, or press the arrived button yourself.` : '';
+    // When a timetabled train on its way should reach your box (until there is track to watch it on).
+    const due = r?.dueAtBox(box.id, conn.id);
+    const inc = c.view.incoming;
+    const soon = due && inc && !inc.arrived
+      ? Date.now() < due.at
+        ? `Timetable: due to ${due.through ? 'pass' : 'reach'} ${box.name} at about ${clockTime(due.at, true)}.`
+        : `Timetable: it should be ${due.through ? 'passing' : 'at'} ${box.name} now.`
+      : '';
+    return auto || soon;
+  };
   return {
     caseEl,
     arrBody,
     depBody,
     regBody,
-    guidance: () => {
-      // A train the simulated fiddle yard operator will report arrived: say so, so nobody waits to press the button.
-      const at = runner()?.autoArrivalAt(box.id, conn.id);
-      const auto = at ? `Timetable: the simulated fiddle yard operator reports it arrived at about ${clockTime(at, true)}, or press the arrived button yourself.` : '';
-      return { text: c.view.guidance, hint: lastHint || auto };
-    },
+    guidance: () => ({ text: c.view.guidance, hint: lastHint || ttHint() }),
+    ttHint,
     busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
     name: conn.neighbourName,
     tapPress: press,

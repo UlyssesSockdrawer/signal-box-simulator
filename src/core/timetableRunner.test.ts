@@ -144,6 +144,9 @@ describe('timetable runner', () => {
     t.west.sendBell('2');
     t.west.setInstrument('TOL');
     t.tick();
+    // It has left Fiddle Yard West: when it should pass the box.
+    expect(t.runner.dueAtBox('sigsim-central', 'sgc-west')?.through).toBe(true);
+    expect(t.item('seq-ex1').status).toMatch(/due to pass Sigsim Central at about/);
     t.east.sendBell('2');
     t.tick();
     t.west.confirmIncomingArrived(null, { moveLoco: false });
@@ -163,6 +166,13 @@ describe('timetable runner', () => {
     t.tick();
     expect(t.item('seq-ex1').state).toBe('done');
     expect(t.loco('lms6233').location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road2' });
+    // The timetable log followed it all the way.
+    const log = t.runner.log.map((l) => l.text).join('\n');
+    expect(log).toMatch(/1E01: Accepted from Fiddle Yard West: offer it on to Fiddle Yard East/);
+    expect(log).toMatch(/1E01: On its way from Fiddle Yard West, through to Fiddle Yard East/);
+    expect(log).toMatch(/1E01: Sent on to Fiddle Yard East/);
+    expect(log).toMatch(/1E01: Arrived at Fiddle Yard East: waiting for Fiddle Yard East to clear it back/);
+    expect(log).toMatch(/Done: 1E01 The Express/);
     expect(t.workings.route('sgc-west')).toBe('');
     expect(t.east.view.incoming).toMatchObject({ locoId: 'lms5025' });
   });

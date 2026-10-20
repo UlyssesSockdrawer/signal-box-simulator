@@ -60,12 +60,18 @@ export interface RunnerOptions {
 type Phase = 'wait' | 'requested' | 'cancelled';
 
 export type Segment =
-  | { kind: 'incoming'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void }
-  | ({ kind: 'through'; boxId: string; fromConnId: string; toConnId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AutoArrival)
+  | ({ kind: 'incoming'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AtBox)
+  | ({ kind: 'through'; boxId: string; fromConnId: string; toConnId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AutoArrival & AtBox)
   | ({ kind: 'outgoing'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AutoArrival)
   | { kind: 'shunt'; boxId: string; dest: TtPos }
   | { kind: 'auto'; dest: TtPos; ms: number; timer?: number; endsAt?: number }
   | { kind: 'note' };
+
+/** A train coming to your box: when it left the box in rear, and when it should reach (or pass) your box. */
+interface AtBox {
+  departedAt?: number;
+  atBoxAt?: number;
+}
 
 /** A train sent to a simulated box's place: with a simulated fiddle yard operator it is reported arrived by itself. */
 interface AutoArrival {
@@ -99,6 +105,8 @@ export interface RunItem {
   /** When it became active / finished (scheduler time). */
   startedAt: number | null;
   doneAt: number | null;
+  /** The last status written to the timetable log (each change of a move's progress is logged once). */
+  logged?: string;
 }
 
 export interface RunLog {
@@ -471,6 +479,7 @@ export class TimetableRunner {
         if (this.canRelease(it)) this.activate(it);
       }
     }
+    this.logProgress();
     if (!this.finished && this.items.length && this.items.every((it) => it.state === 'done' || it.state === 'skipped')) {
       this.finished = true;
       this.note(`${this.tt.name}: every move has run.`);
@@ -480,6 +489,23 @@ export class TimetableRunner {
   /** Something changed in a box (a line cleared, the box opened): check now rather than at the next tick. */
   poke(): void {
     this.tick();
+  }
+
+  /**
+   * The timetable log follows each move as it is worked: every change in a move's progress (offered,
+   * accepted, on its way, sent on, arrived, waiting for the line…) is written once.
+   */
+  private logProgress(): void {
+    for (const it of this.items) {
+      if (it.state !== 'active' || !it.status || it.status === it.logged) continue;
+      it.logged = it.status;
+      this.note(`${this.shortName(it)}: ${it.card ? it.card.text : it.status}`);
+    }
+  }
+
+  /** "1E01", else the train's name, else "Positioning". */
+  private shortName(it: RunItem): string {
+    return it.entry.headcode || it.train?.name || (it.positioning ? 'Positioning' : 'Note');
   }
 
   /** Boxes on the layout that are being worked (their screens have been opened). */
@@ -790,7 +816,26 @@ export class TimetableRunner {
         if (v.incoming && v.incoming.locoId === it.locoId) {
           const inc = v.incoming;
           const accepted = inc.acceptedAt !== null || inc.departed;
-          if (inc.departed) it.status = s.kind === 'through' ? `On its way from ${name}, through to ${toName}.` : `On its way from ${name}.`;
+          if (inc.departed) {
+            // When it should reach the box: from its timetabled running time (there is no track to watch it on yet).
+            if (s.departedAt === undefined) {
+              s.departedAt = this.o.scheduler.now();
+              s.atBoxAt = s.departedAt + this.runToBox(it, s.boxId, s.kind === 'through');
+            }
+            const at = s.atBoxAt ?? 0;
+            const here = box?.name ?? 'your box';
+            const now = this.o.scheduler.now();
+            it.status =
+              s.kind === 'through'
+                ? now < at
+                  ? `On its way from ${name}, through to ${toName}: due to pass ${here} at about ${clock(at)}.`
+                  : `Passing ${here} now: send 2 (Train entering section) to ${toName}, then report it passed complete.`
+                : now < at
+                  ? `On its way from ${name}: due at ${here} at about ${clock(at)}.`
+                  : inc.arrived
+                    ? `Arrived at ${here}: send 2-1 to ${name}.`
+                    : `Due at ${here} now: report "Train arrived complete" once its tail lamp is in.`;
+          }
           else if (inc.held) it.status = `Held at ${name}: offered, not yet accepted.`;
           else if (accepted) it.status = s.kind === 'through' ? `Accepted from ${name}: offer it on to ${toName}.` : `Accepted from ${name}.`;
           else it.status = `Being offered by ${name}.`;
@@ -923,6 +968,32 @@ export class TimetableRunner {
     void c;
     if (dest.roadId && place.roads.some((r) => r.id === dest.roadId) && !taken.has(dest.roadId)) return dest.roadId;
     return place.roads.find((r) => !taken.has(r.id))?.id ?? dest.roadId ?? place.roads[0].id;
+  }
+
+  /**
+   * How long after leaving the box in rear a train reaches (or passes) your box: from the timetable
+   * (the time it calls at or passes your box's place, else its arrival; a through train with no call
+   * there is taken to be half way), at the session clock's speed; 20 s (10 s through) in a sequence.
+   */
+  private runToBox(it: RunItem, boxId: string, through: boolean): number {
+    const tt = this.tt;
+    const e = it.entry;
+    const auto = this.o.autoMoveMs ?? AUTO_MS;
+    if (!tt || tt.timing === 'sequence' || e.dep === null) return Math.max(8_000, through ? auto / 2 : auto);
+    const mine = new Set(this.layout?.places.filter((p) => p.workedBy.some((w) => w.kind === 'box' && w.boxId === boxId)).map((p) => p.id));
+    const call = e.calls.find((c) => mine.has(c.placeId));
+    const t = call ? (call.arr ?? call.dep) : null;
+    const min = t !== null ? t - e.dep : e.arr !== null ? (through ? (e.arr - e.dep) / 2 : e.arr - e.dep) : null;
+    if (min === null || min <= 0) return Math.max(8_000, through ? auto / 2 : auto);
+    return Math.max(8_000, (min * 60_000) / Math.max(1, tt.speed));
+  }
+
+  /** When the timetabled train on a line should reach or pass your box, if it is on its way. */
+  dueAtBox(boxId: string, connId: string): { at: number; through: boolean } | null {
+    const f = this.forLine(boxId, connId);
+    if (!f || (f.seg.kind !== 'incoming' && f.seg.kind !== 'through')) return null;
+    if (f.seg.kind === 'through' && f.seg.fromConnId !== connId) return null;
+    return f.seg.atBoxAt !== undefined ? { at: f.seg.atBoxAt, through: f.seg.kind === 'through' } : null;
   }
 
   /** When the simulated operator will report the train on a line arrived, if they will. */

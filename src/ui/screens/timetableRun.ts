@@ -17,6 +17,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** Remembered for the app session: which timetable the panel offers and who is the fiddle yard operator. */
 const choice: { ttId: string; operator: RunOperator } = { ttId: '', operator: 'simulated' };
+/** The panel's fold-outs stay as you left them while it redraws (it redraws as the timetable moves on). */
+const panelOpen = { log: true, closed: false };
 
 function layoutOf(ctx: Ctx, box: BoxDef): Layout | undefined {
   const b = ctx.store.state.boxes.find((x) => x.id === box.id) ?? box;
@@ -238,9 +240,14 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
     ),
     open.length ? h('ol', { class: 'plain ttp-items' }, ...open.map(itemRow)) : h('p', { class: 'muted' }, r.finished ? 'Every move has run.' : 'Nothing waiting.'),
     closed.length
-      ? h('details', { class: 'ttp-closed' }, h('summary', null, `Done and skipped (${closed.length})`), h('ol', { class: 'plain ttp-items' }, ...closed.map(itemRow)))
+      ? h('details', { class: 'ttp-closed', open: panelOpen.closed, on: { toggle: (e: Event) => (panelOpen.closed = (e.target as HTMLDetailsElement).open) } }, h('summary', null, `Done and skipped (${closed.length})`), h('ol', { class: 'plain ttp-items' }, ...closed.map(itemRow)))
       : null,
-    h('details', { class: 'ttp-log' }, h('summary', null, 'Timetable log'), h('ol', { class: 'plain' }, ...r.log.slice(-40).reverse().map((l) => h('li', null, h('time', null, clockOf(l.t)), ' ', l.text)))),
+    h(
+      'details',
+      { class: 'ttp-log', open: panelOpen.log, on: { toggle: (e: Event) => (panelOpen.log = (e.target as HTMLDetailsElement).open) } },
+      h('summary', null, `Timetable log (newest first)`),
+      h('ol', { class: 'plain' }, ...r.log.slice(-60).reverse().map((l) => h('li', null, h('time', null, clockOf(l.t)), ' ', l.text))),
+    ),
   );
 }
 
