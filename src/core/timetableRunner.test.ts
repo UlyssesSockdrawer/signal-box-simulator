@@ -9,7 +9,7 @@ import { addTimetable, addTrain, findTimetable } from './timetables';
 import type { AppState, Location } from './types';
 
 /** Sigsim Central with its box being worked (both lines opened), and a runner for its layout. */
-function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated' | 'me' } = {}) {
+function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated' | 'me'; open?: boolean } = {}) {
   const state: AppState = shippedState();
   state.settings.responseDelayMs = [1000, 1000];
   state.settings.despatchDelayMs = [5000, 5000];
@@ -30,12 +30,13 @@ function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated
     locoLabel: (id) => id,
   });
   const tick = (ms = 4000) => sched.advance(ms);
-  for (const s of sessions) {
+  const openLine = (s: (typeof sessions)[number]) => {
     s.controller.sendBell('1');
     tick();
     s.controller.sendBell('5-5-5');
     tick(8000);
-  }
+  };
+  if (opts.open !== false) for (const s of sessions) openLine(s);
   const runner = new TimetableRunner({
     getState: () => state,
     scheduler: sched,
@@ -55,7 +56,7 @@ function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated
   const [west, east] = sessions.map((s) => s.controller);
   const item = (id: string) => runner.items.find((x) => x.id === id)!;
   const loco = (id: string) => state.roster.find((l) => l.id === id)!;
-  return { state, sched, tick, runner, west, east, workings, item, loco, tt: (id: string) => findTimetable(state, id)!.tt };
+  return { state, sched, tick, runner, west, east, workings, item, loco, sessions, openLine, tt: (id: string) => findTimetable(state, id)!.tt };
 }
 
 /** Receive the train being offered on a line into a road, all the way to Train out of section. */
@@ -276,5 +277,54 @@ describe('timetable runner', () => {
     // The morning service's express is offered afresh.
     expect(t.item('ex1').state).toBe('active');
     expect(t.west.view.incoming?.locoId).toBe('lms6233');
+  });
+
+  it('waits for the box to be open on every line before anything happens (and the session clock waits too)', () => {
+    const t = setup({ open: false });
+    t.runner.load(t.tt('tt-sgc-morning'));
+    t.runner.start();
+    expect(t.runner.waitingForOpen()).toBe('Sigsim Central');
+    expect(t.item('ex1').state).toBe('waiting');
+    // Opening one line is not enough: an offer now could not be answered while the other line is being opened.
+    t.openLine(t.sessions[0]);
+    t.tick(60_000);
+    expect(t.west.view.incoming).toBeNull();
+    expect(t.runner.clockNow()).toBe(9 * 60);
+    t.openLine(t.sessions[1]);
+    t.tick(1500);
+    expect(t.runner.waitingForOpen()).toBeNull();
+    expect(t.west.view.incoming?.locoId).toBe('lms6233');
+    expect(t.west.log.some((e) => /Timetable: 1E01 The Express/.test(e.text))).toBe(true);
+  });
+
+  it('a simulated fiddle yard operator reports a departure arrived at the far end', () => {
+    const t = setup();
+    const l = t.state.layouts[0];
+    const tt = addTimetable(t.state, l.id, 'sequence')!;
+    const { entry } = addTrain(t.state, l, tt, { locoId: 'lms7298' })!;
+    entry.trainTypeId = 'pickup_goods';
+    entry.to = { placeId: 'fy-east', roadId: 'fye-road3' };
+    t.runner.load(tt);
+    t.runner.start();
+    expect(t.east.view.outgoing?.locoId).toBe('lms7298');
+    t.east.sendBell('1');
+    t.tick();
+    t.east.sendBell('3');
+    t.tick();
+    expect(t.east.view.remoteInstrument).toBe('LC');
+    t.east.sendBell('2');
+    t.tick();
+    expect(t.east.view.outgoing?.departed).toBe(true);
+    expect(t.runner.autoArrivalAt('sigsim-central', 'sgc-east')).not.toBeNull();
+    expect(t.runner.items[0].status).toMatch(/simulated operator reports it arrived/);
+    t.tick(9000);
+    expect(t.east.view.outgoing?.arrived).toBe(true);
+    t.tick(5000);
+    t.east.sendBell('1');
+    t.tick();
+    t.east.sendBell('2-1');
+    t.tick();
+    expect(t.runner.items[0].state).toBe('done');
+    expect(t.loco('lms7298').location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road3' });
   });
 });

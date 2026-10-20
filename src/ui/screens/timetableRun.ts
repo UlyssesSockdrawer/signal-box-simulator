@@ -62,7 +62,8 @@ export function timetableStrip(ctx: Ctx, box: BoxDef, openPanel: () => void): { 
     const cards = r.items.filter((x) => x.state === 'active' && x.card);
     const under = r.items.filter((x) => x.state === 'active' && !x.card);
     const next = r.items.find((x) => x.state === 'waiting');
-    const k = JSON.stringify([r.tt.id, runClock(r), r.paused, r.finished, cards.map((x) => [x.id, x.card?.text]), under.map((x) => [x.id, x.status]), next?.id, next?.status]);
+    const waitBox = r.waitingForOpen();
+    const k = JSON.stringify([r.tt.id, runClock(r), r.paused, r.finished, waitBox, cards.map((x) => [x.id, x.card?.text]), under.map((x) => [x.id, x.status]), next?.id, next?.status]);
     el.hidden = false;
     if (k === key) return;
     key = k;
@@ -75,8 +76,10 @@ export function timetableStrip(ctx: Ctx, box: BoxDef, openPanel: () => void): { 
         h('span', { class: 'tts-clock' }, runClock(r)),
         r.paused ? h('span', { class: 'tts-badge' }, 'Paused') : null,
         r.finished ? h('span', { class: 'tts-badge done' }, 'Finished') : null,
+        waitBox ? h('span', { class: 'tts-badge' }, 'Waiting') : null,
         h('button', { class: 'btn small', type: 'button', 'aria-controls': 'side-panel', on: { click: openPanel } }, 'Timetable ▸'),
       ),
+      waitBox ? h('p', { class: 'tts-wait' }, `Starts once ${waitBox} is open on every line: call attention (1), then 5-5-5 to each box. Nothing is offered and the clock waits until then.`) : null,
       cards.length
         ? h(
             'ul',
@@ -211,6 +214,7 @@ export function timetablePanel(ctx: Ctx, box: BoxDef): HTMLElement {
       'div',
       { class: 'ttp-run' },
       h('div', { class: 'ttp-run-head' }, h('h2', { class: 'ttp-title' }, tt.name), h('span', { class: 'tts-clock' }, runClock(r)), r.paused ? h('span', { class: 'tts-badge' }, 'Paused') : null, r.finished ? h('span', { class: 'tts-badge done' }, 'Finished') : null),
+      r.waitingForOpen() ? h('p', { class: 'config-warn' }, `Waiting for ${r.waitingForOpen()} to be opened on every line (call attention, then 5-5-5 to each box). The timetable begins then.`) : null,
       h('p', { class: 'muted small' }, `${timingInfo(tt.timing).name}${tt.timing === 'session' && tt.speed > 1 ? `, fast clock ×${tt.speed}` : ''} · ${plural(closed.length, 'move')} done of ${r.items.length}`),
       h(
         'div',
@@ -265,6 +269,7 @@ function startDialog(ctx: Ctx, layout: Layout, r: TimetableRunner, tt: Timetable
   let pastMode: PastMode = 'skip';
   let stock: 'positioning' | 'put' | 'asis' = 'positioning';
   const body: Array<string | HTMLElement> = [`${timingInfo(tt.timing).name}${tt.timing === 'session' ? `, clock starting at ${tt.elapsed ? '+0:00' : fmtTime(tt.startAt, { timing: 'clock', elapsed: false })}${tt.speed > 1 ? ` (×${tt.speed})` : ''}` : ''}. Fiddle yard operator: ${choice.operator === 'me' ? 'you' : 'simulated'}.`];
+  body.push(`It begins once the boxes you have open on ${layout.name} are open with every neighbour (5-5-5): nothing is offered${tt.timing === 'session' ? ' and the clock does not start' : ''} until then.`);
   if (past) {
     body.push(
       h('p', { class: 'ttp-q' }, `${plural(past, 'move')} ${past === 1 ? 'has' : 'have'} a time that has already passed.`),

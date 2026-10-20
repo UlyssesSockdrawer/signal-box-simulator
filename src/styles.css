@@ -1954,6 +1954,7 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .tts-card.note { border-left-color: var(--amber); }
 .tts-when { font-family: var(--font-mono); font-weight: 600; font-size: 0.85rem; }
 .tts-text { flex: 1 1 240px; font-weight: 600; }
+.tts-wait { margin: 0; font-weight: 600; color: #e9cf8a; }
 .tts-line { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 16px; font-size: 0.88rem; color: var(--case-muted); }
 .tts-under { color: var(--case-text); }
 .tt-desk-note { margin: 0 0 6px; font-weight: 700; font-size: 0.88rem; color: var(--btn-fg); background: var(--shelf-bg); border-left: 4px solid var(--brass); border-radius: 3px; padding: 4px 8px; }

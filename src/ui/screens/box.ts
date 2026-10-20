@@ -1300,7 +1300,12 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     arrBody,
     depBody,
     regBody,
-    guidance: () => ({ text: c.view.guidance, hint: lastHint }),
+    guidance: () => {
+      // A train the simulated fiddle yard operator will report arrived: say so, so nobody waits to press the button.
+      const at = runner()?.autoArrivalAt(box.id, conn.id);
+      const auto = at ? `Timetable: the simulated fiddle yard operator reports it arrived at about ${clockTime(at, true)}, or press the arrived button yourself.` : '';
+      return { text: c.view.guidance, hint: lastHint || auto };
+    },
     busy: () => !!(c.view.incoming || c.view.outgoing?.departed),
     name: conn.neighbourName,
     tapPress: press,

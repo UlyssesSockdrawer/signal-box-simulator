@@ -61,11 +61,18 @@ type Phase = 'wait' | 'requested' | 'cancelled';
 
 export type Segment =
   | { kind: 'incoming'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void }
-  | { kind: 'through'; boxId: string; fromConnId: string; toConnId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void }
-  | { kind: 'outgoing'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void }
+  | ({ kind: 'through'; boxId: string; fromConnId: string; toConnId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AutoArrival)
+  | ({ kind: 'outgoing'; boxId: string; connId: string; dest: TtPos; phase: Phase; ctrl?: SectionController; off?: () => void } & AutoArrival)
   | { kind: 'shunt'; boxId: string; dest: TtPos }
   | { kind: 'auto'; dest: TtPos; ms: number; timer?: number; endsAt?: number }
   | { kind: 'note' };
+
+/** A train sent to a simulated box's place: with a simulated fiddle yard operator it is reported arrived by itself. */
+interface AutoArrival {
+  arriveTimer?: number;
+  /** When the simulated operator will report it arrived (scheduler time). */
+  arriveAt?: number;
+}
 
 export interface RunItem {
   id: string;
@@ -127,6 +134,8 @@ export class TimetableRunner {
   /** Locos chosen for "any loco" trains, by train id. */
   private anyLoco = new Map<string, string>();
   private startedAt = 0;
+  /** False until every box being worked on the layout is open on all its lines: nothing is released, the clock waits. */
+  private begun = false;
   private pausedAt: number | null = null;
   private pausedTotal = 0;
   private timer: number | null = null;
@@ -150,7 +159,7 @@ export class TimetableRunner {
     if (!tt || tt.timing === 'sequence') return null;
     const now = this.o.scheduler.now();
     if (tt.timing === 'clock') return (this.o.minutesOfDay ?? defaultMinutesOfDay)(now);
-    if (!this.started) return tt.elapsed ? 0 : tt.startAt;
+    if (!this.started || !this.begun) return tt.elapsed ? 0 : tt.startAt;
     const run = (this.pausedAt ?? now) - this.startedAt - this.pausedTotal;
     return (tt.elapsed ? 0 : tt.startAt) + (run * tt.speed) / 60_000;
   }
@@ -182,6 +191,7 @@ export class TimetableRunner {
       this.items.splice(at < 0 ? this.items.length : at, 0, ...opts.positioning.map((p) => this.positioningItem(p)));
     }
     this.started = true;
+    this.begun = false;
     this.paused = false;
     this.finished = false;
     this.startedAt = this.o.scheduler.now();
@@ -444,6 +454,16 @@ export class TimetableRunner {
 
   private pass(): void {
     if (!this.tt) return;
+    // Nothing happens until the boxes being worked are open with every neighbour: a train offered while
+    // the signaller is still opening the box on another line would be refused before they could answer.
+    if (!this.begun) {
+      if (this.waitingForOpen()) return;
+      this.begun = true;
+      this.startedAt = this.o.scheduler.now();
+      this.pausedTotal = 0;
+      if (this.pausedAt !== null) this.pausedAt = this.startedAt;
+      if (this.layoutBoxes().length) this.note(`${this.layoutBoxes().map((b) => b.name).join(' and ')} open: ${this.tt.name} begins${this.tt.timing === 'session' ? ` (clock ${fmt(this.clockNow())})` : ''}.`);
+    }
     for (const it of this.items) if (it.state === 'active') this.checkSeg(it);
     if (!this.paused) {
       for (const it of this.items) {
@@ -460,6 +480,21 @@ export class TimetableRunner {
   /** Something changed in a box (a line cleared, the box opened): check now rather than at the next tick. */
   poke(): void {
     this.tick();
+  }
+
+  /** Boxes on the layout that are being worked (their screens have been opened). */
+  private layoutBoxes() {
+    return this.state.boxes.filter((b) => b.layoutId === this.o.layoutId && this.o.box(b.id));
+  }
+
+  /** The name of a box being worked that is not yet open on every line, while the timetable waits for it; else null. */
+  waitingForOpen(): string | null {
+    if (!this.started || this.begun) return null;
+    for (const b of this.layoutBoxes()) {
+      const rb = this.o.box(b.id);
+      if (rb && !rb.sessions.every((x) => x.controller.view.boxOpen)) return b.name;
+    }
+    return null;
   }
 
   private blockedByTrain(it: RunItem): RunItem | null {
@@ -734,28 +769,49 @@ export class TimetableRunner {
     }
     const name = sess.connection.neighbourName;
     const v = c.view;
+    const allOpen = rb.sessions.every((x) => x.controller.view.boxOpen);
+    const notOpen = `Waiting for ${box?.name ?? 'the box'} to be opened on every line (call attention, then 5-5-5 to each box).`;
     if (s.phase === 'cancelled') {
       it.status = `Cancelled in the box. Release it to offer it again, or skip it.`;
       return;
     }
     if (s.kind === 'incoming' || s.kind === 'through') {
       if (s.phase === 'requested') {
-        if (!v.incoming || v.incoming.locoId !== it.locoId) {
-          // Gone from the line without clearing: the signaller (or operator) cancelled it.
-          const loco = st.roster.find((l) => l.id === it.locoId);
-          if (loco?.location.kind !== 'section') {
-            this.detach(s);
-            s.phase = 'cancelled';
-            it.status = `Cancelled in the box. Release it to offer it again, or skip it.`;
-            this.note(`Cancelled in ${box?.name ?? 'the box'}: ${this.describe(it)}.`);
-          }
+        const toSess = s.kind === 'through' ? rb.sessions.find((x) => x.connection.id === s.toConnId) : undefined;
+        const out = toSess?.controller.view.outgoing;
+        const onward = !!out && out.locoId === it.locoId;
+        const toName = toSess?.connection.neighbourName ?? '';
+        if (s.kind === 'through' && onward && out!.departed) {
+          // Sent on into the section ahead: it is on its way to the far end.
+          this.autoArrive(it, s, toSess!.controller, toName);
+          if (v.incoming && v.incoming.locoId === it.locoId && !v.incoming.arrived) it.status = `Sent on to ${toName}: report it passed complete and send 2-1 to ${name}. ${it.status}`;
           return;
         }
-        it.status = v.incoming.departed ? `On its way from ${name}.` : v.incoming.held ? `Held at ${name}: offered, not yet accepted.` : `Being offered by ${name}.`;
+        if (v.incoming && v.incoming.locoId === it.locoId) {
+          const inc = v.incoming;
+          const accepted = inc.acceptedAt !== null || inc.departed;
+          if (inc.departed) it.status = s.kind === 'through' ? `On its way from ${name}, through to ${toName}.` : `On its way from ${name}.`;
+          else if (inc.held) it.status = `Held at ${name}: offered, not yet accepted.`;
+          else if (accepted) it.status = s.kind === 'through' ? `Accepted from ${name}: offer it on to ${toName}.` : `Accepted from ${name}.`;
+          else it.status = `Being offered by ${name}.`;
+          return;
+        }
+        if (s.kind === 'through' && onward) {
+          it.status = `Standing at ${box?.name ?? 'the box'}: offer it on to ${toName}.`;
+          return;
+        }
+        // Gone from the line without clearing: the signaller (or operator) cancelled it.
+        const loco = st.roster.find((l) => l.id === it.locoId);
+        if (loco?.location.kind !== 'section') {
+          this.detach(s);
+          s.phase = 'cancelled';
+          it.status = `Cancelled in the box. Release it to offer it again, or skip it.`;
+          this.note(`Cancelled in ${box?.name ?? 'the box'}: ${this.describe(it)}.`);
+        }
         return;
       }
-      if (!v.boxOpen) {
-        it.status = `Waiting for ${box?.name ?? 'the box'} to be opened with ${name} (5-5-5).`;
+      if (!allOpen) {
+        it.status = notOpen;
         return;
       }
       if (v.incoming) {
@@ -783,14 +839,15 @@ export class TimetableRunner {
           }
         });
       }
-      it.status = `Offered by ${name}.`;
+      it.status = `Being offered by ${name}.`;
+      c.note('status', `Timetable: ${this.registerText(it)}`);
       this.note(`${name} offers ${this.locoName(it.locoId)} (${this.typeName(it.entry.trainTypeId).toLowerCase()}).`);
       return;
     }
     // Outgoing: declare it for the Departure panel; it ends when the far box clears it back.
     if (s.phase === 'requested') {
       const out = v.outgoing;
-      if (out?.departed && out.locoId === it.locoId) it.status = `On its way to ${name}.`;
+      if (out?.departed && out.locoId === it.locoId) this.autoArrive(it, s, c, name);
       else if (!out) {
         // The departure was cleared in the box before it left: declare it again.
         c.setOutgoing(it.locoId, it.entry.trainTypeId);
@@ -799,8 +856,8 @@ export class TimetableRunner {
       else it.status = `Due to depart to ${name}: offer it.`;
       return;
     }
-    if (!v.boxOpen) {
-      it.status = `Waiting for ${box?.name ?? 'the box'} to be opened with ${name} (5-5-5).`;
+    if (!allOpen) {
+      it.status = notOpen;
       return;
     }
     if (v.outgoing && v.outgoing.locoId !== it.locoId) {
@@ -814,7 +871,72 @@ export class TimetableRunner {
       if (e.direction === 'outgoing' && e.locoId === it.locoId && it.state === 'active' && it.segs[it.seg] === s) this.completeSeg(it);
     });
     it.status = `Due to depart to ${name}: offer it.`;
+    c.note('status', `Timetable: ${this.registerText(it)}`);
     this.note(`Due to depart: ${this.locoName(it.locoId)} to ${name}.`);
+  }
+
+  /**
+   * A train on its way to a simulated box's place (sent from your box, or sent on through it). With a
+   * simulated fiddle yard operator it is reported arrived (on its timetabled road, else a free one)
+   * after its running time; with you as operator you press "Arrived in …" yourself.
+   */
+  private autoArrive(it: RunItem, s: Extract<Segment, { kind: 'through' | 'outgoing' }>, c: SectionController, name: string): void {
+    const out = c.view.outgoing;
+    if (!out || out.locoId !== it.locoId) return;
+    const dest = s.dest;
+    const where = dest.kind === 'place' ? (this.layout?.places.find((p) => p.id === dest.placeId)?.name ?? name) : name;
+    if (out.arrived) {
+      if (s.arriveTimer !== undefined) this.o.scheduler.clearTimeout(s.arriveTimer);
+      s.arriveTimer = undefined;
+      it.status = `Arrived at ${where}: waiting for ${name} to clear it back (answer 1, then repeat 2-1).`;
+      return;
+    }
+    if (this.operator !== 'simulated') {
+      it.status = `On its way to ${where}. Press "Arrived" in the Departure panel once it is there.`;
+      return;
+    }
+    if (s.arriveTimer === undefined) {
+      const tt = this.tt;
+      const e = it.entry;
+      const run = tt && tt.timing !== 'sequence' && e.dep !== null && e.arr !== null ? ((e.arr - e.dep) * 60_000) / Math.max(1, tt.speed) : (this.o.autoMoveMs ?? AUTO_MS);
+      const ms = Math.max(8_000, s.kind === 'through' ? run / 2 : run);
+      s.arriveAt = this.o.scheduler.now() + ms;
+      s.arriveTimer = this.o.scheduler.setTimeout(() => {
+        s.arriveTimer = undefined;
+        const o2 = c.view.outgoing;
+        if (it.state !== 'active' || it.segs[it.seg] !== s || !o2 || o2.locoId !== it.locoId || !o2.departed || o2.arrived) return;
+        c.confirmOutgoingArrived(this.arrivalRoad(s.dest, c), it.locoId);
+        this.note(`Simulated fiddle yard operator: ${this.locoName(it.locoId)} arrived at ${where}.`);
+        this.tick();
+      }, ms);
+    }
+    it.status = `On its way to ${where}: the simulated operator reports it arrived at about ${clock(s.arriveAt ?? this.o.scheduler.now())} (or press "Arrived" yourself).`;
+  }
+
+  /** The road a train sent to a far place arrives on: its timetabled road if free, else the first free road. */
+  private arrivalRoad(dest: TtPos, c: SectionController): string {
+    const st = this.state;
+    if (dest.kind !== 'place') return '';
+    const place = this.layout?.places.find((p) => p.id === dest.placeId);
+    if (!place?.roads.length) return '';
+    const taken = new Set(st.roster.flatMap((l) => (l.location.kind === 'place' && l.location.placeId === place.id ? [l.location.roadId] : [])));
+    void c;
+    if (dest.roadId && place.roads.some((r) => r.id === dest.roadId) && !taken.has(dest.roadId)) return dest.roadId;
+    return place.roads.find((r) => !taken.has(r.id))?.id ?? dest.roadId ?? place.roads[0].id;
+  }
+
+  /** When the simulated operator will report the train on a line arrived, if they will. */
+  autoArrivalAt(boxId: string, connId: string): number | null {
+    const f = this.forLine(boxId, connId);
+    if (!f || (f.seg.kind !== 'outgoing' && f.seg.kind !== 'through')) return null;
+    if (f.seg.kind === 'through' && f.seg.toConnId !== connId) return null;
+    return f.seg.arriveTimer !== undefined ? (f.seg.arriveAt ?? null) : null;
+  }
+
+  /** "1E01 The Express (6233), due 09:00": for the train register. */
+  private registerText(it: RunItem): string {
+    const due = this.tt && this.tt.timing !== 'sequence' && it.entry.dep !== null ? `, due ${fmt(it.entry.dep)}` : '';
+    return `${[it.entry.headcode, it.train?.name ?? (it.positioning ? 'positioning move' : '')].filter(Boolean).join(' ')} (${this.locoName(it.locoId)}) to ${refText(this.state, it.entry.to.placeId ? it.entry.to : it.entry.from)}${due}${it.late ? `, ${it.late} min late` : ''}`;
   }
 
   private completeSeg(it: RunItem): void {
@@ -838,6 +960,10 @@ export class TimetableRunner {
     if (s.kind === 'auto' && s.timer !== undefined) {
       this.o.scheduler.clearTimeout(s.timer);
       s.timer = undefined;
+    }
+    if ((s.kind === 'outgoing' || s.kind === 'through') && s.arriveTimer !== undefined) {
+      this.o.scheduler.clearTimeout(s.arriveTimer);
+      s.arriveTimer = undefined;
     }
   }
 
@@ -953,6 +1079,12 @@ export class TimetableRunner {
   private emit(): void {
     this.events.emit('change', undefined);
   }
+}
+
+/** "19:49:10" (local time) for a scheduler time. */
+function clock(t: number): string {
+  const d = new Date(t);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 function trainName(it: RunItem): string {
