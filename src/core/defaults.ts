@@ -38,8 +38,9 @@ export const DEFAULT_SETTINGS: Settings = {
  * The app's starting data (also what Settings → Reset to defaults restores): a generic example,
  * not anyone's own layout. SIGSIM CENTRAL is a station on a single line with a passing loop
  * (platforms 1 and 2), a goods siding and goods shed, between Fiddle Yard West and Fiddle Yard
- * East, each worked by a simulated signal box. The roster has four LMS locomotives of different
- * types, standing where they can be offered in from either end or sent away from the goods yard.
+ * East (six roads each), each worked by a simulated signal box. The roster has eight LMS and
+ * ex-Midland locomotives of different classes, standing where they can be offered in from either
+ * end or sent away from the goods yard, each with timetable jobs.
  */
 const BOX = 'sigsim-central';
 const WEST = 'sgc-west';
@@ -77,7 +78,7 @@ export function createDefaultState(): AppState {
             name: 'Fiddle Yard West',
             shortName: 'FYW',
             notes: '',
-            roads: [1, 2, 3, 4].map((n) => ({ id: `fyw-road${n}`, name: `Road ${n}`, notes: '' })),
+            roads: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `fyw-road${n}`, name: `Road ${n}`, notes: '' })),
             workedBy: [{ kind: 'remote', boxId: BOX, connectionId: WEST }],
           },
           {
@@ -110,7 +111,7 @@ export function createDefaultState(): AppState {
             name: 'Fiddle Yard East',
             shortName: 'FYE',
             notes: '',
-            roads: [1, 2, 3, 4].map((n) => ({ id: `fye-road${n}`, name: `Road ${n}`, notes: '' })),
+            roads: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `fye-road${n}`, name: `Road ${n}`, notes: '' })),
             workedBy: [{ kind: 'remote', boxId: BOX, connectionId: EAST }],
           },
         ],
@@ -179,6 +180,70 @@ export function createDefaultState(): AppState {
           { id: 'job-7298-2', kind: 'working', trainTypeId: 'pickup_goods', placeIds: ['sgc-goods', 'fy-east'], weight: 2 },
         ],
         homePlaceId: 'sgc-goods',
+      },
+      {
+        id: 'lms5690',
+        number: '5690',
+        name: 'Leander',
+        locoClass: 'LMS Stanier Jubilee 4-6-0',
+        powerType: 'Steam (tender)',
+        dccAddress: '5690',
+        notes: 'Example entry: express passenger engine, also works parcels.',
+        working: { trainTypeId: 'express_passenger', consist: '7 coaches', headcode: '' },
+        location: { kind: 'place', placeId: 'fy-east', roadId: 'fye-road5' },
+        jobs: [
+          { id: 'job-5690-1', kind: 'working', trainTypeId: 'express_passenger', placeIds: ['fy-east', 'fy-west'], weight: 2 },
+          { id: 'job-5690-2', kind: 'working', trainTypeId: 'parcels', placeIds: ['fy-east', 'fy-west'], weight: 1 },
+        ],
+        homePlaceId: 'fy-east',
+      },
+      {
+        id: 'lms2700',
+        number: '2700',
+        name: '',
+        locoClass: 'LMS Hughes/Fowler 2-6-0 ("Crab")',
+        powerType: 'Steam (tender)',
+        dccAddress: '2700',
+        notes: 'Example entry: mixed traffic engine, mostly on express goods.',
+        working: { trainTypeId: 'freight_fitted_half', consist: 'Vans', headcode: '' },
+        location: { kind: 'place', placeId: 'fy-west', roadId: 'fyw-road3' },
+        jobs: [
+          { id: 'job-2700-1', kind: 'working', trainTypeId: 'freight_fitted_half', placeIds: ['fy-west', 'fy-east'], weight: 2 },
+          { id: 'job-2700-2', kind: 'working', trainTypeId: 'ordinary_passenger', placeIds: [], weight: 1 },
+        ],
+        homePlaceId: 'fy-west',
+      },
+      {
+        id: 'lms542',
+        number: '542',
+        name: '',
+        locoClass: 'ex-MR 483 Class 2P 4-4-0',
+        powerType: 'Steam (tender)',
+        dccAddress: '542',
+        notes: 'Example entry: stopping passenger engine, also moves empty stock.',
+        working: { trainTypeId: 'ordinary_passenger', consist: '3 coaches', headcode: '' },
+        location: { kind: 'place', placeId: 'fy-west', roadId: 'fyw-road4' },
+        jobs: [
+          { id: 'job-542-1', kind: 'working', trainTypeId: 'ordinary_passenger', placeIds: ['fy-west', 'sgc-station'], weight: 3 },
+          { id: 'job-542-2', kind: 'working', trainTypeId: 'ecs', placeIds: [], weight: 1 },
+        ],
+        homePlaceId: 'fy-west',
+      },
+      {
+        id: 'lms3436',
+        number: '3436',
+        name: '',
+        locoClass: 'ex-MR Johnson 3F 0-6-0',
+        powerType: 'Steam (tender)',
+        dccAddress: '3436',
+        notes: 'Example entry: goods engine for the pick-up goods and coal.',
+        working: { trainTypeId: 'pickup_goods', consist: 'Mixed wagons', headcode: '' },
+        location: { kind: 'place', placeId: 'fy-east', roadId: 'fye-road6' },
+        jobs: [
+          { id: 'job-3436-1', kind: 'working', trainTypeId: 'pickup_goods', placeIds: ['fy-east', 'sgc-goods'], weight: 3 },
+          { id: 'job-3436-2', kind: 'working', trainTypeId: 'mineral', placeIds: [], weight: 1 },
+        ],
+        homePlaceId: 'fy-east',
       },
     ],
   };

@@ -501,12 +501,15 @@ describe('the starting data (Sigsim Central)', () => {
     expect(migrate(JSON.parse(JSON.stringify(s)))).toEqual(s); // loads back unchanged
   });
 
-  it('has four LMS locomotives of different types, with trains to offer from both fiddle yards and one to send away', () => {
+  it('has eight LMS (and ex-Midland) locomotives of different classes, with trains to offer from both fiddle yards and one to send away', () => {
     const s = shippedState();
-    expect(s.roster).toHaveLength(4);
-    expect(s.roster.every((l) => l.locoClass.startsWith('LMS '))).toBe(true);
-    expect(new Set(s.roster.map((l) => l.locoClass)).size).toBe(4);
-    expect(new Set(s.roster.map((l) => l.working.trainTypeId)).size).toBe(4);
+    expect(s.roster).toHaveLength(8);
+    expect(s.roster.every((l) => /^(LMS|ex-MR) /.test(l.locoClass))).toBe(true);
+    expect(new Set(s.roster.map((l) => l.locoClass)).size).toBe(8);
+    expect(new Set(s.roster.map((l) => l.working.trainTypeId)).size).toBeGreaterThanOrEqual(6);
+    // Every loco stands on a road of its own.
+    const roads = s.roster.map((l) => (l.location.kind === 'place' ? `${l.location.placeId}|${l.location.roadId}` : ''));
+    expect(new Set(roads).size).toBe(8);
     const [west, east] = s.boxes[0].connections;
     expect(incomingCandidates(s, west).length).toBeGreaterThan(0);
     expect(incomingCandidates(s, east).length).toBeGreaterThan(0);

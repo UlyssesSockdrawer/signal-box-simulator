@@ -36,7 +36,11 @@ export function tutorialScreen(ctx: Ctx): Screen {
   const le = trainCode(cs, 'light_engine') || '2-3';
 
   // Trains named in the exercises, from where they stand now.
-  const describe = (l: Loco | undefined) => (l ? `${locoName(l)} (${trainTypeName(st, l.working.trainTypeId).toLowerCase()}, ${trainCode(cs, l.working.trainTypeId) || 'no code'})` : '');
+  const describe = (l: Loco | undefined) => {
+    if (!l) return '';
+    const code = trainCode(cs, l.working.trainTypeId);
+    return `${locoName(l)}, ${trainTypeName(st, l.working.trainTypeId).toLowerCase()}${code ? `, bell ${code}` : ''}`;
+  };
   // At the first line's far end, the highest class train runs through to the other line (the express), the next is received here.
   const rank = (l: Loco) => cs.trainCodes[l.working.trainTypeId]?.rank ?? 0;
   const candA = lineA ? [...incomingCandidates(st, lineA)].sort((a, b) => rank(b) - rank(a)) : [];
@@ -96,7 +100,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
         lineB
           ? exercise(
               `Run ${throughTrain ? locoName(throughTrain) : 'a train'} through from ${lineA.neighbourName} to ${lineB.neighbourName}.`,
-              `Under Next arrival choose ${lineA.neighbourName}, pick ${throughTrain ? describe(throughTrain) : 'a train'} and press Offer next incoming train. Set its Route (in the Next arrival panel) to On to ${lineB.neighbourName}: it runs through ${boxName} without stopping. Answer the ${CA}, repeat the Is line clear code to accept it, and turn your ${lineA.neighbourName} instrument to Line Clear. The Next step bar then asks you to offer it on: on the ${lineB.neighbourName} instruments send ${CA}, then the same code, and ${lineB.neighbourName} accepts it. When ${lineA.neighbourName} sends ${TES}, repeat it and show Train On Line. Drive the train through the station; as it passes your box send ${TES} to ${lineB.neighbourName}. Once its tail lamp has passed, press passed complete on the ${lineA.neighbourName} instruments and send ${CA} and ${TOOS} to ${lineA.neighbourName}, then Line Blocked. Drive it on to ${placeAtEnd(lineB.placeId, lineB.neighbourName)}, press the Arrived button in the Departure panel, and ${lineB.neighbourName} clears back with ${TOOS}.`,
+              `Under Next arrival choose ${lineA.neighbourName}, pick ${throughTrain ? `${describe(throughTrain)},` : 'a train'} and press Offer next incoming train. Set its Route (in the Next arrival panel) to On to ${lineB.neighbourName}: it runs through ${boxName} without stopping. Answer the ${CA}, repeat the Is line clear code to accept it, and turn your ${lineA.neighbourName} instrument to Line Clear. The Next step bar then asks you to offer it on: on the ${lineB.neighbourName} instruments send ${CA}, then the same code, and ${lineB.neighbourName} accepts it. When ${lineA.neighbourName} sends ${TES}, repeat it and show Train On Line. Drive the train through the station; as it passes your box send ${TES} to ${lineB.neighbourName}. Once its tail lamp has passed, press Train passed complete on the ${lineA.neighbourName} instruments and send ${CA} and ${TOOS} to ${lineA.neighbourName}, then Line Blocked. Drive it on to ${placeAtEnd(lineB.placeId, lineB.neighbourName)}, press the Arrived button in the Departure panel, and ${lineB.neighbourName} clears back with ${TOOS}.`,
             )
           : null,
         exercise(
@@ -131,6 +135,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
   }
 
   // ---------------------------------------------------------------- timetables
+  const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
   const tts = layout ? timetablesOf(layout) : [];
   const era = eraOf(layout);
   const sample = tts[0];
@@ -139,7 +144,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
     h(
       'p',
       null,
-      `A timetable says which trains run, in what order or at what times, and which loco works each. It belongs to a layout${layout ? ` (${layout.name} has ${tts.length === 1 ? 'one' : tts.length || 'none yet'})` : ''}. Open `,
+      `A timetable says which trains run, in what order or at what times, and which loco works each. It belongs to a layout${layout ? ` (${layout.name} has ${tts.length ? `${NUMBER_WORDS[tts.length] ?? tts.length} timetable${tts.length === 1 ? '' : 's'}` : 'none yet'})` : ''}. Open `,
       h('strong', null, 'Timetables'),
       ' on the main menu to see them.',
     ),
@@ -149,7 +154,14 @@ export function tutorialScreen(ctx: Ctx): Screen {
       h('li', null, h('strong', null, 'Trains and moves. '), 'A train is a chain of moves worked by one loco: say an ordinary passenger into a platform, the engine running light to a siding and back on to its coaches, and the train working back to the fiddle yard. Add a train with + New train, and its next move with + Then this train…, which starts where the last move ended.'),
       h('li', null, h('strong', null, 'How it runs. '), 'An operations sequence has no times: each move is released when the one before has finished (like a card order). Real time runs by the clock on the wall. A session clock starts when you begin, from a time you choose, and can run fast.'),
       h('li', null, h('strong', null, 'Checks. '), 'As you edit, the timetable is walked through move by move: a loco starting somewhere its last move did not leave it, no route between two places, two trains on one road. Step through shows where everything stands after each move.'),
-      h('li', null, h('strong', null, 'Headcodes. '), `${layout ? `${layout.name} is set to ` : ''}${eraInfo(era).name.toLowerCase()} (${eraInfo(era).years}): ${eraInfo(era).description} ${usesLamps(era) ? 'The lamps are drawn on the moves, the poster and the train cards.' : ''} Change it on the layout’s Details tab; Fill in ${usesLamps(era) ? 'reporting numbers' : 'headcodes'} under the moves numbers them for you.`),
+      h(
+        'li',
+        null,
+        h('strong', null, 'Headcodes. '),
+        `${layout ? `${layout.name} uses` : 'Each layout chooses'} the ${eraInfo(era).label} (${eraInfo(era).years}). ${eraInfo(era).description}${usesLamps(era) ? ' The lamps are drawn on the moves, the poster and the train cards.' : ''} Choose the era on the layout’s Details tab. The `,
+        h('strong', null, `Fill in ${usesLamps(era) ? 'reporting numbers' : 'headcodes'}`),
+        ' button under the moves numbers them for you.',
+      ),
       h('li', null, h('strong', null, 'Printing. '), 'The Poster tab is a letterpress public timetable, fitted to the paper you choose (right to the edges if you like, for exhibition props). Train cards gives one card per move to hand to operators.'),
     ),
     h('h3', null, 'Let the app make one'),

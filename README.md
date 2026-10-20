@@ -7,7 +7,8 @@ drive (with its DCC address). The levers, interlocking and signals stay on the p
 
 It ships with an example to try it out: **Sigsim Central**, a station on a single line with a passing
 loop (platforms 1 and 2), a goods siding and a goods shed, between **Fiddle Yard West** and **Fiddle
-Yard East**, with four LMS locomotives (a Princess Coronation, a Black Five, an 8F and a Jinty). The
+Yard East**, with eight LMS and ex-Midland locomotives (a Princess Coronation, a Jubilee, a Black Five,
+a Crab, an 8F, a Jinty, an ex-MR 483 Class 2P and an ex-MR Johnson 3F). The
 Tutorial walks through a session there. Change it into your own layout, or add your own layouts and
 boxes alongside it; **Settings → Reset to defaults** brings the example back.
 
@@ -270,6 +271,12 @@ the poster. **Fill in headcodes** (below the moves) numbers the blank ones, or a
 had their own variations (the Southern used route discs): these are the standard codes.
 
 The tutorial has a new section 9 on timetables.
+
+**Bigger example roster:** Sigsim Central now starts with eight engines, adding 5690 *Leander*
+(Jubilee, express passenger and parcels), 2700 (Crab, express goods and some passenger), 542 (ex-MR
+483 Class 2P, stopping trains and empty stock) and 3436 (ex-MR Johnson 3F, pick-up goods and coal),
+each with timetable jobs. Both fiddle yards have six roads. Existing saves keep their own roster:
+**Settings → Reset to defaults** brings in the new example (and replaces everything else).
 
 ## Timetables, part 2: running a timetable in the box (v0.3.25)
 

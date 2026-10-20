@@ -18,6 +18,8 @@ export type { HeadcodeEra };
 export interface HeadcodeEraInfo {
   id: HeadcodeEra;
   name: string;
+  /** For a sentence: "the Grouping era" (keeps "BR" in capitals). */
+  label: string;
   years: string;
   description: string;
 }
@@ -26,18 +28,21 @@ export const HEADCODE_ERAS: HeadcodeEraInfo[] = [
   {
     id: 'grouping',
     name: 'Grouping era: lamp headcodes',
+    label: 'Grouping era',
     years: '1923–1947',
     description: 'Engines carry a lamp headcode for their class of train (the GWR 1936 / LMS 1937 standard codes), and trains a three-digit reporting number such as 123.',
   },
   {
     id: 'brLamps',
     name: 'BR steam era: lamp headcodes',
+    label: 'BR steam era',
     years: '1948–1960',
     description: 'Lamp headcodes as rearranged by British Railways in the 1950s, and a three-digit reporting number such as 123.',
   },
   {
     id: 'br1960',
     name: 'BR 1960 onwards: four-character headcodes',
+    label: 'BR era of four-character headcodes',
     years: '1960 on',
     description: 'A four-character headcode such as 2E11 (class 2, destination E, train 11) replaces the lamp code.',
   },

@@ -160,6 +160,6 @@ describe('timetables', () => {
     const s = migrate(JSON.parse(JSON.stringify(old)));
     expect(s.schemaVersion).toBe(4);
     expect(s.layouts[0].timetables).toEqual([]);
-    expect(s.roster).toHaveLength(4);
+    expect(s.roster).toHaveLength(8);
   });
 });
