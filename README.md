@@ -226,6 +226,42 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Simulated running and track occupancy (v0.3.28)
+
+When you open a box you now choose how to run it: **Model railway** (as before) or **Signaller
+play**. Signaller play needs the layout's plan to be complete enough (each line's track circuits
+drawn and leaving the plan over an exit, and the station roads tied to circuits). If it isn't,
+the choice says what is missing.
+
+In **signaller play mode**:
+
+* **Trains move by themselves.** They run circuit by circuit through the track plan at the speed set
+  in Settings → Simulated running (30 mph by default, never above line speed or the loco's maximum;
+  shunts at most 15 mph), with a "speed up time" setting for shows. Occupied circuits light up red
+  on the diagram board, and each train's number is shown where its head is.
+* **Signals clear automatically** (there are no levers yet), when a real signaller would clear them.
+  The section (starting) signal clears only once Line Clear has been given (in token working, once
+  the token is out). The home signal clears once the route is set and the train is close to it, or
+  as soon as it is on the line if it has a clear run through. Signals go back to danger as the train
+  passes, and routes are freed as its tail clears them. Set routes show green. (The signals are not
+  drawn on the diagram yet: they come with the lever frame.)
+* **Routes are worked out for you and kept up to date.** An arriving train goes to the road you
+  choose in the Next arrival panel ("Into road"). If you don't choose, it goes to the timetable's
+  road, or else the first suitable free one (platforms for passenger trains, the goods yard for
+  goods). It goes round anything in the way. With no clear road it waits at the home signal. Shunts
+  set back where they need to (e.g. out of the goods yard via the west end).
+* **"Train arrived complete" works only once the track circuits show it**: the train has stopped
+  in its road, clear of the line. "Passed complete" works once a through train's tail has cleared
+  the line in rear. The far end reports trains arriving there by itself.
+* **Rolling stock is tracked.** A loco that sets off as a light engine leaves its coaches or wagons
+  standing as a rake, which keeps the circuit occupied and is listed in Trains on layout. A train
+  setting off from that road takes the rake.
+* Timetabled shunt moves run by themselves.
+
+In **model railway mode**, Settings → Simulated running → "Show track occupancy" lights up the
+diagram board from what you report (trains in a section, trains on a road). You can also tap a
+circuit to mark it occupied or clear.
+
 ## Groundwork for signaller play mode (v0.3.27)
 
 Nothing changes in how the app plays. Behind the scenes it is getting ready for a second way of
@@ -586,6 +622,9 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   tapDecoder.ts        Tapper rhythm → bell code
   link.ts              Messages between two boxes (the seam for future multiplayer)
   trainEvents.ts       Source of train events (what trains did) and the running mode: the seam between a box and its railway
+  routing.ts           Routes over the track plan, implicit home and section signals, play-mode readiness
+  occupancy.ts         Track occupancy board (fed by train events)
+  railwaySim.ts        The simulated railway: trains moving through the plan, automatic signaller, rakes of stock
   railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units
   sectionController.ts Your end of a block section: instruments, tokens, log
   score.ts             Scoring rules (points) and the Scorecard for a box session
@@ -626,7 +665,7 @@ npm run typecheck
 ## Where it goes next
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
-* Signaller play mode, in stages: occupancy on the diagram board from the signalling, virtual trains running through the plan, signals, a lever frame with interlocking, train performance, then scoring on delays.
+* Signaller play mode, in stages: signals placed on the plan, a lever frame with interlocking, train performance (braking, acceleration), then scoring on delays.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.
 * Android APK via Capacitor wrapping `dist/pwa/`.

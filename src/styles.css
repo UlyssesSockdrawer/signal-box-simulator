@@ -2022,3 +2022,24 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .ttp-e-clock .field { flex: 1 1 8em; }
 .loco-roles { align-items: center; gap: 6px; flex-wrap: wrap; }
 .loco-roles .field-label { margin-right: 4px; }
+
+/* =====================================================================
+   v0.3.28 Simulated running (signaller play mode) and track occupancy
+   ===================================================================== */
+.chip-mode { background: var(--brass); color: var(--brass-ink); }
+/* A set route (locked for a train): green; occupied (red) shows over it. */
+.dg-circuit.routed:not(.occupied) .dg-line { stroke: var(--lever-green); }
+.dg-junction.routed .dg-line { stroke: var(--lever-green); }
+.dg-signal .dg-lamp { fill: var(--signal-red); }
+.dg-signal.clear .dg-lamp { fill: #2bb24c; }
+.dg-train rect { fill: var(--ink); stroke: #f6f1e3; stroke-width: 1; }
+.dg-train text { fill: #ffd76a; }
+.dg-tappable .dg-circuit { cursor: pointer; }
+.dg-hit { pointer-events: none; }
+.dg-tappable .dg-hit { pointer-events: stroke; }
+.case .arrived-btn:disabled { background: var(--wood-dark); color: var(--case-muted); border-color: var(--wood-edge); box-shadow: none; opacity: 1; }
+.open-box-dialog { max-width: 560px; }
+.open-box-dialog .mode-choices { margin: 12px 0; }
+.mode-choice:disabled { opacity: 0.6; cursor: not-allowed; }
+.mode-choice .mode-blocked { color: var(--btn-danger-fg); }
+.sim-status { margin-top: 4px; }

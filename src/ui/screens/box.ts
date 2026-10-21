@@ -10,10 +10,10 @@ import { beatDots } from '../../core/simulatedNeighbour';
 import { TapDecoder } from '../../core/tapDecoder';
 import { trainsOnLayout, type RegisterLocation } from '../../core/layoutRegister';
 import type { BoxDef, ConnectionDef, InstrumentState, Loco } from '../../core/types';
-import { getBoxRuntime, takeFinishedScore, type ConnRuntime } from '../boxRuntime';
+import { getBoxRuntime, takeFinishedScore, takeOpeningMode, type BoxRuntime, type ConnRuntime } from '../boxRuntime';
 import type { ThroughWorkings } from '../../core/throughTrains';
-import type { TrainEventSource } from '../../core/trainEvents';
-import { drawDiagram, hasDiagram, type DiagramLabels } from '../planDiagram';
+import { drawDiagram, hasDiagram, setOccupied, setRoutes, setTrainLabels, type DiagramLabels } from '../planDiagram';
+import { reportedOccupancy } from '../../core/routing';
 import { showScoreSheet } from '../scoreSheet';
 import { activeCodeSet, locationText, locoFullName, locoName, trainTypeName, type Ctx, type Screen } from '../app';
 import { confirmButton, h, option, replace, safeRerender, toast } from '../dom';
@@ -61,7 +61,7 @@ interface ConnectionUI {
 export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   const store = ctx.store;
   const learner = () => store.state.settings.strictness === 'learner';
-  const runtime = getBoxRuntime(ctx, box);
+  const runtime = getBoxRuntime(ctx, box, { mode: takeOpeningMode(box.id) });
   const sessions = runtime.conns.map((cr) => cr.session);
   // After the box is closed it resets; redraw this screen with the fresh, unopened box.
   ctx.onLeave(
@@ -151,7 +151,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 
   // ---------------------------------------------------------------- connections
   let uis: ConnectionUI[] = [];
-  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection), runtime.trains));
+  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection), runtime));
   // The timetable (if one is running on this box's layout) hears about every change in the box at once.
   for (const s of sessions) ctx.onLeave(s.controller.events.on('change', () => peekRunner(layoutId())?.poke()));
 
@@ -279,10 +279,54 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       );
       return;
     }
+    // Signal lamps are not drawn yet (drawDiagram's `signals` option): they come with the lever frame, when they can be worked.
     const svgEl = drawDiagram(st, layout, { boxId: box.id, labels: st.settings.diagramLabels });
-    replace(diagramEl, h('div', { class: 'dg-board' }, svgEl, labelsSeg));
+    svgNow = svgEl;
+    const tappable = runtime.mode === 'model' && st.settings.modelOccupancy && !!runtime.railway;
+    replace(
+      diagramEl,
+      h(
+        'div',
+        { class: `dg-board${tappable ? ' dg-tappable' : ''}`, title: tappable ? 'Tap a track circuit to mark it occupied or clear' : undefined, on: { click: (e: Event) => tapCircuit(e) } },
+        svgEl,
+        labelsSeg,
+      ),
+    );
+    applyOverlay();
+  };
+  /** The live drawing: occupied circuits, set routes, signals and trains' numbers (play mode); occupancy you report or mark (model mode, when shown). */
+  let svgNow: SVGSVGElement | null = null;
+  const applyOverlay = () => {
+    const svgEl = svgNow;
+    if (!svgEl) return;
+    const st = store.state;
+    const layout = findLayout(st, st.boxes.find((x) => x.id === box.id)?.layoutId ?? box.layoutId);
+    if (!layout) return;
+    const board = runtime.railway?.board;
+    let occ: string[] = [];
+    if (runtime.mode === 'play') occ = board?.occupiedIds() ?? [];
+    else if (st.settings.modelOccupancy) occ = [...(board?.occupiedIds() ?? []), ...reportedOccupancy(st, layout.id)];
+    setOccupied(svgEl, occ);
+    const sim = runtime.sim;
+    if (!sim) return;
+    const r = sim.routes();
+    setRoutes(svgEl, r.circuits, r.junctions.map((j) => j.junctionId));
+    setTrainLabels(st, layout, svgEl, sim.trainLabels().map((t) => ({ circuitId: t.circuitId, text: st.roster.find((l) => l.id === t.locoId)?.number || '?' })));
+  };
+  /** Model railway mode, occupancy shown: a tap marks a track circuit occupied, or clears a mark. */
+  const tapCircuit = (e: Event) => {
+    if (runtime.mode !== 'model' || !store.state.settings.modelOccupancy) return;
+    const g = (e.target as Element).closest?.('.dg-circuit') as SVGGElement | null;
+    const id = g?.dataset.circuit;
+    const board = runtime.railway?.board;
+    if (!id || !board) return;
+    runtime.trains.report({ type: board.marked(id) ? 'clearedCircuit' : 'enteredCircuit', circuitId: id, locoId: null, by: 'person' });
   };
   ctx.onLeave(store.subscribe(renderDiagram));
+  if (runtime.sim) ctx.onLeave(runtime.sim.events.on('change', applyOverlay));
+  if (runtime.railway) ctx.onLeave(runtime.railway.board.onChange(applyOverlay));
+  // Signaller play mode is run from the diagram: show it.
+  if (runtime.mode === 'play' && !store.state.settings.boxDiagram) store.update((s) => (s.settings.boxDiagram = true));
   renderDiagram();
 
   const header = h(
@@ -292,6 +336,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     h('h1', { class: 'nameboard' }, box.name),
     clock,
     h('span', { class: `chip ${learner() ? 'chip-learner' : 'chip-strict'}` }, learner() ? 'Learner' : 'Strict'),
+    h('span', { class: `chip chip-mode`, title: runtime.mode === 'play' ? 'Signaller play mode: simulated trains on the track plan' : 'Model railway mode: you report where your trains get to' }, runtime.mode === 'play' ? 'Play' : 'Model railway'),
     shelfMap,
     h(
       'div',
@@ -365,10 +410,15 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       let count = 0;
       if (loc.kind === 'place') {
         meta = loc.roads.length ? `${loc.roads.length} ${loc.roads.length === 1 ? 'road' : 'roads'}` : '';
-        rows = loc.roads.flatMap(({ road, locos }) => [
-          h('dt', null, road.name),
-          h('dd', { class: locos.length ? '' : 'muted' }, locos.length ? locos.map(trainText).join('; ') : 'empty'),
-        ]);
+        // Rakes of stock left standing (signaller play mode) are listed with the road they stand on.
+        const stockOn = (roadId: string) =>
+          (findLayout(st, st.boxes.find((x) => x.id === box.id)?.layoutId ?? box.layoutId)?.stock ?? [])
+            .filter((r) => r.placeId === loc.place.id && r.roadId === roadId)
+            .map((r) => `stock: ${r.description || 'vehicles'}`);
+        rows = loc.roads.flatMap(({ road, locos }) => {
+          const all = [...locos.map(trainText), ...stockOn(road.id)];
+          return [h('dt', null, road.name), h('dd', { class: all.length ? '' : 'muted' }, all.length ? all.join('; ') : 'empty')];
+        });
         rows.push(...loc.loose.flatMap((l) => [h('dt', null, loc.roads.length ? 'No road' : 'Here'), h('dd', null, trainText(l))]));
         if (!rows.length) rows = none;
         count = loc.roads.reduce((n, r) => n + r.locos.length, 0) + loc.loose.length;
@@ -565,9 +615,13 @@ function connectionUI(
   onSelect: () => void,
   workings: ThroughWorkings,
   allConns: ConnectionDef[],
-  /** Where the signalling learns what trains did: the buttons below report movements through it. */
-  trains: TrainEventSource,
+  /** The box's running state: its mode, and the source of train events the buttons below report movements through. */
+  rt: BoxRuntime,
 ): ConnectionUI {
+  const trains = rt.trains;
+  const sim = rt.sim;
+  /** Signaller play mode: this line's arriving train as the simulated railway's track circuits show it. */
+  const simIn = () => sim?.incoming(box.id, conn.id) ?? null;
   const store = ctx.store;
   const c = cr.session.controller;
   const conn = cr.session.connection;
@@ -647,10 +701,53 @@ function connectionUI(
   const arrived = () => {
     const locoId = c.view.incoming?.locoId ?? null;
     if (workings.through(conn.id)?.stage === 'sentOn') trains.report({ type: 'passed', connectionId: conn.id, locoId, by: 'person' });
-    else trains.report({ type: 'arrived', connectionId: conn.id, locoId, at: workings.through(conn.id) ? null : arrivalTarget(), by: 'person' });
+    else trains.report({ type: 'arrived', connectionId: conn.id, locoId, at: workings.through(conn.id) ? null : sim ? (simIn()?.at ?? null) : arrivalTarget(), by: 'person' });
   };
   /** The person reports the outgoing train arrived at the far end of the line. */
   const arrivedFar = (roadId: string, locoId: string | null) => trains.report({ type: 'arrivedFar', connectionId: conn.id, locoId, roadId, by: 'person' });
+  /**
+   * Signaller play mode: the road the arriving train is to run into. The app chooses (the timetable's
+   * road, else the first suitable free one, going round anything in the way) unless you choose one;
+   * it can be changed until the route is set and the home signal is off.
+   */
+  const destinationField = (sv: ReturnType<typeof simIn>): HTMLElement | null => {
+    if (!sim) return null;
+    const state = st();
+    const layout = findLayout(state, box.layoutId);
+    const roads = arrivalChoices(state, box.id).filter((x) => x.roadId && layout?.places.find((p) => p.id === x.placeId)?.roads.find((r) => r.id === x.roadId)?.circuitId);
+    if (!roads.length) return null;
+    const chosen = sim.chosen(box.id, conn.id);
+    const val = (x: { placeId: string; roadId: string }) => `${x.placeId}|${x.roadId}`;
+    const id = `dest_${conn.id}`;
+    const occ = new Set(roads.filter((x) => {
+      const c = layout?.places.find((p) => p.id === x.placeId)?.roads.find((r) => r.id === x.roadId)?.circuitId;
+      return c && rt.railway?.board.occupied(c);
+    }).map(val));
+    return h(
+      'div',
+      { class: 'field route-field' },
+      h('label', { for: id }, 'Into road'),
+      h(
+        'select',
+        {
+          id,
+          disabled: !!sv?.locked,
+          on: {
+            change: (e: Event) => {
+              const v = (e.target as HTMLSelectElement).value;
+              const [placeId, roadId] = v.split('|');
+              const err = sim.setDestination(box.id, conn.id, v ? { placeId, roadId: roadId ?? '' } : null);
+              if (err) toast(err);
+            },
+          },
+        },
+        option('', `Let the app choose${!chosen && sv?.destText ? ` (${sv.destText})` : ''}`, !chosen),
+        ...roads.map((x) => option(val(x), `${x.label}${occ.has(val(x)) ? ' (occupied)' : ''}`, !!chosen && val(chosen) === val(x))),
+      ),
+      h('small', { class: 'help' }, sv?.locked ? `Route set to ${sv.destText}: the home signal is off.` : 'The route is set when the train nears the home signal. A road that is occupied then is avoided.'),
+    );
+  };
+
   /** Where the incoming train goes at this box: stop here, or on along another line (offering it on). */
   const routeField = (): HTMLElement | null => {
     const others = allConns.filter((x) => x.id !== conn.id);
@@ -952,7 +1049,9 @@ function connectionUI(
   const renderAction = () => {
     const inc = c.view.incoming;
     const show = !!inc && inc.departed && !inc.arrived;
-    mount(actionEl, JSON.stringify([show, inc?.locoId, arrivalKey(), workings.through(conn.id)]), () => {
+    const sv = show ? simIn() : null;
+    const detected = !sim || (workings.through(conn.id)?.stage === 'sentOn' ? !!sv?.passedDetected : !!sv?.arrivedDetected);
+    mount(actionEl, JSON.stringify([show, inc?.locoId, arrivalKey(), workings.through(conn.id), detected, sv?.where, sv?.status]), () => {
       actionEl.hidden = !show;
       if (!show || !inc) return replace(actionEl);
       const l = st().roster.find((x) => x.id === inc.locoId);
@@ -961,11 +1060,17 @@ function connectionUI(
         actionEl,
         h(
           'button',
-          { class: 'btn arrived-btn', type: 'button', on: { click: (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; arrived(); } } },
+          {
+            class: 'btn arrived-btn',
+            type: 'button',
+            disabled: !detected,
+            title: detected ? undefined : 'The track circuits do not show it there yet',
+            on: { click: (e: Event) => { (e.currentTarget as HTMLButtonElement).disabled = true; arrived(); } },
+          },
           `${l ? locoName(l) : 'Train'} ${thr?.stage === 'sentOn' ? 'passed complete' : 'arrived complete'}`,
-          h('span', null, 'tail lamp seen'),
+          h('span', null, sim ? (detected ? 'shown on the track circuits' : `track circuits: ${sv?.where || 'not on the plan yet'}`) : 'tail lamp seen'),
         ),
-        thr ? null : arrivalSelect(`cparr_${conn.id}`),
+        thr || sim ? null : arrivalSelect(`cparr_${conn.id}`),
       );
     });
   };
@@ -1007,7 +1112,8 @@ function connectionUI(
     if (incSel && !candidates.some((l) => l.id === incSel) && !v.incoming) incSel = '';
     const thr = workings.through(conn.id);
     const ttn = ttNote();
-    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey(), arrAt, ttn?.textContent ?? '']);
+    const sv = simIn();
+    const key = JSON.stringify([v.boxOpen, v.incoming, v.incoming?.held ? heldText(v.incoming) : '', incSel, state.settings.selectionMode, candidates.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), codeSet().id, thr, workings.route(conn.id), arrivalKey(), arrAt, ttn?.textContent ?? '', sv, sim ? sim.chosen(box.id, conn.id) : null]);
     mount(arrBody, key, () => {
       const title = null; // the panel's line bar names the line ("Next arrival from …")
       if (!v.incoming) {
@@ -1073,23 +1179,28 @@ function connectionUI(
                 ? `Despatched. It runs through ${box.name} to ${onward.neighbourName}.`
                 : `Despatched. Drive it into ${box.name}.`
             : 'Arrived. Call attention, then send 2-1.';
-        const arrSel = thr ? null : arrivalSelect(`parr_${conn.id}`);
+        const arrSel = thr || sim ? null : arrivalSelect(`parr_${conn.id}`);
+        const detected = !sim || (thr?.stage === 'sentOn' ? !!sv?.passedDetected : !!sv?.arrivedDetected);
+        const arrBtn = onceButton(thr?.stage === 'sentOn' ? 'Train passed complete' : thr ? 'Train arrived (standing here)' : 'Train arrived complete', arrived);
+        arrBtn.disabled = !detected;
         replace(
           arrBody,
           title,
           ttn,
           trainCard(inc.locoId, inc.trainTypeId),
           routeField(),
-          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, status),
+          sim && !thr && !inc.arrived ? destinationField(sv) : null,
+          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, sim && inc.departed && !inc.arrived && sv ? `${sv.status}${sv.where ? ` Track circuits: head at ${sv.where}.` : ''}` : status),
           inc.departed && !inc.arrived
             ? h(
                 'div',
                 { class: 'quick-row' },
                 arrSel ? h('label', { for: arrSel.id }, 'Into') : null,
                 arrSel,
-                onceButton(thr?.stage === 'sentOn' ? 'Train passed complete' : thr ? 'Train arrived (standing here)' : 'Train arrived complete', arrived),
+                arrBtn,
               )
             : null,
+          sim && inc.departed && !inc.arrived && !detected ? h('p', { class: 'muted small' }, 'You can report it once the track circuits show it has arrived (or passed) complete.') : null,
           !inc.departed ? confirmButton('Cancel this train', 'Press again to cancel', () => c.cancelIncoming(), 'btn ghost danger') : null,
         );
       }
@@ -1120,7 +1231,8 @@ function connectionUI(
       }
     }
     const ttn = ttNote();
-    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, place?.name, place?.roads, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id, workings.throughTo(conn.id), ttn?.textContent ?? '']);
+    const simText = sim ? sim.outgoingText(box.id, conn.id) : '';
+    const key = JSON.stringify([v.outgoing, outSel, accepted, arrRoad, place?.name, place?.roads, inStation.map((l) => [l.id, l.working, l.location, l.number, l.locoClass, l.name]), [...occupied], codeSet().id, workings.throughTo(conn.id), ttn?.textContent ?? '', simText]);
     mount(depBody, key, () => {
       const title = null; // the panel's line bar names the line ("Departure to …")
       const out = v.outgoing;
@@ -1137,6 +1249,8 @@ function connectionUI(
           out.locoId ? trainCard(out.locoId, out.trainTypeId ?? state.roster.find((l) => l.id === out.locoId)?.working.trainTypeId ?? '') : h('p', null, 'Train on line.'),
           out.arrived
             ? h('p', { class: 'status go' }, `Arrived at ${place?.name ?? conn.neighbourName}. ${conn.neighbourName} will call attention and send 2-1 (Train out of section).`)
+            : sim
+              ? h('p', { class: 'status go' }, simText || `On line to ${conn.neighbourName}. The railway reports it when it gets there.`)
             : place?.roads.length
               ? [
                   h('p', { class: 'status go' }, `On line to ${conn.neighbourName}. Drive it into ${place.name}.`),
@@ -1185,8 +1299,23 @@ function connectionUI(
           ? h('p', null, code ? ['Offer with ', h('strong', null, signalCode(codeSet(), 'call_attention')), ', then ', h('strong', null, code), '.'] : 'This working has no bell code in the current code set.')
           : h('p', { class: 'muted small' }, farPlaceName() ? `Choose the train before offering it, so the app can move it to ${farPlaceName()} when it arrives.` : `Choose the train before offering it. ${conn.neighbourName} has no place on the layout, so it goes back to the roster when it arrives.`),
         accepted
-          ? h('p', { class: 'status go' }, v.mode === 'ab' ? (thrLoco && outSel === thrLoco.id ? 'Line clear: clear your signals for the through train. Send 2 as it passes your box.' : 'Line clear: clear your starting signal. Send 2 as it departs.') : v.tokenWithdrawnHere ? 'Token out: hand it to the driver, clear your signal, send 2 as it departs.' : 'Release given: withdraw the token now.')
+          ? h(
+              'p',
+              { class: 'status go' },
+              sim
+                ? v.mode === 'ab' || v.tokenWithdrawnHere
+                  ? `Line clear: the starting signal is cleared for you (there are no levers yet). Send 2 as the train enters the section.`
+                  : 'Release given: withdraw the token now.'
+                : v.mode === 'ab'
+                  ? thrLoco && outSel === thrLoco.id
+                    ? 'Line clear: clear your signals for the through train. Send 2 as it passes your box.'
+                    : 'Line clear: clear your starting signal. Send 2 as it departs.'
+                  : v.tokenWithdrawnHere
+                    ? 'Token out: hand it to the driver, clear your signal, send 2 as it departs.'
+                    : 'Release given: withdraw the token now.',
+            )
           : null,
+        sim && simText ? h('p', { class: 'muted small sim-status' }, simText) : null,
       );
     });
   };
@@ -1306,6 +1435,15 @@ function connectionUI(
   offs.push(() => window.clearInterval(waitTimer));
   // Through trains link two lines: a change on one can change what the other shows.
   offs.push(workings.onChange(renderAll));
+  // Signaller play mode: the trains move on their own; keep the arrival button, panels and statuses up to date.
+  if (sim)
+    offs.push(
+      sim.events.on('change', () => {
+        renderAction();
+        renderIncoming();
+        renderOutgoing();
+      }),
+    );
   const unsub = store.subscribe(() => {
     syncOutgoing();
     renderBellText();
@@ -1351,6 +1489,19 @@ function connectionUI(
           `The simulated fiddle yard operator brings ${loco ? locoName(loco) : 'the train'} into ${place} and reports it arrived at about ${clockTime(at, true)} (or press the arrived button yourself if it gets there first). Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`,
         );
         return { text, hint: lastHint };
+      }
+      // Signaller play mode: nobody drives the trains, and the starting signal is cleared for you once Line Clear is given.
+      if (sim) {
+        if (drive && text.includes(drive)) {
+          const place = st().layouts.flatMap((l) => l.places).find((p) => p.id === conn.placeId)?.name ?? conn.neighbourName;
+          text = text.replace(drive, `The train runs to ${place} on its own, and the railway reports it arrived. Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`);
+        }
+        text = text
+          .replace(/Drive (.+?) into (.+?)\. When it has arrived complete with its tail lamp, press "Train arrived"/, '$1 runs into $2 on its own. When the track circuits show it has arrived complete, press "Train arrived"')
+          .replace(/Then drive (.+?) into the station\./, '$1 runs in on its own.')
+          .replace('Clear your starting signal on the layout. When the train leaves, send 2', 'The starting signal is cleared for you (no levers yet). As the train enters the section, send 2')
+          .replace(/clear your starting signal, and when the train (leaves|departs) send 2/, 'the starting signal is then cleared for you; as the train enters the section send 2')
+          .replace('Give it to the driver (on the layout), ', '');
       }
       if (c.view.guidanceIdle) text = r?.lineText(box.id, conn.id) ?? text;
       // Once you have reported the train arrived (or passed, for a through train), the far box still

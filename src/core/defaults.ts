@@ -4,8 +4,9 @@ import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCirc
 /**
  * 3: places (stations, sidings, goods, depots, fiddle yards) on layouts (v0.3.14). 4: timetables and loco jobs (v0.3.24).
  * 5: optional real-railway lengths and speeds, and the units setting (v0.3.27; nothing needs filling in).
+ * 6: simulated running settings and rakes of stock left standing on a layout (v0.3.28; nothing needs filling in).
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';
@@ -36,6 +37,9 @@ export const DEFAULT_SETTINGS: Settings = {
   boxDiagram: false,
   diagramLabels: 'codes',
   units: 'imperial',
+  simSpeed: 13.4112, // 30 mph
+  timeScale: 1,
+  modelOccupancy: false,
 };
 
 /*

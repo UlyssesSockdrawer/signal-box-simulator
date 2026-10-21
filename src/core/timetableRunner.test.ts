@@ -392,10 +392,10 @@ describe('timetable runner', () => {
     expect(t.trains.mode).toBe('play');
     sendPickupToEast(t);
     expect(t.runner.autoArrivalAt('sigsim-central', 'sgc-east')).toBeNull();
-    expect(t.runner.items[0].status).toMatch(/Press "Arrived"/);
+    expect(t.runner.items[0].status).toMatch(/the railway reports it/);
     t.tick(30_000);
     expect(t.east.view.outgoing?.arrived).toBeFalsy();
-    // Until the simulated railway exists (a later stage), a movement can still be reported.
+    // With no simulated railway attached (this test wires none), a movement can still be reported.
     expect(t.trains.source.report({ type: 'arrivedFar', connectionId: 'sgc-east', locoId: 'lms7298', roadId: 'fye-road3', by: 'person' })).toBe('applied');
     expect(t.east.view.outgoing?.arrived).toBe(true);
   });

@@ -1,5 +1,6 @@
 import {
   circuitLabel,
+  circuitMiddle,
   circuitPath,
   endHeading,
   JUNCTIONS,
@@ -43,6 +44,8 @@ export interface DiagramOptions {
   /** The box whose diagram this is: its track is drawn in ink. Omit to draw the whole plan in ink. */
   boxId?: string;
   labels: DiagramLabels;
+  /** Signals to draw (signaller play mode): each at the end of a circuit, for trains running towards that end. */
+  signals?: Array<{ id: string; circuitId: string; end: 0 | 1; kind: 'home' | 'section'; name: string }>;
 }
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number | undefined> = {}, ...children: Array<SVGElement | string | null>): SVGElementTagNameMap[K] {
@@ -129,7 +132,11 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
   const platforms = svg('g', { class: 'dg-platforms' });
   const tracks = svg('g', { class: 'dg-tracks' });
   const labels = svg('g', { class: 'dg-labels' });
-  s.append(platforms, tracks, labels);
+  const overlay = svg('g', { class: 'dg-overlay' });
+  s.append(platforms, tracks, labels, overlay);
+  // Kept so trains' labels can be put on the drawing later (setTrainLabels).
+  s.dataset.ox = String(ox);
+  s.dataset.oy = String(oy);
 
   // Track circuits
   for (const c of p.circuits) {
@@ -139,6 +146,8 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
     const pd = curvedD(path);
     const g = svg('g', { class: `dg-circuit${isMine(c) ? ' mine' : ''}`, 'data-circuit': c.id });
     g.append(svg('path', { d: pd, class: 'dg-line', fill: 'none', stroke: col, 'stroke-width': 5, 'stroke-linejoin': 'round', 'stroke-dasharray': c.owner.kind === 'line' ? '14 5' : undefined }));
+    // A wide invisible stroke, so a circuit is easy to tap (model railway mode: mark it occupied or clear).
+    g.append(svg('path', { d: pd, class: 'dg-hit', fill: 'none', stroke: 'transparent', 'stroke-width': 18 }));
     let platformUp = false;
     if (c.platform) {
       const pp = platformPath(p, c);
@@ -258,6 +267,26 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
     tracks.append(g);
   }
 
+  // Signals (play mode): a post beside the track at the circuit's end, the arm/lamp red or green.
+  for (const sg of opts.signals ?? []) {
+    const c = p.circuits.find((x) => x.id === sg.circuitId);
+    const e = c?.ends[sg.end];
+    const hd = c ? endHeading(p, c, sg.end) : null;
+    const at = e && 'x' in e ? { x: e.x, y: e.y } : hd;
+    if (!c || !hd || !at) continue;
+    // endHeading points out of the circuit at that end: the way trains run when they meet the signal.
+    const len = Math.hypot(hd.dx, hd.dy) || 1;
+    const ux = hd.dx / len;
+    const uy = hd.dy / len;
+    // Left-hand side of the line, as in Britain; set back a little from the end.
+    const px = X(hd.x) - ux * 12 + uy * 11;
+    const py = Y(hd.y) - uy * 12 - ux * 11;
+    const g = svg('g', { class: `dg-signal ${sg.kind}`, 'data-signal': sg.id }, svg('title', {}, sg.name));
+    g.append(svg('path', { d: `M${px - uy * 0} ${py}L${px - ux * 9} ${py - uy * 9}`, stroke: INK, 'stroke-width': 2 }));
+    g.append(svg('circle', { cx: px, cy: py, r: 4.5, class: 'dg-lamp', stroke: INK, 'stroke-width': 1.5 }));
+    overlay.append(g);
+  }
+
   // Signal boxes on the plan
   for (const m of p.markers ?? []) {
     const pos = markerPos(p, m);
@@ -288,4 +317,39 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
 export function setOccupied(diagram: SVGSVGElement, circuitIds: Iterable<string>): void {
   const on = new Set(circuitIds);
   for (const g of diagram.querySelectorAll<SVGGElement>('.dg-circuit')) g.classList.toggle('occupied', on.has(g.dataset.circuit ?? ''));
+}
+
+/** Show set routes: circuits locked for a train (white lights), and the points set in them. */
+export function setRoutes(diagram: SVGSVGElement, circuitIds: Iterable<string>, junctionIds: Iterable<string>): void {
+  const on = new Set(circuitIds);
+  const js = new Set(junctionIds);
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-circuit')) g.classList.toggle('routed', on.has(g.dataset.circuit ?? ''));
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-junction')) g.classList.toggle('routed', js.has(g.dataset.junction ?? ''));
+}
+
+/** Show which signals are off (cleared). */
+export function setSignals(diagram: SVGSVGElement, clearIds: Iterable<string>): void {
+  const on = new Set(clearIds);
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-signal')) g.classList.toggle('clear', on.has(g.dataset.signal ?? ''));
+}
+
+/** Put a train's description (e.g. its number) on the circuit its head is in. */
+export function setTrainLabels(state: AppState, layout: Layout, diagram: SVGSVGElement, labels: Array<{ circuitId: string; text: string }>): void {
+  const ox = Number(diagram.dataset.ox);
+  const oy = Number(diagram.dataset.oy);
+  const overlay = diagram.querySelector('.dg-overlay');
+  if (!overlay || !Number.isFinite(ox)) return;
+  for (const el of overlay.querySelectorAll('.dg-train')) el.remove();
+  void state;
+  for (const l of labels) {
+    const c = layout.trackPlan.circuits.find((x) => x.id === l.circuitId);
+    const m = c ? circuitMiddle(layout.trackPlan, c) : null;
+    if (!m) continue;
+    const x = (m.x - ox) * U;
+    const y = (m.y - oy) * U + 16;
+    const w = Math.max(30, l.text.length * 7.5 + 10);
+    overlay.append(
+      svg('g', { class: 'dg-train' }, svg('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 2 }), svg('text', { x, y: y + 4, 'text-anchor': 'middle', class: 'dg-tag' }, l.text)),
+    );
+  }
 }

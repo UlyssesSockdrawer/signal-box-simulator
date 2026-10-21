@@ -1,4 +1,4 @@
-import type { AppState, ConnectionDef, Junction, Layout, Loco, TrackCircuit, UnitSystem } from './types';
+import type { AppState, ConnectionDef, Junction, Layout, Loco, TrackCircuit, UnitSystem, Working } from './types';
 
 /*
  * REAL-RAILWAY DATA: lengths and speeds for signaller play mode (v0.3.27, Stage 0 groundwork).
@@ -141,6 +141,8 @@ const VEHICLES: Array<{ re: RegExp; metres: number; kind: string }> = [
   { re: /^(vans?|parcels? vans?|bogie vans?)$/, metres: 17, kind: 'van' },
   { re: /^(wagons?|trucks?|tankers?|tanks?|hoppers?|opens?|minerals?|vehicles?|flats?|bolsters?)$/, metres: 6, kind: 'wagon' },
 ];
+/** How many there usually are when a consist names them in the plural with no number ("Coal wagons", "Vans"). */
+const TYPICAL: Record<string, number> = { coach: 4, car: 2, van: 6, wagon: 12, 'auto-coach': 1, 'brake van': 1 };
 const WORDS: Record<string, number> = { a: 1, an: 1, one: 1, single: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
 
 /** The vehicles a consist names, e.g. "4 coaches + brake van" → 4 coach, 1 brake van. Words it does not know are left out. */
@@ -152,7 +154,7 @@ export function consistVehicles(consist: string): Array<{ count: number; kind: s
     // "4 coaches", "4-coach", "six wagons", "a brake van", "brake van", "2-car"
     const m = /^(\d+|[a-z]+)?[ -]?(.*)$/.exec(part);
     if (!m) continue;
-    let count = 1;
+    let count: number | null = null;
     let rest = part;
     if (m[1] && /^\d+$/.test(m[1])) {
       count = Number(m[1]);
@@ -161,17 +163,20 @@ export function consistVehicles(consist: string): Array<{ count: number; kind: s
       count = WORDS[m[1]];
       rest = m[2];
     }
-    rest = rest.trim();
-    // Take the longest run of words from the start that names a vehicle ("coaches" in "coaches (corridor)").
-    const words = rest.split(/[ -]/);
-    for (let n = words.length; n > 0; n--) {
-      const name = words.slice(0, n).join(' ').replace(/[^a-z ]/g, '');
-      const v = VEHICLES.find((x) => x.re.test(name));
-      if (v) {
-        if (count > 0) out.push({ count: Math.min(count, 200), kind: v.kind, metres: v.metres });
-        break;
+    // Find the longest run of words that names a vehicle, anywhere ("coaches" in "coaches (corridor)",
+    // "wagons" in "coal wagons").
+    const words = rest.trim().split(/[ -]/).map((w) => w.replace(/[^a-z]/g, '')).filter(Boolean);
+    let found: { v: (typeof VEHICLES)[number]; plural: boolean } | null = null;
+    for (let n = words.length; n > 0 && !found; n--)
+      for (let i = 0; i + n <= words.length && !found; i++) {
+        const name = words.slice(i, i + n).join(' ');
+        const v = VEHICLES.find((x) => x.re.test(name));
+        if (v) found = { v, plural: /s$/.test(words[i + n - 1]) && !/^(brake ?vans?|guards? vans?)$/.test(name) ? /s$/.test(name) : false };
       }
-    }
+    if (!found) continue;
+    // No number given: one of a thing named in the singular, a typical rake of a thing named in the plural.
+    const n = count ?? (found.plural ? (TYPICAL[found.v.kind] ?? 4) : 1);
+    if (n > 0) out.push({ count: Math.min(n, 200), kind: found.v.kind, metres: found.v.metres });
   }
   return out;
 }
@@ -196,13 +201,33 @@ export function locoLength(l: Loco): number {
 export function trainLength(l: Loco): number {
   const stated = positive(l.working.length);
   if (stated !== undefined) return stated;
-  const vehicles = consistVehicles(l.working.consist ?? '');
+  const vehicles = workingVehicles(l.working);
   if (isUnit(l)) {
     const cars = vehicles.filter((v) => v.kind === 'car').reduce((n, v) => n + v.count, 0);
     const others = vehicles.filter((v) => v.kind !== 'car').reduce((m, v) => m + v.count * v.metres, 0);
     return Math.max(1, cars) * 20 + others;
   }
   return locoLength(l) + vehicles.reduce((m, v) => m + v.count * v.metres, 0);
+}
+
+/**
+ * The vehicles a loco is working with: its consist's, except that a light engine has none (whatever
+ * its consist still says) and an engine and brake van has its brake van. Multiple units count their cars.
+ */
+export function workingVehicles(w: Working): Array<{ count: number; kind: string; metres: number }> {
+  if (w.trainTypeId === 'light_engine') return [];
+  const vehicles = consistVehicles(w.consist ?? '');
+  if (w.trainTypeId === 'engine_brake_van') {
+    const vans = vehicles.filter((v) => v.kind === 'brake van');
+    return vans.length ? vans : [{ count: 1, kind: 'brake van', metres: 8 }];
+  }
+  return vehicles;
+}
+
+/** A short description of some vehicles: "4 coach, 1 brake van" → "4 coaches + brake van". */
+export function vehiclesText(vehicles: Array<{ count: number; kind: string }>): string {
+  const plural = (k: string, n: number) => (n === 1 ? k : k === 'coach' ? 'coaches' : `${k}s`);
+  return vehicles.map((v) => (v.count === 1 ? `${/^[aeiou]/.test(v.kind) ? 'an' : 'a'} ${v.kind}` : `${v.count} ${plural(v.kind, v.count)}`)).join(' + ');
 }
 
 // ---------------------------------------------------------------------------- typing and showing values
@@ -315,6 +340,10 @@ export function sanitiseRailwayData(state: AppState): void {
     if (o[key] !== undefined && positive(o[key]) === undefined) delete o[key];
   };
   if (state.settings.units !== 'metric') state.settings.units = 'imperial';
+  const st = state.settings;
+  if (positive(st.simSpeed) === undefined) st.simSpeed = 30 * MPS_PER_MPH;
+  st.timeScale = Number.isFinite(st.timeScale) ? Math.min(10, Math.max(1, Math.round(st.timeScale))) : 1;
+  st.modelOccupancy = st.modelOccupancy === true;
   for (const b of state.boxes) for (const c of b.connections) clean(c, 'sectionLength');
   for (const l of state.layouts) {
     clean(l, 'lineSpeed');
@@ -323,6 +352,19 @@ export function sanitiseRailwayData(state: AppState): void {
       clean(c, 'lineSpeed');
     }
     for (const j of l.trackPlan.junctions) clean(j, 'divergingSpeed');
+    // Rakes left standing (v0.3.28): keep those on a road of this layout, with sensible vehicles.
+    if (l.stock !== undefined) {
+      const roads = new Set(l.places.flatMap((p) => p.roads.map((r) => `${p.id}|${r.id}`)));
+      l.stock = (Array.isArray(l.stock) ? l.stock : []).filter(
+        (r) => r && typeof r.id === 'string' && Array.isArray(r.vehicles) && roads.has(`${r.placeId}|${r.roadId}`),
+      );
+      for (const r of l.stock) {
+        r.description = String(r.description ?? '');
+        r.vehicles = r.vehicles.filter((v) => v && typeof v.kind === 'string' && positive(v.count) !== undefined && positive(v.metres) !== undefined);
+        r.circuitId = l.places.find((p) => p.id === r.placeId)?.roads.find((x) => x.id === r.roadId)?.circuitId ?? '';
+      }
+      if (!l.stock.length) delete l.stock;
+    }
   }
   for (const l of state.roster) {
     clean(l, 'maxSpeed');

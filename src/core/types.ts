@@ -339,6 +339,12 @@ export interface Settings {
   boxDiagram: boolean;
   /** How lengths and speeds are shown (they are stored in metres and metres per second). */
   units: UnitSystem;
+  /** Signaller play mode: the speed every simulated train runs at (metres per second), never above line speed or the loco's maximum. */
+  simSpeed: number;
+  /** Signaller play mode: simulated time runs this many times faster than real time (1–10), for shows. */
+  timeScale: number;
+  /** Model railway mode: show track occupancy on the diagram board (from what you report, and circuits you tap). */
+  modelOccupancy: boolean;
   /** What the diagram board labels its track circuits with. */
   diagramLabels: 'none' | 'codes' | 'names';
 }
@@ -488,6 +494,32 @@ export interface Layout {
   headcodeEra?: HeadcodeEra;
   /** Line speed in metres per second for its track (circuits may differ); absent = the default (60 mph). */
   lineSpeed?: number;
+  /** Rolling stock standing on its own (uncoupled from a loco): rakes left in roads (signaller play mode, v0.3.28). */
+  stock?: StockRake[];
+}
+
+/** One kind of vehicle in a rake: e.g. 4 × coach (20 m each). Kept as a list so numbered stock can be added later. */
+export interface StockVehicles {
+  kind: string;
+  count: number;
+  /** Length of each vehicle over buffers, in metres. */
+  metres: number;
+}
+
+/**
+ * An anonymous rake of rolling stock (coaches, wagons, vans) standing without a loco, e.g. the
+ * coaches of a terminating train left in the platform while its engine runs round. It keeps the
+ * track circuit it stands on occupied until a loco takes it away.
+ */
+export interface StockRake {
+  id: string;
+  /** What it is, as written in the consist it came from, e.g. "4 coaches". */
+  description: string;
+  vehicles: StockVehicles[];
+  /** Where it stands: a road of a place (and the track circuit the road is on). */
+  placeId: string;
+  roadId: string;
+  circuitId: string;
 }
 
 /** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */

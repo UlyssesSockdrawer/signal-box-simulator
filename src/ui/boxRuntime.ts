@@ -9,6 +9,8 @@ import { createBoxSession, locoLabel, type SectionSession } from '../core/sessio
 import { connectTrainEvents, DEFAULT_RUNNING_MODE, type BoxTrains, type RunningMode, type TrainEventSource } from '../core/trainEvents';
 import type { BoxDef, Location } from '../core/types';
 import type { Ctx } from './app';
+import { getLayoutRailway, type LayoutRailway } from './railwayRuntime';
+import type { RailwaySim } from '../core/railwaySim';
 
 /**
  * The running state of a signal box (controllers, simulated neighbours,
@@ -34,6 +36,10 @@ export interface BoxRuntime {
   mode: RunningMode;
   /** Where the signalling learns what trains did: report movements here (buttons, simulated operator). */
   trains: TrainEventSource;
+  /** The box's layout's railway (occupancy board), or null for a box not on a layout. */
+  railway: LayoutRailway | null;
+  /** Signaller play mode: the simulated railway the box's trains run on (null in model railway mode). */
+  sim: RailwaySim | null;
   conns: ConnRuntime[];
   /** The signaller's score for this session of the box (until it is closed, or a fresh score is started). */
   score: Scorecard;
@@ -63,6 +69,17 @@ export function takeFinishedScore(boxId: string): Scorecard | null {
 function signatureOf(ctx: Ctx, box: BoxDef): string {
   const modes = box.connections.map((c) => ctx.store.state.settings.workingModes[c.id] ?? c.defaultWorking);
   return JSON.stringify([box.name, box.shortName, box.connections, modes]);
+}
+
+/** The running mode chosen when a box is next opened (taken once by the box screen). */
+const openingModes = new Map<string, RunningMode>();
+export function setOpeningMode(boxId: string, mode: RunningMode): void {
+  openingModes.set(boxId, mode);
+}
+export function takeOpeningMode(boxId: string): RunningMode | undefined {
+  const m = openingModes.get(boxId);
+  openingModes.delete(boxId);
+  return m;
 }
 
 /**
@@ -153,12 +170,24 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef, opts: { mode?: RunningMode 
     score: (s, rule, detail, locoId) => referee.score(s, rule, detail, locoId),
   });
   // The one way in for what trains did (the box's buttons, the simulated fiddle yard operator).
-  const trains: BoxTrains = connectTrainEvents(mode, sessions, workings);
+  // The layout's railway: its occupancy board (hand-marked circuits in model railway mode) and, in
+  // signaller play mode, the simulated railway the box's trains run on.
+  const railway = box.layoutId && store.state.layouts.some((l) => l.id === box.layoutId) ? getLayoutRailway(ctx, box.layoutId) : null;
+  const sim = mode === 'play' ? (railway?.sim ?? null) : null;
+  const trains: BoxTrains = connectTrainEvents(mode, sessions, workings, {
+    board: railway?.board,
+    detection: sim
+      ? { arrived: (connId) => !!sim.incoming(box.id, connId)?.arrivedDetected, passed: (connId) => !!sim.incoming(box.id, connId)?.passedDetected }
+      : undefined,
+  });
+  const detachSim = sim ? sim.attach({ boxId: box.id, sessions, workings, source: trains.source }) : () => {};
   const runtime: BoxRuntime = {
     boxId: box.id,
     signature: sig,
     mode,
     trains: trains.source,
+    railway,
+    sim,
     conns,
     score,
     workings,
@@ -171,6 +200,7 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef, opts: { mode?: RunningMode 
       if (resetTimer !== null) window.clearTimeout(resetTimer);
       resetTimer = null;
       for (const off of offs) off();
+      detachSim();
       trains.dispose();
       workings.dispose();
       regulator.dispose();

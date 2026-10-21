@@ -299,6 +299,8 @@ describe('real-railway data: lengths and speeds', () => {
     expect(trainLength(loco)).toBe(150);
     const jinty = s.roster.find((l) => l.id === 'lms7298')!;
     jinty.working.consist = 'auto-coach';
+    expect(trainLength(jinty)).toBe(11); // as a light engine it has nothing behind it
+    jinty.working.trainTypeId = 'branch_passenger';
     expect(trainLength(jinty)).toBe(11 + 19);
     jinty.powerType = 'DMU';
     jinty.working.consist = '2-car';
@@ -344,7 +346,7 @@ describe('saved data with real-railway values', () => {
       delete old.settings.units;
       const s = migrate(old);
       expect(s.schemaVersion).toBe(SCHEMA_VERSION);
-      expect(SCHEMA_VERSION).toBe(5);
+      expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
       expect(s.settings.units).toBe('imperial');
       // Nothing is filled in: lengths and speeds stay absent, so the defaults apply.
       expect(JSON.stringify(s)).not.toMatch(/"(sectionLength|length|lineSpeed|divergingSpeed|maxSpeed)"/);

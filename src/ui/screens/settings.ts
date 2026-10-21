@@ -7,6 +7,8 @@ import { resetPlacesUi } from './places';
 import { resetRosterUi } from './roster';
 import { resetTimetablesUi } from './timetables';
 import { disposeAllRunners } from '../timetableRuntime';
+import { disposeAllRailways } from '../railwayRuntime';
+import { MPS_PER_KMH, MPS_PER_MPH, UNIT_SYSTEMS } from '../../core/railway';
 import { resetTrackPlanUi } from './trackPlan';
 
 export function settingsScreen(ctx: Ctx): Screen {
@@ -137,11 +139,47 @@ export function settingsScreen(ctx: Ctx): Screen {
     ),
   );
 
+  // ---------------------------------------------------------------- simulated running
+  const imperial = s.units !== 'metric';
+  const speedUnit = imperial ? 'mph' : 'km/h';
+  const running = h(
+    'section',
+    { class: 'panel' },
+    h('h2', null, 'Simulated running'),
+    field(
+      'Units',
+      h('select', { id: 'set_units', on: { change: (e: Event) => set((x) => (x.units = (e.target as HTMLSelectElement).value as Settings['units'])) } }, ...UNIT_SYSTEMS.map((u) => option(u.id, u.name, u.id === s.units))),
+      'How lengths and speeds are shown.',
+    ),
+    h('h3', null, 'Signaller play mode'),
+    num(
+      'set_simspeed',
+      `Train speed (${speedUnit})`,
+      Math.round(s.simSpeed / (imperial ? MPS_PER_MPH : MPS_PER_KMH)),
+      (v) => (s.simSpeed = Math.max(1, Math.min(imperial ? 125 : 200, v)) * (imperial ? MPS_PER_MPH : MPS_PER_KMH)),
+      { min: 1, max: imperial ? 125 : 200, help: 'Every simulated train runs at this speed (shunts at most 15 mph), never above the line speed or the loco\'s maximum. Braking and acceleration come later.' },
+    ),
+    field(
+      'Speed up time',
+      h(
+        'select',
+        { id: 'set_timescale', on: { change: (e: Event) => set((x) => (x.timeScale = Number((e.target as HTMLSelectElement).value))) } },
+        ...[1, 2, 3, 4, 5, 6, 8, 10].map((n) => option(String(n), n === 1 ? 'Real time (×1)' : `×${n}`, n === s.timeScale)),
+      ),
+      'Simulated trains run this many times faster than real time: a two-mile section takes about 4 minutes at 30 mph in real time. Bells and the far signallers are not sped up.',
+    ),
+    h('h3', null, 'Model railway mode'),
+    h('div', { class: 'checks' },
+      check('set_modelocc', 'Show track occupancy on the diagram board: track circuits light up from what you report (trains in a section, trains on a road), and you can tap a circuit to mark it occupied or clear', s.modelOccupancy, (v) => (s.modelOccupancy = v)),
+    ),
+  );
+
   // ---------------------------------------------------------------- data
   /** Before all the app's data is replaced (reset or import): close running boxes and forget screen state belonging to the old data. */
   const freshStart = () => {
     disposeAllRunners();
     disposeAllBoxRuntimes();
+    disposeAllRailways();
     resetTrackPlanUi();
     resetPlacesUi();
     resetRosterUi();
@@ -258,6 +296,6 @@ export function settingsScreen(ctx: Ctx): Screen {
 
   return {
     title: 'Settings',
-    el: h('main', { class: 'page' }, topBar(ctx, 'Settings'), h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, data, resetPanel)),
+    el: h('main', { class: 'page' }, topBar(ctx, 'Settings'), h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, running, data, resetPanel)),
   };
 }

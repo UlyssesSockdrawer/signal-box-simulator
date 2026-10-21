@@ -6,6 +6,7 @@ import { layoutOfPlace, placeLocationText } from '../core/places';
 import type { AppState, BoxDef, Loco } from '../core/types';
 import { h, replace, safeRerender, toast } from './dom';
 import { boxScreen } from './screens/box';
+import { openBox } from './openBox';
 import { boxConfigScreen, plusIcon } from './screens/boxConfig';
 import { helpScreen } from './screens/help';
 import { layoutScreen } from './screens/layout';
@@ -19,7 +20,7 @@ import { generateScreen } from './screens/timetableGenerate';
 import { findTimetable } from '../core/timetables';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.27';
+export const APP_VERSION = '0.3.28';
 
 export interface Ctx {
   store: Store;
@@ -157,7 +158,7 @@ function boxSelectScreen(ctx: Ctx): Screen {
       h(
         'div',
         { class: 'row bt-actions' },
-        openable ? h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.go(`box/${b.id}`) } }, `Open ${b.name} box`) : null,
+        openable ? h('button', { class: 'btn primary', type: 'button', on: { click: () => openBox(ctx, b) } }, `Open ${b.name} box`) : null,
         h('button', { class: openable ? 'btn' : 'btn primary', type: 'button', on: { click: () => configure(b.id) } }, 'Configure'),
         unassigned && active
           ? h(

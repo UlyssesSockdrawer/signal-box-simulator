@@ -13,6 +13,7 @@ import {
   setShelfPositions,
   SHORT_NAME_MAX,
 } from '../../core/boxes';
+import { openBox } from '../openBox';
 import { layoutOfBox } from '../../core/layouts';
 import { kindInfo, PLACE_KINDS, placesForBox, placesWorkedBy, setConnectionPlace } from '../../core/places';
 import { layoutShelf, positionLabel } from '../../core/shelf';
@@ -88,7 +89,7 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
   const openable = canOpenBox(box);
   const openBtn = h(
     'button',
-    { class: 'btn primary', type: 'button', disabled: !openable, title: openable ? undefined : 'Add a connected signal box first', on: { click: () => canOpenBox(box) && ctx.go(`box/${box.id}`) } },
+    { class: 'btn primary', type: 'button', disabled: !openable, title: openable ? undefined : 'Add a connected signal box first', on: { click: () => canOpenBox(box) && openBox(ctx, box) } },
     `Open ${box.name} box`,
   );
 

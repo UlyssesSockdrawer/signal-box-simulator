@@ -53,6 +53,8 @@ export interface RunnerBox {
   mode: RunningMode;
   /** The box's source of train events: the simulated fiddle yard operator reports arrivals through it. */
   trains: TrainEventSource;
+  /** Signaller play mode: the simulated railway, which runs shunt moves through the track plan by itself. */
+  railway?: { shunt(boxId: string, locoId: string, to: PlaceRef, onDone: (ok: boolean, at: PlaceRef) => void): string | null };
 }
 
 export interface RunnerOptions {
@@ -813,8 +815,22 @@ export class TimetableRunner {
         const rb = this.o.box(s.boxId);
         if (!rb) return this.startAuto(it, { kind: 'auto', dest: s.dest, ms: this.o.autoMoveMs ?? AUTO_MS }, s);
         const same = it.entry.from.placeId === it.entry.to.placeId && it.entry.from.roadId === it.entry.to.roadId;
+        // Signaller play mode: the simulated railway shunts it (falls back to a card if it cannot).
+        if (rb.mode === 'play' && rb.railway && it.locoId && s.dest.kind === 'place') {
+          const dest = s.dest;
+          const err = rb.railway.shunt(s.boxId, it.locoId, { placeId: dest.placeId, roadId: dest.roadId }, (ok, at) => {
+            if (!ok || it.state !== 'active' || it.segs[it.seg] !== s) return;
+            s.dest = { kind: 'place', placeId: at.placeId, roadId: at.roadId };
+            this.completeSeg(it);
+          });
+          if (!err) {
+            it.status = `Shunting ${who} to ${posText(st, s.dest)} (simulated).`;
+            break;
+          }
+          it.status = `${err} `;
+        }
         it.card = { kind: 'shunt', text: same ? `${who}: now ${this.typeName(it.entry.trainTypeId).toLowerCase()} where it stands (${refText(st, it.entry.from)}).${it.entry.notes ? ` ${it.entry.notes}` : ''}` : `Shunt ${who} (${this.typeName(it.entry.trainTypeId).toLowerCase()}) from ${refText(st, it.entry.from)} to ${posText(st, s.dest)}.${it.entry.notes ? ` ${it.entry.notes}` : ''}` };
-        it.status = 'Shunt: press Done once it is there.';
+        it.status = `${it.status && rb.mode === 'play' ? it.status : ''}Shunt: press Done once it is there.`;
         break;
       }
       case 'auto':
@@ -1029,7 +1045,11 @@ export class TimetableRunner {
       it.status = `Arrived at ${where}: waiting for ${name} to clear it back (answer 1, then repeat 2-1).`;
       return;
     }
-    if (this.operator !== 'simulated' || rb.mode !== 'model') {
+    if (rb.mode === 'play') {
+      it.status = `On its way to ${where}: the railway reports it when it gets there.`;
+      return;
+    }
+    if (this.operator !== 'simulated') {
       it.status = `On its way to ${where}. Press "Arrived" in the Departure panel once it is there.`;
       return;
     }

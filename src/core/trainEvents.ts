@@ -1,5 +1,6 @@
 import type { SectionSession } from './session';
 import type { ThroughWorkings } from './throughTrains';
+import { MARKED, type OccupancyBoard } from './occupancy';
 import type { PlaceRef } from './types';
 
 /*
@@ -67,11 +68,15 @@ export type TrainEvent =
   | { type: 'passed'; connectionId: string; locoId: string | null; by: ReportedBy }
   /** The outgoing train on `connectionId` has arrived complete at the far end (on a road of the line's place, '' for none). */
   | { type: 'arrivedFar'; connectionId: string; locoId: string | null; roadId: string; by: ReportedBy }
-  // ---- Later stages (occupancy, simulated running): declared, not yet acted on ----
-  /** The front of a train has entered a track circuit. */
-  | { type: 'enteredCircuit'; circuitId: string; locoId: string | null; by: ReportedBy }
-  /** The rear of a train has cleared a track circuit. */
-  | { type: 'clearedCircuit'; circuitId: string; locoId: string | null; by: ReportedBy }
+  // ---- Track circuits (v0.3.28): applied to the layout's occupancy board ----
+  /**
+   * A train (locoId), a rake of stock standing on its own (stockId), or something unknown (neither:
+   * a circuit marked occupied by hand, or a detection section showing occupied) has entered a track circuit.
+   */
+  | { type: 'enteredCircuit'; circuitId: string; locoId: string | null; stockId?: string; by: ReportedBy }
+  /** The same has cleared it (neither id from detection: the section shows clear of everything). */
+  | { type: 'clearedCircuit'; circuitId: string; locoId: string | null; stockId?: string; by: ReportedBy }
+  // ---- Declared for later stages, not yet acted on ----
   /** A train has come to a stand (on a track circuit, if known). */
   | { type: 'stopped'; locoId: string | null; circuitId: string | null; by: ReportedBy };
 
@@ -96,8 +101,10 @@ export type TrainEventOutcome =
   | 'ignored'
   /** No line of this box has that connection id. */
   | 'unknownLine'
-  /** A later-stage event (track circuits, stopping): nothing listens to it yet. */
-  | 'notUsed';
+  /** A later-stage event (stopping), or track circuits with no occupancy board: nothing listens to it yet. */
+  | 'notUsed'
+  /** Refused: in signaller play mode a movement is reported only once the track circuits show it (or the railway reports it itself). */
+  | 'notDetected';
 
 /** Where the signalling learns what trains physically did. */
 export interface TrainEventSource {
@@ -121,6 +128,12 @@ export class ReportedMovements implements TrainEventSource {
   private listeners = new Set<(e: TrainEvent) => TrainEventOutcome | void>();
   private disposed = false;
 
+  /**
+   * `gate` (signaller play mode): looks at each report first and may refuse it with an outcome
+   * (e.g. 'notDetected' for an arrival the track circuits do not show yet); null lets it through.
+   */
+  constructor(private gate?: (e: TrainEvent) => TrainEventOutcome | null) {}
+
   onEvent(fn: (e: TrainEvent) => TrainEventOutcome | void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -128,6 +141,8 @@ export class ReportedMovements implements TrainEventSource {
 
   report(e: TrainEvent): TrainEventOutcome {
     if (this.disposed) return 'ignored';
+    const refused = this.gate?.(e);
+    if (refused) return refused;
     let outcome: TrainEventOutcome = 'notUsed';
     for (const fn of [...this.listeners]) {
       const r = fn(e);
@@ -147,15 +162,31 @@ export class ReportedMovements implements TrainEventSource {
   }
 }
 
-const rank = (o: TrainEventOutcome) => ({ notUsed: 0, unknownLine: 1, ignored: 2, applied: 3 })[o];
+const rank = (o: TrainEventOutcome) => ({ notUsed: 0, unknownLine: 1, notDetected: 1, ignored: 2, applied: 3 })[o];
 
 /**
- * The source of train events for a box session in this mode. Signaller play mode has no simulated
- * railway yet (a later stage), so for now it too takes reported movements.
+ * In signaller play mode, what the simulated railway's track circuits show for a line's train: may the
+ * person report it arrived complete / passed complete yet?
  */
-export function createTrainSource(mode: RunningMode): TrainEventSource {
-  void mode;
-  return new ReportedMovements();
+export interface Detection {
+  arrived(connectionId: string): boolean;
+  passed(connectionId: string): boolean;
+}
+
+/**
+ * The source of train events for a box session in this mode. Model railway mode takes reported
+ * movements as they come. Signaller play mode takes the simulated railway's reports (by 'railway'),
+ * and lets the person report a train arrived or passed complete only once the track circuits show it
+ * (`detection`); the far end and the track circuits are the railway's to report.
+ */
+export function createTrainSource(mode: RunningMode, detection?: Detection): TrainEventSource {
+  if (mode === 'model' || !detection) return new ReportedMovements();
+  return new ReportedMovements((e) => {
+    if (e.by === 'railway') return null;
+    if (e.type === 'arrived') return detection.arrived(e.connectionId) ? null : 'notDetected';
+    if (e.type === 'passed') return detection.passed(e.connectionId) || detection.arrived(e.connectionId) ? null : 'notDetected';
+    return 'notDetected';
+  });
 }
 
 /**
@@ -174,6 +205,8 @@ export class TrainEventRouter {
     private sessions: SectionSession[],
     private workings: ThroughWorkings | null,
     readonly source: TrainEventSource,
+    /** The layout's track occupancy, which track circuit events go on. */
+    private board: OccupancyBoard | null = null,
   ) {
     this.off = source.onEvent((e) => this.apply(e));
   }
@@ -197,7 +230,14 @@ export class TrainEventRouter {
   }
 
   private applyToLine(e: TrainEvent): TrainEventOutcome {
-    if (e.type === 'enteredCircuit' || e.type === 'clearedCircuit' || e.type === 'stopped') return 'notUsed';
+    if (e.type === 'stopped') return 'notUsed';
+    if (e.type === 'enteredCircuit' || e.type === 'clearedCircuit') {
+      if (!this.board) return 'notUsed';
+      const who = e.stockId ? `rake:${e.stockId}` : (e.locoId ?? (e.by === 'detection' && e.type === 'clearedCircuit' ? undefined : MARKED));
+      if (e.type === 'enteredCircuit') this.board.enter(e.circuitId, who ?? MARKED);
+      else this.board.clear(e.circuitId, who);
+      return 'applied';
+    }
     const s = this.sessions.find((x) => x.connection.id === e.connectionId);
     if (!s) return 'unknownLine';
     const c = s.controller;
@@ -226,10 +266,19 @@ export interface BoxTrains {
   dispose(): void;
 }
 
-/** Wire a box session's signalling to a new source of train events for its running mode. */
-export function connectTrainEvents(mode: RunningMode, sessions: SectionSession[], workings: ThroughWorkings | null): BoxTrains {
-  const source = createTrainSource(mode);
-  const router = new TrainEventRouter(sessions, workings, source);
+/**
+ * Wire a box session's signalling to a new source of train events for its running mode. `board`: the
+ * layout's occupancy board (track circuit events go on it); `detection`: signaller play mode's
+ * simulated railway, which says when a train may be reported arrived or passed.
+ */
+export function connectTrainEvents(
+  mode: RunningMode,
+  sessions: SectionSession[],
+  workings: ThroughWorkings | null,
+  opts: { board?: OccupancyBoard; detection?: Detection } = {},
+): BoxTrains {
+  const source = createTrainSource(mode, opts.detection);
+  const router = new TrainEventRouter(sessions, workings, source, opts.board ?? null);
   return {
     mode,
     source,

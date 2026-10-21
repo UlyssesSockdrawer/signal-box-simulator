@@ -29,7 +29,14 @@ export function getRunner(ctx: Ctx, layoutId: string): TimetableRunner {
       const rt = peekBoxRuntime(boxId);
       const box = store.state.boxes.find((b) => b.id === boxId);
       if (!rt || !box || box.layoutId !== layoutId) return null;
-      return { sessions: rt.conns.map((c) => c.session), workings: rt.workings, mode: rt.mode, trains: rt.trains };
+      const sim = rt.sim;
+      return {
+        sessions: rt.conns.map((c) => c.session),
+        workings: rt.workings,
+        mode: rt.mode,
+        trains: rt.trains,
+        railway: sim ? { shunt: (b, l, to, done) => sim.shunt(b, l, to, done) } : undefined,
+      };
     },
     moveLoco: (id, loc) =>
       store.update((s) => {
