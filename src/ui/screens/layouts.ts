@@ -94,7 +94,7 @@ export function confirmTrainsOff(trains: Loco[], title: string, what: string, co
 }
 
 /** Route for a layout in the editor. `tab` opens its Details or Places tab first. */
-export const layoutRoute = (id: string, tab?: 'details' | 'places') => `plan/${id}${tab ? `/${tab}` : ''}`;
+export const layoutRoute = (id: string, tab?: 'details' | 'places' | 'signals') => `plan/${id}${tab ? `/${tab}` : ''}`;
 
 export function layoutListScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;

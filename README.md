@@ -226,6 +226,37 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Signals on the layout (v0.3.29)
+
+Each layout can now have its own signals. The Layout configurator has a new **Signalling** tab:
+
+* **Generate signals** puts a full set on the plan: a distant, a home and a section signal on each
+  line, starters on the station roads, and (if ticked) shunt signals out of sidings and for setting
+  back, and shunt-ahead signals with a limit of shunt in the section. Choose **Semaphore**,
+  **Colour light** or **Mixed** (each post at random). Generating again keeps any signal you placed
+  or changed, and fills in round it; **Remove generated signals** takes away only the app's.
+* **+ Place a signal**: choose the kind (home, starter, distant, shunt, yellow shunt for headshunts and
+  yards, shunt-ahead, limit of shunt) and style, then click the track. Click a signal to change its
+  name, lever number, distance from the end of the circuit, the way it faces, or the routes it reads.
+* **Routes are worked out from the track** every way the points can lie, to the next stop signal
+  (or, for shunt signals, the next signal or limit of shunt), and kept up to date as the plan
+  changes. An arm can be tied to particular routes for unusual arrangements; routes that no arm
+  reads, signals with no route, and duplicate lever numbers are listed as issues.
+* **Lever numbers.** Signals and points are numbered west to east along each box's track (distants,
+  homes, starters, shunt signals, facing point locks, points), and the points take the lever number
+  as their number. **Number the levers** renumbers after changes.
+* **Facing point locks** are worked out for points that running trains meet facing; the Points and
+  facing point locks table lets you set or remove one.
+* Signals are drawn on the diagram boards (the configurator and the box's Diagram) with their lever
+  numbers, in semaphore or colour-light form.
+
+The signals are a plan for now: trains in play mode do not obey them yet. The interlocking and
+trains that stop at signals come next (v0.3.30).
+
+The **Tutorial** is now in tabs (Absolute block, Worked examples, Tapper & tokens, Try it,
+Timetables, Signals) instead of one long page, with a new **Signals** page explaining each kind of
+signal, semaphore and colour light, routes, lever numbers and facing point locks.
+
 ## Simulated running and track occupancy (v0.3.28)
 
 When you open a box you now choose how to run it: **Model railway** (as before) or **Signaller
@@ -243,8 +274,8 @@ In **signaller play mode**:
   The section (starting) signal clears only once Line Clear has been given (in token working, once
   the token is out). The home signal clears once the route is set and the train is close to it, or
   as soon as it is on the line if it has a clear run through. Signals go back to danger as the train
-  passes, and routes are freed as its tail clears them. Set routes show green. (The signals are not
-  drawn on the diagram yet: they come with the lever frame.)
+  passes, and routes are freed as its tail clears them. Set routes show green. (These implicit
+  signals are not drawn: placed signals came in v0.3.29.)
 * **Routes are worked out for you and kept up to date.** An arriving train goes to the road you
   choose in the Next arrival panel ("Into road"). If you don't choose, it goes to the timetable's
   road, or else the first suitable free one (platforms for passenger trains, the goods yard for
@@ -623,6 +654,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   link.ts              Messages between two boxes (the seam for future multiplayer)
   trainEvents.ts       Source of train events (what trains did) and the running mode: the seam between a box and its railway
   routing.ts           Routes over the track plan, implicit home and section signals, play-mode readiness
+  signals.ts           Signals placed on the plan: kinds, routes they read, generating, lever numbers, facing point locks
   occupancy.ts         Track occupancy board (fed by train events)
   railwaySim.ts        The simulated railway: trains moving through the plan, automatic signaller, rakes of stock
   railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units
@@ -645,6 +677,7 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   planDiagram.ts       Read-only track diagram (the box's diagram board)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
+  screens/signalling.ts  The layout configurator's Signalling tab
   screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
   screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
   screens/timetableGenerate.ts  Generate a timetable; lampDiagram.ts draws lamp headcodes

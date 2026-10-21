@@ -17,7 +17,8 @@ import {
   TURNTABLE_RADIUS,
   type Pt,
 } from '../core/trackPlan';
-import type { AppState, ExitTarget, Junction, Layout, MarkerBox, TrackCircuit } from '../core/types';
+import { postKey, signalPoint } from '../core/signals';
+import type { AppState, ExitTarget, Junction, Layout, MarkerBox, SignalKind, SignalStyle, TrackCircuit } from '../core/types';
 
 /*
  * The signal box diagram: a read-only drawing of a layout's track plan, the
@@ -34,6 +35,8 @@ import type { AppState, ExitTarget, Junction, Layout, MarkerBox, TrackCircuit } 
 
 const NS = 'http://www.w3.org/2000/svg';
 const U = 24;
+/** Pixels per grid unit in the drawing (for turning a tap into a place on the plan). */
+export const DIAGRAM_UNIT = U;
 const INK = '#1d2124';
 const FAINT = '#a39a85';
 const FONT = 12;
@@ -44,8 +47,10 @@ export interface DiagramOptions {
   /** The box whose diagram this is: its track is drawn in ink. Omit to draw the whole plan in ink. */
   boxId?: string;
   labels: DiagramLabels;
-  /** Signals to draw (signaller play mode): each at the end of a circuit, for trains running towards that end. */
-  signals?: Array<{ id: string; circuitId: string; end: 0 | 1; kind: 'home' | 'section'; name: string }>;
+  /** Draw the layout's signals (v0.3.29) with their lever numbers. */
+  signals?: boolean;
+  /** The selected signal (layout configurator), drawn highlighted. */
+  selectedSignal?: string;
 }
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number | undefined> = {}, ...children: Array<SVGElement | string | null>): SVGElementTagNameMap[K] {
@@ -267,24 +272,47 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
     tracks.append(g);
   }
 
-  // Signals (play mode): a post beside the track at the circuit's end, the arm/lamp red or green.
-  for (const sg of opts.signals ?? []) {
-    const c = p.circuits.find((x) => x.id === sg.circuitId);
-    const e = c?.ends[sg.end];
-    const hd = c ? endHeading(p, c, sg.end) : null;
-    const at = e && 'x' in e ? { x: e.x, y: e.y } : hd;
-    if (!c || !hd || !at) continue;
-    // endHeading points out of the circuit at that end: the way trains run when they meet the signal.
-    const len = Math.hypot(hd.dx, hd.dy) || 1;
-    const ux = hd.dx / len;
-    const uy = hd.dy / len;
-    // Left-hand side of the line, as in Britain; set back a little from the end.
-    const px = X(hd.x) - ux * 12 + uy * 11;
-    const py = Y(hd.y) - uy * 12 - ux * 11;
-    const g = svg('g', { class: `dg-signal ${sg.kind}`, 'data-signal': sg.id }, svg('title', {}, sg.name));
-    g.append(svg('path', { d: `M${px - uy * 0} ${py}L${px - ux * 9} ${py - uy * 9}`, stroke: INK, 'stroke-width': 2 }));
-    g.append(svg('circle', { cx: px, cy: py, r: 4.5, class: 'dg-lamp', stroke: INK, 'stroke-width': 1.5 }));
-    overlay.append(g);
+  // Signals: a post beside the track (on the left, as in Britain) with the signal's head, drawn by
+  // kind and style, and its lever number.
+  if (opts.signals) {
+    const sigLayer = svg('g', { class: 'dg-signals' });
+    overlay.append(sigLayer);
+    const posts = new Map<string, number>();
+    for (const sg of p.signals ?? []) {
+      const at = signalPoint(state, layout, sg);
+      if (!at) continue;
+      // Arms on one post (a bracket) are drawn side by side along the track; a shunt-ahead below its starter.
+      const pk = postKey(sg);
+      const i = posts.get(pk) ?? 0;
+      posts.set(pk, i + 1);
+      const ux = at.dx;
+      const uy = at.dy;
+      const nx = uy; // left of the way trains run (screen y points down)
+      const ny = -ux;
+      const off = 11 + (sg.kind === 'shuntAhead' ? 9 : 0);
+      const along = -i * 15;
+      const bx = X(at.x) + ux * along;
+      const by = Y(at.y) + uy * along;
+      const hx = bx + nx * off;
+      const hy = by + ny * off;
+      const mine = !box || sg.boxId === box.id;
+      const angle = (Math.atan2(uy, ux) * 180) / Math.PI;
+      const g = svg('g', { class: `dg-sig k-${sg.kind} s-${sg.style}${mine ? '' : ' faint'}${opts.selectedSignal === sg.id ? ' selected' : ''}`, 'data-signal': sg.id });
+      g.append(svg('title', {}, `${sg.number ? `${sg.number}: ` : ''}${sg.name}`));
+      if (sg.kind !== 'shuntAhead') g.append(svg('path', { d: `M${bx + nx * 3} ${by + ny * 3}L${hx} ${hy}`, stroke: INK, 'stroke-width': 1.5 }));
+      const head = svg('g', { transform: `translate(${hx.toFixed(1)} ${hy.toFixed(1)}) rotate(${angle.toFixed(1)})` });
+      for (const el of signalHead(sg.kind, sg.style)) head.append(el);
+      g.append(head);
+      g.append(svg('circle', { cx: hx, cy: hy, r: 11, fill: 'transparent', class: 'dg-sig-hit' }));
+      if (sg.number) {
+        const tx = hx + nx * 13;
+        const ty = hy + ny * 13;
+        const tw = Math.max(16, sg.number.length * 7 + 6);
+        g.append(svg('rect', { x: tx - tw / 2, y: ty - 7, width: tw, height: 13, rx: 2, class: 'dg-sig-num' }));
+        g.append(svg('text', { x: tx, y: ty + 3.5, 'text-anchor': 'middle', class: 'dg-tag dg-sig-numtext' }, sg.number));
+      }
+      sigLayer.append(g);
+    }
   }
 
   // Signal boxes on the plan
@@ -327,12 +355,6 @@ export function setRoutes(diagram: SVGSVGElement, circuitIds: Iterable<string>, 
   for (const g of diagram.querySelectorAll<SVGGElement>('.dg-junction')) g.classList.toggle('routed', js.has(g.dataset.junction ?? ''));
 }
 
-/** Show which signals are off (cleared). */
-export function setSignals(diagram: SVGSVGElement, clearIds: Iterable<string>): void {
-  const on = new Set(clearIds);
-  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-signal')) g.classList.toggle('clear', on.has(g.dataset.signal ?? ''));
-}
-
 /** Put a train's description (e.g. its number) on the circuit its head is in. */
 export function setTrainLabels(state: AppState, layout: Layout, diagram: SVGSVGElement, labels: Array<{ circuitId: string; text: string }>): void {
   const ox = Number(diagram.dataset.ox);
@@ -352,4 +374,68 @@ export function setTrainLabels(state: AppState, layout: Layout, diagram: SVGSVGE
       svg('g', { class: 'dg-train' }, svg('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 2 }), svg('text', { x, y: y + 4, 'text-anchor': 'middle', class: 'dg-tag' }, l.text)),
     );
   }
+}
+
+/**
+ * A signal's head in its own frame: x points the way trains run, the post stands at (0, 0).
+ * Semaphore: red arm with a white stripe (home, starter), yellow fishtail arm (distant), white disc
+ * with a red (or yellow) band (shunt), small arm (shunt-ahead), white board (limit of shunt). Colour
+ * light: red/green or yellow/green lamps, position lights (two lamps) for shunting, two red lamps for a
+ * limit of shunt. Lamps are drawn dim: the diagram shows the signals as planned.
+ */
+export function signalHead(kind: SignalKind, style: SignalStyle): SVGElement[] {
+  const out: SVGElement[] = [];
+  const lamp = (x: number, y: number, fill: string, r = 2.4) => out.push(svg('circle', { cx: x, cy: y, r, fill, class: 'dg-sig-lamp' }));
+  if (style === 'colourLight') {
+    if (kind === 'home' || kind === 'starter' || kind === 'distant') {
+      out.push(svg('rect', { x: 0, y: -4, width: 15, height: 8, rx: 3.5, fill: '#16130f' }));
+      lamp(4, 0, kind === 'distant' ? '#e8b923' : '#d8322a');
+      lamp(11, 0, '#2bb24c');
+    } else if (kind === 'limitOfShunt') {
+      out.push(svg('rect', { x: 0, y: -3.5, width: 13, height: 7, rx: 2, fill: '#16130f' }));
+      lamp(3.5, 0, '#d8322a', 2.1);
+      lamp(9.5, 0, '#d8322a', 2.1);
+    } else {
+      // Position light: two lamps (red and white; yellow and white for a yellow one; whites for shunt-ahead).
+      out.push(svg('path', { d: 'M0 -4L12 -4L12 4L0 4Z', fill: '#16130f' }));
+      lamp(3.5, 1.5, kind === 'shuntYellow' ? '#e8b923' : kind === 'shuntAhead' ? '#f4f1e6' : '#d8322a', 2);
+      lamp(8.5, 1.5, '#f4f1e6', 2);
+    }
+    return out;
+  }
+  switch (kind) {
+    case 'home':
+    case 'starter':
+      out.push(svg('rect', { x: 0, y: -2.2, width: 14, height: 4.4, fill: '#c8261d', stroke: '#16130f', 'stroke-width': 0.8 }));
+      out.push(svg('rect', { x: 9, y: -2.2, width: 2.2, height: 4.4, fill: '#f6f1e3' }));
+      break;
+    case 'distant':
+      out.push(svg('path', { d: 'M0 -2.2L14 -2.2L11 0L14 2.2L0 2.2Z', fill: '#e8b923', stroke: '#16130f', 'stroke-width': 0.8 }));
+      out.push(svg('path', { d: 'M7 -2.2L10 0L7 2.2', fill: 'none', stroke: '#16130f', 'stroke-width': 1 }));
+      break;
+    case 'shunt':
+    case 'shuntYellow':
+      out.push(svg('circle', { cx: 5, cy: 0, r: 5, fill: '#f6f1e3', stroke: '#16130f', 'stroke-width': 1 }));
+      out.push(svg('rect', { x: 0.6, y: -1.3, width: 8.8, height: 2.6, fill: kind === 'shuntYellow' ? '#e8b923' : '#c8261d' }));
+      break;
+    case 'shuntAhead':
+      out.push(svg('rect', { x: 0, y: -1.8, width: 9, height: 3.6, fill: '#c8261d', stroke: '#16130f', 'stroke-width': 0.7 }));
+      out.push(svg('text', { x: 4.5, y: 1.4, 'text-anchor': 'middle', 'font-size': 3.6, 'font-weight': 700, fill: '#f6f1e3' }, 'S'));
+      break;
+    case 'limitOfShunt':
+      out.push(svg('rect', { x: 0, y: -4, width: 10, height: 8, fill: '#f6f1e3', stroke: '#c8261d', 'stroke-width': 1.4 }));
+      out.push(svg('path', { d: 'M2 -2L8 2M2 2L8 -2', stroke: '#c8261d', 'stroke-width': 1 }));
+      break;
+  }
+  return out;
+}
+
+/** A signal head on its own, as drawn on the diagram (for the tutorial and keys). */
+export function signalSample(kind: SignalKind, style: SignalStyle, label: string): SVGSVGElement {
+  return svg(
+    'svg',
+    { viewBox: '-2 -6 19 12', width: 76, height: 48, class: 'sig-sample', role: 'img', 'aria-label': label },
+    svg('line', { x1: -2, y1: 5.5, x2: 17, y2: 5.5, stroke: 'currentColor', 'stroke-width': 0.6, opacity: 0.35 }),
+    ...signalHead(kind, style),
+  );
 }

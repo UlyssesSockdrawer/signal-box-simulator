@@ -5,8 +5,9 @@ import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCirc
  * 3: places (stations, sidings, goods, depots, fiddle yards) on layouts (v0.3.14). 4: timetables and loco jobs (v0.3.24).
  * 5: optional real-railway lengths and speeds, and the units setting (v0.3.27; nothing needs filling in).
  * 6: simulated running settings and rakes of stock left standing on a layout (v0.3.28; nothing needs filling in).
+ * 7: signals on track plans, facing point locks and lever numbers (v0.3.29; nothing needs filling in).
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';

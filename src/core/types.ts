@@ -463,6 +463,65 @@ export interface Junction {
   flip?: boolean;
   /** Points: speed over the diverging road in metres per second; absent = the default (15 mph). */
   divergingSpeed?: number;
+  /**
+   * Points: whether they have a facing point lock (FPL). Absent = worked out (points that are facing
+   * for a running move between running roads); 'fpl' / 'none' = set by hand.
+   */
+  lock?: 'fpl' | 'none';
+  /** The lever number of its facing point lock, once the levers have been numbered ('' or absent = none). */
+  fplNumber?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Signals (v0.3.29)
+// ---------------------------------------------------------------------------
+
+/**
+ * home / starter: stop signals for running moves (a starter at the line is the section signal);
+ * distant: caution signal, repeats the stop signals ahead; shunt: ground signal (disc or position
+ * light) for shunting; shuntYellow: yellow ground signal, which may be passed at danger for a move it
+ * does not apply to (e.g. into a headshunt); shuntAhead: a shunt-ahead arm or light on a starter's post,
+ * to shunt past it into the section; limitOfShunt: a board or two red lights where shunting must stop.
+ */
+export type SignalKind = 'home' | 'starter' | 'distant' | 'shunt' | 'shuntYellow' | 'shuntAhead' | 'limitOfShunt';
+/** Semaphore (arms and discs, boards) or electric colour light (lamps and position lights). */
+export type SignalStyle = 'semaphore' | 'colourLight';
+
+/**
+ * A signal on the track plan. It stands beside a track circuit, `back` metres before the circuit's
+ * end `end`, and applies to trains running towards that end. Its routes are worked out from the plan
+ * (core/signals.ts); several signals at one place (arms on a bracket) share the routes between them.
+ */
+export interface PlanSignal {
+  id: string;
+  kind: SignalKind;
+  style: SignalStyle;
+  /** Lever number in its box's frame, e.g. "2" ('' = not numbered; limits of shunt have no lever). */
+  number: string;
+  /** e.g. "Down Home to P1". */
+  name: string;
+  /** The box whose frame works it. */
+  boxId: string;
+  circuitId: string;
+  end: 0 | 1;
+  /** Metres before the end of the circuit (0 = at the end). */
+  back: number;
+  /**
+   * The routes it reads to (route keys, see core/signals.ts). Absent = every route from its place not
+   * read by another signal there, so new track is picked up by itself.
+   */
+  reads?: string[];
+  /** Placed or changed by hand: kept when signals are generated again. */
+  manual: boolean;
+}
+
+/** How signals are generated for a layout (remembered for the next time). */
+export interface SignallingOptions {
+  style: SignalStyle | 'mixed';
+  /** Ground signals for shunting moves (exits from sidings and goods yards, setting back). */
+  shunt: boolean;
+  /** Shunt-ahead arms on section signals, with a limit of shunt on the line beyond. */
+  shuntAhead: boolean;
 }
 
 export interface TrackPlan {
@@ -470,6 +529,10 @@ export interface TrackPlan {
   junctions: Junction[];
   /** Signal boxes placed on the plan. */
   markers?: BoxMarker[];
+  /** Signals (v0.3.29). */
+  signals?: PlanSignal[];
+  /** How signals were last generated. */
+  signalling?: SignallingOptions;
 }
 
 /** A running line on double track: the up line or the down line. */

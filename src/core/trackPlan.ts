@@ -896,6 +896,43 @@ export function deleteCircuit(plan: TrackPlan, circuitId: string): void {
  * Remove plain joints that no longer join any track (left behind when the tracks either
  * side were deleted or unjoined). A joint with track on one side stays: it is an unfinished end.
  */
+const SIGNAL_KIND_IDS = ['home', 'starter', 'distant', 'shunt', 'shuntYellow', 'shuntAhead', 'limitOfShunt'];
+
+/** Signals (v0.3.29) on circuits that no longer exist are removed (e.g. after a circuit is deleted or merged away). */
+export function pruneSignals(plan: TrackPlan): number {
+  if (!plan.signals) return 0;
+  const ids = new Set(plan.circuits.map((c) => c.id));
+  const before = plan.signals.length;
+  plan.signals = plan.signals.filter((s) => ids.has(s.circuitId));
+  if (!plan.signals.length) delete plan.signals;
+  return before - (plan.signals?.length ?? 0);
+}
+
+/** Keep saved signals usable: known kinds and styles, numbers as text, a box that exists, on a circuit that exists. */
+function sanitiseSignals(plan: TrackPlan, boxIds: Set<string>): void {
+  if (plan.signals !== undefined) {
+    plan.signals = (Array.isArray(plan.signals) ? plan.signals : []).filter((s) => s && typeof s.id === 'string' && SIGNAL_KIND_IDS.includes(s.kind));
+    for (const s of plan.signals) {
+      s.style = s.style === 'colourLight' ? 'colourLight' : 'semaphore';
+      s.number = s.kind === 'limitOfShunt' ? '' : String(s.number ?? '').trim();
+      s.name = String(s.name ?? '');
+      s.boxId = typeof s.boxId === 'string' && boxIds.has(s.boxId) ? s.boxId : '';
+      s.end = s.end === 0 ? 0 : 1;
+      s.back = typeof s.back === 'number' && Number.isFinite(s.back) && s.back > 0 ? s.back : 0;
+      s.manual = s.manual === true;
+      if (s.reads !== undefined) {
+        if (!Array.isArray(s.reads)) delete s.reads;
+        else s.reads = s.reads.filter((k) => typeof k === 'string');
+      }
+    }
+    pruneSignals(plan);
+  }
+  if (plan.signalling !== undefined) {
+    const o = plan.signalling as Partial<NonNullable<TrackPlan['signalling']>>;
+    plan.signalling = { style: o.style === 'colourLight' || o.style === 'mixed' ? o.style : 'semaphore', shunt: o.shunt !== false, shuntAhead: o.shuntAhead === true };
+  }
+}
+
 export function pruneJoints(plan: TrackPlan): number {
   const used = new Set<string>();
   for (const c of plan.circuits) for (const e of c.ends) if (e.kind === 'joined') used.add(e.junctionId);
@@ -1939,6 +1976,8 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
     junctions: Array.isArray(raw?.junctions) ? raw!.junctions : [],
     markers: Array.isArray(raw?.markers) ? raw!.markers : [],
   };
+  if (Array.isArray(raw?.signals)) plan.signals = raw!.signals;
+  if (raw?.signalling && typeof raw.signalling === 'object') plan.signalling = raw.signalling;
   layout.trackPlan = plan;
   const boxIds = new Set(state.boxes.map((b) => b.id));
   const connOk = (boxId: string, connId: string) => state.boxes.some((b) => b.id === boxId && b.connections.some((c) => c.id === connId));
@@ -1956,6 +1995,12 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
     j.mirror = !!j.mirror;
     j.quarter = !!j.quarter;
     delete j.flip;
+    // Facing point locks (v0.3.29): set by hand or worked out; the lock's lever number.
+    if (j.lock !== 'fpl' && j.lock !== 'none') delete j.lock;
+    if (j.fplNumber !== undefined) {
+      j.fplNumber = String(j.fplNumber ?? '').trim();
+      if (!j.fplNumber) delete j.fplNumber;
+    }
     if (j.kind === 'turntable') {
       const ids = JUNCTIONS.turntable.ports.map((p) => p.id);
       j.roads = Array.isArray(j.roads) ? j.roads.filter((r) => ids.includes(r)) : [...TURNTABLE_DEFAULT_ROADS];
@@ -1993,6 +2038,7 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
   }
   for (const j of plan.junctions) normaliseMirror(plan, j);
   pruneJoints(plan);
+  sanitiseSignals(plan, boxIds);
   // A port may only be joined once: later duplicates become unfinished.
   const used = new Set<string>();
   for (const c of plan.circuits) {

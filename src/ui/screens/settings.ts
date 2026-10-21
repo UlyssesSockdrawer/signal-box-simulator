@@ -6,6 +6,7 @@ import { disposeAllBoxRuntimes } from '../boxRuntime';
 import { resetPlacesUi } from './places';
 import { resetRosterUi } from './roster';
 import { resetTimetablesUi } from './timetables';
+import { resetSignallingUi } from './signalling';
 import { disposeAllRunners } from '../timetableRuntime';
 import { disposeAllRailways } from '../railwayRuntime';
 import { MPS_PER_KMH, MPS_PER_MPH, UNIT_SYSTEMS } from '../../core/railway';
@@ -184,6 +185,7 @@ export function settingsScreen(ctx: Ctx): Screen {
     resetPlacesUi();
     resetRosterUi();
     resetTimetablesUi();
+    resetSignallingUi();
   };
   const importText = (text: string, ok: string, bad: string) => {
     try {

@@ -279,8 +279,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       );
       return;
     }
-    // Signal lamps are not drawn yet (drawDiagram's `signals` option): they come with the lever frame, when they can be worked.
-    const svgEl = drawDiagram(st, layout, { boxId: box.id, labels: st.settings.diagramLabels });
+    // The layout's signals as planned (Layout configurator → Signalling), with their lever numbers. They are worked from v0.3.30.
+    const svgEl = drawDiagram(st, layout, { boxId: box.id, labels: st.settings.diagramLabels, signals: true });
     svgNow = svgEl;
     const tappable = runtime.mode === 'model' && st.settings.modelOccupancy && !!runtime.railway;
     replace(
