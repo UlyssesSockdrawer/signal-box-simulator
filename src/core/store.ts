@@ -2,6 +2,7 @@ import { createDefaultState, DEFAULT_SETTINGS, FALLBACK_LAYOUT_NAME, SCHEMA_VERS
 import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
 import { sanitiseTimetables } from './timetables';
+import { sanitiseRailwayData } from './railway';
 import type { AppState, BoxDef, ConnectionDef, Layout, Place, PlaceRoad, TrackPlan } from './types';
 
 /** Shapes saved by earlier versions (before places, v0.3.13 and earlier). */
@@ -154,6 +155,8 @@ export function migrate(raw: unknown): AppState {
   sanitisePlaces(state);
   // Timetables and loco jobs (v0.3.24): older saves have none.
   sanitiseTimetables(state);
+  // Real-railway lengths and speeds (v0.3.27): all optional; unusable values are dropped so the defaults apply.
+  sanitiseRailwayData(state);
   return state;
 }
 

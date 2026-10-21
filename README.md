@@ -226,6 +226,24 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Groundwork for signaller play mode (v0.3.27)
+
+Nothing changes in how the app plays. Behind the scenes it is getting ready for a second way of
+running a box, **signaller play mode**, where any layout's plan is run as a real railway with
+simulated trains (today's way is **model railway mode**: real trains, and you report where they get to).
+
+* **Source of train events.** The signalling learns what trains physically did (arrived, passed
+  complete, arrived at the far end; later: entered or cleared a track circuit, stopped) through one
+  way in (`core/trainEvents.ts`). Your Arrived / passed complete buttons and the timetable's
+  simulated fiddle yard operator both report through it.
+* **Running mode** (`'model'` or `'play'`) belongs to the box's session, not to the layout: it is
+  chosen when a box is opened (for now every box opens in model railway mode, with no choice shown).
+* **Real-railway data** (all optional, with defaults): block section lengths (2 miles), track circuit
+  lengths (worked out: line circuits share their section; 220 yards in a station, 55 yards for short
+  circuits over points), line speed (60 mph), points' diverging speed (15 mph), loco maximum speed,
+  train length (from its consist, or stated), and a units setting (imperial or metric). No editing
+  screens yet. Saved data is version 5; nothing in older saves needs changing.
+
 ## Timetables, part 3: generated and Endless timetables, headcode eras (v0.3.26)
 
 **Generate a timetable** (on the Timetables screen) makes one for you from the layout's places,
@@ -567,6 +585,8 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   bellcodes.ts         Train types, regulation signals, built-in code sets
   tapDecoder.ts        Tapper rhythm → bell code
   link.ts              Messages between two boxes (the seam for future multiplayer)
+  trainEvents.ts       Source of train events (what trains did) and the running mode: the seam between a box and its railway
+  railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units
   sectionController.ts Your end of a block section: instruments, tokens, log
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
@@ -606,7 +626,7 @@ npm run typecheck
 ## Where it goes next
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
-* Simulated running: light up occupied track circuits on the diagram board (`setOccupied` in ui/planDiagram.ts) so trains need not move on a real layout.
+* Signaller play mode, in stages: occupancy on the diagram board from the signalling, virtual trains running through the plan, signals, a lever frame with interlocking, train performance, then scoring on delays.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.
 * Android APK via Capacitor wrapping `dist/pwa/`.

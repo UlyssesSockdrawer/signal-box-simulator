@@ -6,6 +6,7 @@ import { BoxReferee } from '../core/referee';
 import { BoxRegulator } from '../core/regulating';
 import { incomingCandidates } from '../core/selection';
 import { createBoxSession, locoLabel, type SectionSession } from '../core/session';
+import { connectTrainEvents, DEFAULT_RUNNING_MODE, type BoxTrains, type RunningMode, type TrainEventSource } from '../core/trainEvents';
 import type { BoxDef, Location } from '../core/types';
 import type { Ctx } from './app';
 
@@ -25,6 +26,14 @@ export interface ConnRuntime {
 export interface BoxRuntime {
   boxId: string;
   signature: string;
+  /**
+   * How this session of the box is run (model railway or signaller play). It belongs to the box
+   * session, not to the layout or the box: chosen when the box is opened, kept until the box is
+   * closed. (Every box opens in model railway mode until the choice is offered.)
+   */
+  mode: RunningMode;
+  /** Where the signalling learns what trains did: report movements here (buttons, simulated operator). */
+  trains: TrainEventSource;
   conns: ConnRuntime[];
   /** The signaller's score for this session of the box (until it is closed, or a fresh score is started). */
   score: Scorecard;
@@ -56,10 +65,17 @@ function signatureOf(ctx: Ctx, box: BoxDef): string {
   return JSON.stringify([box.name, box.shortName, box.connections, modes]);
 }
 
-export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
+/**
+ * The box's running state, made if it is not running. `mode` is used only when a new session starts;
+ * a running box keeps its mode, and a box rebuilt because its configuration changed carries its mode
+ * over (it was not closed). After closing (7-5-5) the next session starts in the mode asked for.
+ */
+export function getBoxRuntime(ctx: Ctx, box: BoxDef, opts: { mode?: RunningMode } = {}): BoxRuntime {
   const sig = signatureOf(ctx, box);
   let rt = cache.get(box.id);
+  let mode = opts.mode ?? DEFAULT_RUNNING_MODE;
   if (rt && rt.signature !== sig) {
+    mode = rt.mode;
     rt.dispose();
     rt = undefined;
   }
@@ -136,9 +152,13 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
     candidates: (conn) => incomingCandidates(store.state, conn).map((l) => ({ id: l.id, trainTypeId: l.working.trainTypeId })),
     score: (s, rule, detail, locoId) => referee.score(s, rule, detail, locoId),
   });
+  // The one way in for what trains did (the box's buttons, the simulated fiddle yard operator).
+  const trains: BoxTrains = connectTrainEvents(mode, sessions, workings);
   const runtime: BoxRuntime = {
     boxId: box.id,
     signature: sig,
+    mode,
+    trains: trains.source,
     conns,
     score,
     workings,
@@ -151,6 +171,7 @@ export function getBoxRuntime(ctx: Ctx, box: BoxDef): BoxRuntime {
       if (resetTimer !== null) window.clearTimeout(resetTimer);
       resetTimer = null;
       for (const off of offs) off();
+      trains.dispose();
       workings.dispose();
       regulator.dispose();
       referee.dispose();

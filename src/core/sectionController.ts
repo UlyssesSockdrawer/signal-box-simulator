@@ -240,6 +240,9 @@ export class SectionController {
     this.changed();
   }
 
+  // Train movements below are applied by the box's TrainEventRouter (core/trainEvents.ts): buttons and
+  // the simulated fiddle yard operator report them through the box's source of train events, not here.
+
   /**
    * Operator has seen the incoming train arrive complete with tail lamp. `at` is where it now
    * stands: a road (or '' for anywhere) in a place this box works; null = at the box itself

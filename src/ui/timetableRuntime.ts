@@ -29,7 +29,7 @@ export function getRunner(ctx: Ctx, layoutId: string): TimetableRunner {
       const rt = peekBoxRuntime(boxId);
       const box = store.state.boxes.find((b) => b.id === boxId);
       if (!rt || !box || box.layoutId !== layoutId) return null;
-      return { sessions: rt.conns.map((c) => c.session), workings: rt.workings };
+      return { sessions: rt.conns.map((c) => c.session), workings: rt.workings, mode: rt.mode, trains: rt.trains };
     },
     moveLoco: (id, loc) =>
       store.update((s) => {

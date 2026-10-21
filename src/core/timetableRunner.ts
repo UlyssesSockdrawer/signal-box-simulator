@@ -3,6 +3,7 @@ import { Emitter, type Scheduler } from './scheduler';
 import type { SectionController } from './sectionController';
 import type { SectionSession } from './session';
 import type { ThroughWorkings } from './throughTrains';
+import type { RunningMode, TrainEventSource } from './trainEvents';
 import { eraOf, HeadcodeAllocator } from './headcodes';
 import { toSequence, type TimetableGenerator } from './timetableGenerator';
 import { findTrain, locosFor, refText, routeBetween, walkTimetable, type RouteLeg, type TtPos } from './timetables';
@@ -48,6 +49,10 @@ export type ItemState = 'waiting' | 'active' | 'done' | 'skipped';
 export interface RunnerBox {
   sessions: SectionSession[];
   workings: ThroughWorkings;
+  /** How the box's session is run (from its running state): the simulated fiddle yard operator works only in model railway mode. */
+  mode: RunningMode;
+  /** The box's source of train events: the simulated fiddle yard operator reports arrivals through it. */
+  trains: TrainEventSource;
 }
 
 export interface RunnerOptions {
@@ -895,7 +900,7 @@ export class TimetableRunner {
         const toName = toSess?.connection.neighbourName ?? '';
         if (s.kind === 'through' && onward && out!.departed) {
           // Sent on into the section ahead: it is on its way to the far end.
-          this.autoArrive(it, s, toSess!.controller, toName);
+          this.autoArrive(it, s, rb, toSess!.controller, s.toConnId, toName);
           if (v.incoming && v.incoming.locoId === it.locoId && !v.incoming.arrived) it.status = `Sent on to ${toName}: report it passed complete and send 2-1 to ${name}. ${it.status}`;
           return;
         }
@@ -978,7 +983,7 @@ export class TimetableRunner {
     // Outgoing: declare it for the Departure panel; it ends when the far box clears it back.
     if (s.phase === 'requested') {
       const out = v.outgoing;
-      if (out?.departed && out.locoId === it.locoId) this.autoArrive(it, s, c, name);
+      if (out?.departed && out.locoId === it.locoId) this.autoArrive(it, s, rb, c, s.connId, name);
       else if (!out) {
         // The departure was cleared in the box before it left: declare it again.
         c.setOutgoing(it.locoId, it.entry.trainTypeId);
@@ -1009,9 +1014,11 @@ export class TimetableRunner {
   /**
    * A train on its way to a simulated box's place (sent from your box, or sent on through it). With a
    * simulated fiddle yard operator it is reported arrived (on its timetabled road, else a free one)
-   * after its running time; with you as operator you press "Arrived in …" yourself.
+   * after its running time; with you as operator you press "Arrived in …" yourself. The simulated
+   * operator reports through the box's source of train events, like the person's button, and only in
+   * model railway mode (in signaller play mode the railway reports where trains get to).
    */
-  private autoArrive(it: RunItem, s: Extract<Segment, { kind: 'through' | 'outgoing' }>, c: SectionController, name: string): void {
+  private autoArrive(it: RunItem, s: Extract<Segment, { kind: 'through' | 'outgoing' }>, rb: RunnerBox, c: SectionController, connId: string, name: string): void {
     const out = c.view.outgoing;
     if (!out || out.locoId !== it.locoId) return;
     const dest = s.dest;
@@ -1022,7 +1029,7 @@ export class TimetableRunner {
       it.status = `Arrived at ${where}: waiting for ${name} to clear it back (answer 1, then repeat 2-1).`;
       return;
     }
-    if (this.operator !== 'simulated') {
+    if (this.operator !== 'simulated' || rb.mode !== 'model') {
       it.status = `On its way to ${where}. Press "Arrived" in the Departure panel once it is there.`;
       return;
     }
@@ -1036,7 +1043,9 @@ export class TimetableRunner {
         s.arriveTimer = undefined;
         const o2 = c.view.outgoing;
         if (it.state !== 'active' || it.segs[it.seg] !== s || !o2 || o2.locoId !== it.locoId || !o2.departed || o2.arrived) return;
-        c.confirmOutgoingArrived(this.arrivalRoad(s.dest, c), it.locoId);
+        // The box may have been rebuilt since the timer was set: report to the one running now.
+        const box = this.o.box(s.boxId) ?? rb;
+        box.trains.report({ type: 'arrivedFar', connectionId: connId, locoId: it.locoId, roadId: this.arrivalRoad(s.dest, c), by: 'fiddleYardOperator' });
         this.note(`Simulated fiddle yard operator: ${this.locoName(it.locoId)} arrived at ${where}.`);
         this.tick();
       }, ms);

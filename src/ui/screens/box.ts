@@ -12,6 +12,7 @@ import { trainsOnLayout, type RegisterLocation } from '../../core/layoutRegister
 import type { BoxDef, ConnectionDef, InstrumentState, Loco } from '../../core/types';
 import { getBoxRuntime, takeFinishedScore, type ConnRuntime } from '../boxRuntime';
 import type { ThroughWorkings } from '../../core/throughTrains';
+import type { TrainEventSource } from '../../core/trainEvents';
 import { drawDiagram, hasDiagram, type DiagramLabels } from '../planDiagram';
 import { showScoreSheet } from '../scoreSheet';
 import { activeCodeSet, locationText, locoFullName, locoName, trainTypeName, type Ctx, type Screen } from '../app';
@@ -150,7 +151,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 
   // ---------------------------------------------------------------- connections
   let uis: ConnectionUI[] = [];
-  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection)));
+  uis = runtime.conns.map((cr, i) => connectionUI(ctx, box, cr, renderNextStep, () => select(i), runtime.workings, runtime.conns.map((x) => x.session.connection), runtime.trains));
   // The timetable (if one is running on this box's layout) hears about every change in the box at once.
   for (const s of sessions) ctx.onLeave(s.controller.events.on('change', () => peekRunner(layoutId())?.poke()));
 
@@ -556,7 +557,17 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
 // One connection: its instrument group on the shelf and its desk panels
 // =============================================================================
 
-function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => void, onSelect: () => void, workings: ThroughWorkings, allConns: ConnectionDef[]): ConnectionUI {
+function connectionUI(
+  ctx: Ctx,
+  box: BoxDef,
+  cr: ConnRuntime,
+  onGuidance: () => void,
+  onSelect: () => void,
+  workings: ThroughWorkings,
+  allConns: ConnectionDef[],
+  /** Where the signalling learns what trains did: the buttons below report movements through it. */
+  trains: TrainEventSource,
+): ConnectionUI {
   const store = ctx.store;
   const c = cr.session.controller;
   const conn = cr.session.connection;
@@ -632,11 +643,14 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
     return { placeId, roadId: roadId ?? '' };
   };
 
-  /** The train on this line has arrived (stopped here) or passed (a through train sent on). */
+  /** The person reports the train on this line arrived (stopped here) or passed (a through train sent on). */
   const arrived = () => {
-    if (workings.through(conn.id)) c.confirmIncomingArrived(null, { moveLoco: !workings.keepLocoWhereItIs(conn.id) });
-    else c.confirmIncomingArrived(arrivalTarget());
+    const locoId = c.view.incoming?.locoId ?? null;
+    if (workings.through(conn.id)?.stage === 'sentOn') trains.report({ type: 'passed', connectionId: conn.id, locoId, by: 'person' });
+    else trains.report({ type: 'arrived', connectionId: conn.id, locoId, at: workings.through(conn.id) ? null : arrivalTarget(), by: 'person' });
   };
+  /** The person reports the outgoing train arrived at the far end of the line. */
+  const arrivedFar = (roadId: string, locoId: string | null) => trains.report({ type: 'arrivedFar', connectionId: conn.id, locoId, roadId, by: 'person' });
   /** Where the incoming train goes at this box: stop here, or on along another line (offering it on). */
   const routeField = (): HTMLElement | null => {
     const others = allConns.filter((x) => x.id !== conn.id);
@@ -1126,11 +1140,11 @@ function connectionUI(ctx: Ctx, box: BoxDef, cr: ConnRuntime, onGuidance: () => 
             : place?.roads.length
               ? [
                   h('p', { class: 'status go' }, `On line to ${conn.neighbourName}. Drive it into ${place.name}.`),
-                  h('div', { class: 'quick-row' }, h('label', { for: roadSel.id }, 'Into road'), roadSel, onceButton(arrivedLabel(place, conn.neighbourName), () => c.confirmOutgoingArrived(arrRoad, out.locoId))),
+                  h('div', { class: 'quick-row' }, h('label', { for: roadSel.id }, 'Into road'), roadSel, onceButton(arrivedLabel(place, conn.neighbourName), () => arrivedFar(arrRoad, out.locoId))),
                 ]
               : [
                   h('p', { class: 'status go' }, place ? `On line to ${conn.neighbourName}. Drive it to ${place.name}, then press below when it has arrived complete.` : `On line to ${conn.neighbourName}. Drive it there (it goes back to the roster), then press below when it has arrived complete.`),
-                  onceButton(arrivedLabel(place, conn.neighbourName), () => c.confirmOutgoingArrived('', out.locoId)),
+                  onceButton(arrivedLabel(place, conn.neighbourName), () => arrivedFar('', out.locoId)),
                 ],
         );
         return;

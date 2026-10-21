@@ -55,7 +55,18 @@ export interface Working {
   trainTypeId: string;
   consist: string; // free text, e.g. "4 coaches", "auto-coach"
   headcode: string; // optional reporting number / lamp code
+  /** Length of the whole train in metres, when stated; absent = worked out from the loco and its consist (core/railway.ts). */
+  length?: number;
 }
+
+/*
+ * REAL-RAILWAY DATA (v0.3.27, for signaller play mode): optional lengths and speeds, all with
+ * defaults (core/railway.ts), so no save needs them. Stored in SI units: lengths in METRES,
+ * speeds in METRES PER SECOND. Shown in the units chosen in Settings (imperial or metric).
+ */
+
+/** How lengths and speeds are shown: imperial (miles and chains, yards, mph) or metric (km, m, km/h). */
+export type UnitSystem = 'imperial' | 'metric';
 
 /** Where a train stands. */
 export type Location =
@@ -80,6 +91,8 @@ export interface Loco {
   jobs?: LocoJob[];
   /** Where it stables between jobs ('' or absent = wherever it is). */
   homePlaceId?: string;
+  /** Its maximum permitted speed in metres per second; absent = no limit of its own (the line speed rules). */
+  maxSpeed?: number;
 }
 
 /** The kinds of work a loco is given in timetables (v0.3.26). See core/duties.ts. */
@@ -263,6 +276,8 @@ export interface ConnectionDef {
   defaultWorking: WorkingMode;
   /** Where this connection's instrument group sits on the block shelf (0 = leftmost). */
   shelfPosition: number;
+  /** Length of the block section in metres; absent = the default (2 miles). Its line's track circuits share it. */
+  sectionLength?: number;
 }
 
 export interface BoxDef {
@@ -322,6 +337,8 @@ export interface Settings {
   scoring: boolean;
   /** Show the layout's track plan as a diagram board above the block shelf. */
   boxDiagram: boolean;
+  /** How lengths and speeds are shown (they are stored in metres and metres per second). */
+  units: UnitSystem;
   /** What the diagram board labels its track circuits with. */
   diagramLabels: 'none' | 'codes' | 'names';
 }
@@ -411,6 +428,10 @@ export interface TrackCircuit {
    * (towards end 0 or end 1). Absent = both ways (single lines, sidings, loops worked both ways).
    */
   traffic?: { line: RunningLine; toward: 0 | 1 };
+  /** Its length in metres, when stated; absent = worked out (core/railway.ts circuitLength). */
+  length?: number;
+  /** Its line speed in metres per second, when it differs from the layout's. */
+  lineSpeed?: number;
 }
 
 export interface Junction {
@@ -434,6 +455,8 @@ export interface Junction {
   roads?: string[];
   /** v0.3.6 saves only: a left-right mirror. Converted to rotate + mirror when loaded. */
   flip?: boolean;
+  /** Points: speed over the diverging road in metres per second; absent = the default (15 mph). */
+  divergingSpeed?: number;
 }
 
 export interface TrackPlan {
@@ -463,6 +486,8 @@ export interface Layout {
   timetables?: Timetable[];
   /** How its trains show what they are (v0.3.26): lamp headcodes and reporting numbers, or 1960 headcodes. Absent = 'br1960'. */
   headcodeEra?: HeadcodeEra;
+  /** Line speed in metres per second for its track (circuits may differ); absent = the default (60 mph). */
+  lineSpeed?: number;
 }
 
 /** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */
