@@ -7,7 +7,8 @@ import { eraInfo, eraOf, usesLamps } from '../../core/headcodes';
 import { timetablesOf } from '../../core/timetables';
 import type { Loco, SignalKind } from '../../core/types';
 import { SIGNAL_KIND_ORDER, SIGNAL_KINDS, signalsOf } from '../../core/signals';
-import { drawDiagram, signalSample } from '../planDiagram';
+import { drawDiagram } from '../planDiagram';
+import { signalSample } from '../signalDrawing';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
 
@@ -246,7 +247,7 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
         h('tbody', null, ...SIGNAL_KIND_ORDER.map(kindRow)),
       ),
     ),
-    h('p', { class: 'muted small' }, 'Drawn as they appear on the diagram, pointing the way trains run, at danger.'),
+    h('p', { class: 'muted small' }, 'Drawn as on the diagram, for trains running left to right: the post lies beside the line on the driver’s left, its top pointing the way trains run. All at danger.'),
     h('h3', null, 'Semaphore or colour light'),
     h(
       'p',
@@ -257,9 +258,11 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
     h(
       'ul',
       null,
-      h('li', null, 'A signal stands on the left of the line for the trains it applies to, and points the way they run.'),
-      h('li', null, 'Arms that share a post, like a bracket signal with an arm for each route, are drawn side by side along the line.'),
-      h('li', null, 'The tag is the lever number. Levers are numbered west to east along each box’s track. Points are numbered in the same run, so the box can be worked from one frame: a facing point lock usually takes the number just below its points.'),
+      h('li', null, 'Each signal is drawn as its post laid flat beside the line, on the left of the trains it applies to, with its top pointing the way they run and its arm reaching away from the line.'),
+      h('li', null, 'A bracket (junction) signal has a doll for each route on one cross-beam: the main route’s doll is the longest, and the leftmost route’s is furthest from the line. Distant and shunt-ahead arms ride below the main arm; ground signals lie behind the post.'),
+      h('li', null, 'A colour-light junction signal is one head with a junction indicator (a “feather” of three white lights) for each diverging route, leaning the way that route goes. Each feather carries its route’s lever number.'),
+      h('li', null, 'Signals stand a little further back along the line where they would crowd a label or another signal.'),
+      h('li', null, 'The figure beside each arm is its lever number. Levers are numbered west to east along each box’s track. Points are numbered in the same run, so the box can be worked from one frame: a facing point lock usually takes the number just below its points.'),
       h('li', null, 'On a box’s diagram, other boxes’ signals are drawn faint.'),
     ),
     h('h3', null, 'Routes'),

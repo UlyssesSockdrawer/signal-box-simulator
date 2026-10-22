@@ -2049,7 +2049,7 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
    ===================================================================== */
 .dg-sig.faint { opacity: 0.45; }
 .dg-sig-num { fill: #0c0a08; }
-.dg-sig-numtext { fill: #ffffff; font-size: 10px; }
+.dg-sig-numtext { fill: #ffffff; font-size: 8.5px; }
 .dg-sig-hit { pointer-events: none; }
 .sg-board .dg-sig-hit { pointer-events: all; cursor: pointer; }
 .dg-sig.selected .dg-sig-num { fill: var(--brass-edge); }
@@ -2084,6 +2084,8 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .tut-diagram .dg-svg { min-width: 960px; max-height: none; height: auto; }
 @media (max-width: 600px) {
   .sig-kinds .sig-sample-cell { width: 64px; }
-  .sig-sample { width: 60px; height: 38px; }
+  .sig-sample { width: 60px; height: 40px; }
 }
 .sg-points select { max-width: 100%; }
+.dg-sig-label { font: 700 8px/1 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; fill: #1d2124; paint-order: stroke; stroke: #ece4cf; stroke-width: 2px; stroke-linejoin: round; }
+.dg-sig.selected .dg-sig-label { fill: #8a5a00; }

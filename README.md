@@ -248,7 +248,12 @@ Each layout can now have its own signals. The Layout configurator has a new **Si
 * **Facing point locks** are worked out for points that running trains meet facing; the Points and
   facing point locks table lets you set or remove one.
 * Signals are drawn on the diagram boards (the configurator and the box's Diagram) with their lever
-  numbers, in semaphore or colour-light form.
+  numbers, in semaphore or colour-light form. Each post is drawn laid flat beside the line, its top
+  pointing the way trains run: a junction's arms make one bracket (a doll per route, the main
+  route's longest, the leftmost route's furthest out), distant and shunt-ahead arms ride below the
+  main arm, and ground signals lie behind the post. Colour-light junctions are one head with a
+  feather for each diverging route. Posts stand back along the line to keep clear of labels, track
+  and each other.
 
 The signals are a plan for now: trains in play mode do not obey them yet. The interlocking and
 trains that stop at signals come next (v0.3.30).
@@ -678,6 +683,7 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
   screens/signalling.ts  The layout configurator's Signalling tab
+  signalDrawing.ts     Signals on the diagram, post by post (brackets, feathers, ground signals)
   screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
   screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
   screens/timetableGenerate.ts  Generate a timetable; lampDiagram.ts draws lamp headcodes
