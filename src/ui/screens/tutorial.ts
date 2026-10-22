@@ -235,7 +235,7 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
       h('strong', null, 'Signalling'),
       ' tab of the Layout configurator: let the app generate a set, place your own, or both.',
     ),
-    h('p', { class: 'muted' }, 'For now the signals are a plan: the box diagram shows them, but trains do not yet obey them. The interlocking and trains that stop at signals come next.'),
+    h('p', { class: 'muted' }, 'In signaller play mode, trains obey the signals: they stop at any signal at danger, and the app’s automatic signaller clears them through the interlocking when a real signaller would. You will see the arms drop and the lights change on the box’s diagram. (A lever frame to work them yourself comes later.)'),
     h('h3', null, 'The kinds of signal'),
     h(
       'div',
@@ -272,6 +272,17 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
       'A stop signal reads as far as the next stop signal; a shunt signal as far as the next signal of any kind or a limit of shunt. The app follows the track every way the points can lie to find these routes (to P1, to Goods shed, to Fiddle Yard East) and works them out again whenever the plan changes. For an unusual arrangement, select the signal, untick ',
       h('strong', null, 'Every route here not read by another signal'),
       ' and tick the routes that arm should read. A route that no arm reads is listed under Issues.',
+    ),
+    h('h3', null, 'Interlocking'),
+    h(
+      'p',
+      null,
+      'The levers are interlocked so that conflicting moves can’t be signalled. The app works out the locking table from the signals and their routes: a signal can only come off once the points on its route lie the right way and are bolted by their facing point locks; signals whose routes share any track lock each other at danger (unless one stands on the other’s route, facing the same way, like a home and the starter beyond it); and a distant needs the stop signals ahead off for a clear run. Points can’t be moved with their FPL in, or while a signal off holds them.',
+    ),
+    h(
+      'p',
+      null,
+      'The table is on the Signalling tab, below the signals. Select a signal to change how each of its routes locks the points (normal, reverse or not locked, or lock other points too) and which signals it locks; the table follows.',
     ),
     h('h3', null, 'Facing point locks'),
     h(

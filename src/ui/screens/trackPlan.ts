@@ -1,3 +1,4 @@
+import { pruneInterlocking } from '../../core/interlocking';
 import {
   addJunctionInTrack,
   addTrack,
@@ -222,6 +223,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         pruneJoints(layoutIn(a).trackPlan);
         // Signals on track that has gone go with it.
         pruneSignals(layoutIn(a).trackPlan);
+        pruneInterlocking(layoutIn(a));
       });
     } finally {
       quiet = false;

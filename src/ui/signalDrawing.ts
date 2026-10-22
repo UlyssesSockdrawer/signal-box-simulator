@@ -34,9 +34,11 @@ const RED = '#c8261d';
 const YELLOW = '#e8b923';
 const WHITE = '#f6f1e3';
 const LAMP_RED = '#d8322a';
-const LAMP_GREEN = '#2bb24c';
 const LAMP_WHITE = '#f4f1e6';
 const HEAD = '#16130f';
+/** Unlit lamps: a green lamp at danger, a junction indicator not showing. */
+const LAMP_DARK = '#203a28';
+const LAMP_DIM = '#6b6a63';
 const SCALE = 1.4;
 /** Doll spacing on a bracket (local units). */
 const S = 20;
@@ -94,35 +96,38 @@ function armGroup(sg: PlanSignal, opts: SignalDrawOptions, hitX: number, hitY: n
 
 /** A semaphore arm on a doll at (x, y), reaching away from the line. */
 function semArm(g: SVGGElement, x: number, y: number, kind: PlanSignal['kind']): void {
+  // The arm turns about its spindle on the doll when the signal is off (lower quadrant: the end drops 45°).
+  const arm = svg('g', { class: 'dg-arm', 'data-pivot': `${x} ${y + 2}` });
   if (kind === 'distant') {
-    g.append(svg('path', { d: `M${x} ${y}L${x - 12} ${y}L${x - 9.5} ${y + 2}L${x - 12} ${y + 4}L${x} ${y + 4}Z`, fill: YELLOW, stroke: INK, 'stroke-width': 0.7 }));
-    g.append(svg('path', { d: `M${x - 3.5} ${y}L${x - 5.5} ${y + 2}L${x - 3.5} ${y + 4}`, fill: 'none', stroke: INK, 'stroke-width': 0.9 }));
+    arm.append(svg('path', { d: `M${x} ${y}L${x - 12} ${y}L${x - 9.5} ${y + 2}L${x - 12} ${y + 4}L${x} ${y + 4}Z`, fill: YELLOW, stroke: INK, 'stroke-width': 0.7 }));
+    arm.append(svg('path', { d: `M${x - 3.5} ${y}L${x - 5.5} ${y + 2}L${x - 3.5} ${y + 4}`, fill: 'none', stroke: INK, 'stroke-width': 0.9 }));
   } else if (kind === 'shuntAhead') {
-    g.append(svg('rect', { x: x - 8, y, width: 8, height: 3.4, fill: RED, stroke: INK, 'stroke-width': 0.6 }));
-    g.append(svg('text', { x: x - 4, y: y + 2.9, 'text-anchor': 'middle', 'font-size': 3.4, 'font-weight': 700, fill: WHITE }, 'S'));
+    arm.append(svg('rect', { x: x - 8, y, width: 8, height: 3.4, fill: RED, stroke: INK, 'stroke-width': 0.6 }));
+    arm.append(svg('text', { x: x - 4, y: y + 2.9, 'text-anchor': 'middle', 'font-size': 3.4, 'font-weight': 700, fill: WHITE }, 'S'));
   } else {
-    g.append(svg('rect', { x: x - 12, y, width: 12, height: 4, fill: RED, stroke: INK, 'stroke-width': 0.7 }));
-    g.append(svg('rect', { x: x - 9.5, y, width: 2, height: 4, fill: WHITE }));
+    arm.append(svg('rect', { x: x - 12, y, width: 12, height: 4, fill: RED, stroke: INK, 'stroke-width': 0.7 }));
+    arm.append(svg('rect', { x: x - 9.5, y, width: 2, height: 4, fill: WHITE }));
   }
-  g.append(svg('circle', { cx: x + 2.4, cy: y + 2, r: 1.5, fill: kind === 'distant' ? YELLOW : LAMP_RED, stroke: INK, 'stroke-width': 0.5 }));
+  g.append(arm);
+  g.append(svg('circle', { cx: x + 2.4, cy: y + 2, r: 1.5, fill: kind === 'distant' ? YELLOW : LAMP_RED, stroke: INK, 'stroke-width': 0.5, class: 'dg-spec' }));
 }
 
 /** A colour light head on a doll whose top is (x, y): red (yellow for a distant) above green. */
 function clHead(g: SVGGElement, x: number, y: number, kind: PlanSignal['kind']): void {
   g.append(svg('rect', { x: x - 3.6, y: y - 13, width: 7.2, height: 13, rx: 2.5, fill: HEAD }));
-  g.append(svg('circle', { cx: x, cy: y - 9.5, r: 2.1, fill: kind === 'distant' ? YELLOW : LAMP_RED }));
-  g.append(svg('circle', { cx: x, cy: y - 3.6, r: 2.1, fill: LAMP_GREEN }));
+  g.append(svg('circle', { cx: x, cy: y - 9.5, r: 2.1, fill: kind === 'distant' ? YELLOW : LAMP_RED, class: 'dg-l-stop' }));
+  g.append(svg('circle', { cx: x, cy: y - 3.6, r: 2.1, fill: LAMP_DARK, class: 'dg-l-go' }));
 }
 
 /** A ground signal centred at (x, y): a disc, or a position light. */
 function groundHead(g: SVGGElement, x: number, y: number, sg: PlanSignal): void {
   if (sg.style === 'colourLight') {
     g.append(svg('path', { d: `M${x - 4.5} ${y + 3.5}L${x + 4.5} ${y + 3.5}L${x + 4.5} ${y - 1}L${x} ${y - 4.5}L${x - 4.5} ${y - 1}Z`, fill: HEAD }));
-    g.append(svg('circle', { cx: x - 2, cy: y + 1, r: 1.5, fill: sg.kind === 'shuntYellow' ? YELLOW : sg.kind === 'shuntAhead' ? LAMP_WHITE : LAMP_RED }));
+    g.append(svg('circle', { cx: x - 2, cy: y + 1, r: 1.5, fill: sg.kind === 'shuntYellow' ? YELLOW : sg.kind === 'shuntAhead' ? LAMP_WHITE : LAMP_RED, class: 'dg-pl-stop' }));
     g.append(svg('circle', { cx: x + 2, cy: y + 1, r: 1.5, fill: LAMP_WHITE }));
   } else {
     g.append(svg('circle', { cx: x, cy: y, r: 4.2, fill: WHITE, stroke: INK, 'stroke-width': 0.8 }));
-    g.append(svg('rect', { x: x - 3.6, y: y - 1.1, width: 7.2, height: 2.2, fill: sg.kind === 'shuntYellow' ? YELLOW : RED }));
+    g.append(svg('rect', { x: x - 3.6, y: y - 1.1, width: 7.2, height: 2.2, fill: sg.kind === 'shuntYellow' ? YELLOW : RED, class: 'dg-band', 'data-pivot': `${x} ${y}` }));
   }
 }
 
@@ -222,7 +227,7 @@ function drawPost(state: AppState, layout: Layout, arms: PlanSignal[], at: { x: 
         const deg = side === -1 ? -135 + k * 28 : -45 - k * 28;
         const r = (deg * Math.PI) / 180;
         const a = armGroup(p.sg, opts, Math.cos(r) * 8, oy + Math.sin(r) * 8, 5);
-        for (let j = 1; j <= 3; j++) a.append(svg('circle', { cx: Math.cos(r) * (2 + j * 3.2), cy: oy + Math.sin(r) * (2 + j * 3.2), r: 1.25, fill: LAMP_WHITE, stroke: HEAD, 'stroke-width': 0.6 }));
+        for (let j = 1; j <= 3; j++) a.append(svg('circle', { cx: Math.cos(r) * (2 + j * 3.2), cy: oy + Math.sin(r) * (2 + j * 3.2), r: 1.25, fill: LAMP_DIM, stroke: HEAD, 'stroke-width': 0.6, class: 'dg-feather' }));
         label(a, Math.cos(r) * 20, oy + Math.sin(r) * 20, p.sg.number, rot);
         g.append(a);
       };
@@ -420,4 +425,22 @@ export function signalSample(kind: PlanSignal['kind'], style: PlanSignal['style'
     svg('line', { x1: 0, y1: 29, x2: 48, y2: 29, stroke: INK, 'stroke-width': 2.4 }),
     g,
   );
+}
+
+/**
+ * Show which signals are off: arms drop, disc bands turn, lamps change (CSS does the colours).
+ * Signals not listed are at danger.
+ */
+export function setSignalAspects(diagram: SVGSVGElement, off: Iterable<string>): void {
+  const on = new Set(off);
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-sig[data-signal]')) {
+    const isOff = on.has(g.dataset.signal ?? '');
+    if (g.classList.contains('off') === isOff) continue;
+    g.classList.toggle('off', isOff);
+    for (const a of g.querySelectorAll('.dg-arm, .dg-band')) {
+      const [px, py] = (a.getAttribute('data-pivot') ?? '0 0').split(' ').map(Number);
+      if (isOff) a.setAttribute('transform', `rotate(${a.classList.contains('dg-band') ? 45 : -45} ${px} ${py})`);
+      else a.removeAttribute('transform');
+    }
+  }
 }

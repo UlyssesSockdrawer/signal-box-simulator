@@ -518,6 +518,17 @@ export interface PlanSignal {
 }
 
 /** How signals are generated for a layout (remembered for the next time). */
+/**
+ * Adjustments to the generated interlocking (v0.3.31). Keys of `routes` are "<signal id>|<route
+ * key>" (the route's key from core/signals.ts), each mapping a junction to the way it must lie, or
+ * 'free' (not locked by that route). Locks are pairs of signal ids.
+ */
+export interface InterlockingOverrides {
+  routes?: Record<string, Record<string, 'normal' | 'reverse' | 'free'>>;
+  extraLocks?: Array<[string, string]>;
+  removedLocks?: Array<[string, string]>;
+}
+
 export interface SignallingOptions {
   style: SignalStyle | 'mixed';
   /** Ground signals for shunting moves (exits from sidings and goods yards, setting back). */
@@ -535,6 +546,7 @@ export interface TrackPlan {
   signals?: PlanSignal[];
   /** How signals were last generated. */
   signalling?: SignallingOptions;
+  interlocking?: InterlockingOverrides;
 }
 
 /** A running line on double track: the up line or the down line. */

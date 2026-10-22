@@ -931,6 +931,24 @@ function sanitiseSignals(plan: TrackPlan, boxIds: Set<string>): void {
     const o = plan.signalling as Partial<NonNullable<TrackPlan['signalling']>>;
     plan.signalling = { style: o.style === 'colourLight' || o.style === 'mixed' ? o.style : 'semaphore', shunt: o.shunt !== false, shuntAhead: o.shuntAhead === true };
   }
+  // Interlocking overrides (v0.3.31): keep only well-formed entries for signals and junctions on the plan.
+  if (plan.interlocking !== undefined) {
+    const ov = plan.interlocking as NonNullable<TrackPlan['interlocking']>;
+    const sigIds = new Set((plan.signals ?? []).map((x) => x.id));
+    const jIds = new Set(plan.junctions.map((j) => j.id));
+    const routes: NonNullable<typeof ov.routes> = {};
+    for (const [k, v] of Object.entries(ov.routes && typeof ov.routes === 'object' ? ov.routes : {})) {
+      if (!sigIds.has(k.split('|')[0]) || !v || typeof v !== 'object') continue;
+      const m: Record<string, 'normal' | 'reverse' | 'free'> = {};
+      for (const [j, lie] of Object.entries(v)) if (jIds.has(j) && (lie === 'normal' || lie === 'reverse' || lie === 'free')) m[j] = lie;
+      if (Object.keys(m).length) routes[k] = m;
+    }
+    const pairs = (x: unknown) => (Array.isArray(x) ? x : []).filter((p): p is [string, string] => Array.isArray(p) && p.length === 2 && sigIds.has(p[0]) && sigIds.has(p[1]) && p[0] !== p[1]);
+    const extra = pairs(ov.extraLocks);
+    const removed = pairs(ov.removedLocks);
+    if (Object.keys(routes).length || extra.length || removed.length) plan.interlocking = { ...(Object.keys(routes).length ? { routes } : {}), ...(extra.length ? { extraLocks: extra } : {}), ...(removed.length ? { removedLocks: removed } : {}) };
+    else delete plan.interlocking;
+  }
 }
 
 export function pruneJoints(plan: TrackPlan): number {
@@ -1978,6 +1996,7 @@ export function sanitisePlan(state: AppState, layout: Layout): void {
   };
   if (Array.isArray(raw?.signals)) plan.signals = raw!.signals;
   if (raw?.signalling && typeof raw.signalling === 'object') plan.signalling = raw.signalling;
+  if (raw?.interlocking && typeof raw.interlocking === 'object') plan.interlocking = raw.interlocking;
   layout.trackPlan = plan;
   const boxIds = new Set(state.boxes.map((b) => b.id));
   const connOk = (boxId: string, connId: string) => state.boxes.some((b) => b.id === boxId && b.connections.some((c) => c.id === connId));

@@ -1,3 +1,4 @@
+import { generatedLies, layoutInterlockings, lockingTable, lockKey, pruneInterlocking, type BoxInterlocking } from '../../core/interlocking';
 import { boxesOn, findLayout } from '../../core/layouts';
 import { circuitLength, formatLength, parseLength } from '../../core/railway';
 import {
@@ -53,7 +54,10 @@ export function layoutSignalling(ctx: Ctx, layoutId: string): HTMLElement {
   const upd = (fn: (l: Layout, a: AppState) => void) =>
     store.update((a) => {
       const l = findLayout(a, layoutId);
-      if (l) fn(l, a);
+      if (l) {
+        fn(l, a);
+        pruneInterlocking(l);
+      }
     });
   const sigs = signalsOf(layout);
   if (ui.sel && !findSignal(layout, ui.sel)) ui.sel = '';
@@ -164,6 +168,16 @@ export function layoutSignalling(ctx: Ctx, layoutId: string): HTMLElement {
 
   // ---------------------------------------------------------------- selected signal
   const sel = ui.sel ? findSignal(layout, ui.sel) : undefined;
+  const ils: BoxInterlocking[] = layoutInterlockings(st, layout);
+  const ilOf = (boxId: string) => ils.find((x) => x.boxId === boxId);
+  const leverNum = (il: BoxInterlocking, key: string) => il.levers.find((l) => l.key === key)?.number || '?';
+  /** Change the overrides (and drop ones that put things back as generated). */
+  const setOverride = (fn: (ov: NonNullable<Layout['trackPlan']['interlocking']>) => void) =>
+    upd((l) => {
+      const ov = (l.trackPlan.interlocking ??= {});
+      fn(ov);
+    });
+
   const inspector = sel ? signalCase(sel) : null;
 
   function signalCase(s: PlanSignal): HTMLElement {
@@ -243,6 +257,7 @@ export function layoutSignalling(ctx: Ctx, layoutId: string): HTMLElement {
       ),
       h('p', null, `On ${c ? c.name || c.code : 'a circuit'} (${c?.code ?? ''}), for trains running towards ${endName(s.end)}. Worked by ${st.boxes.find((b) => b.id === s.boxId)?.name ?? 'no box'}.`),
       routeBox,
+      interlockBox(s),
       h(
         'div',
         { class: 'row' },
@@ -301,6 +316,156 @@ export function layoutSignalling(ctx: Ctx, layoutId: string): HTMLElement {
     }),
   );
 
+  // ---------------------------------------------------------------- interlocking
+  /** The selected signal's part in the interlocking: how its routes lock the points, and what it locks. */
+  function interlockBox(s: PlanSignal): HTMLElement | null {
+    const il = ilOf(s.boxId);
+    if (!il || !SIGNAL_KINDS[s.kind].lever) return null;
+    const rel = il.releases.get(s.id) ?? [];
+    const pointsLevers = il.levers.filter((l) => l.kind === 'points');
+    if (s.kind === 'distant') {
+      return h(
+        'fieldset',
+        { class: 'sg-routes sg-lock' },
+        h('legend', null, 'Interlocking'),
+        h('p', { class: 'small' }, rel.length ? `Released by ${rel.map((r) => r.label).join(' or ')}: the stop signals ahead for a clear run on to the line.` : 'No clear run on to the line from here, so it can never come off (a fixed distant).'),
+      );
+    }
+    const ov = layout.trackPlan.interlocking ?? {};
+    const routeRows = rel.map((r) => {
+      const gen = generatedLies(layout, s, r.steps);
+      const okey = `${s.id}|${r.key}`;
+      const mine = ov.routes?.[okey] ?? {};
+      const ids = [...new Set([...gen.keys(), ...Object.keys(mine)])].filter((j) => pointsLevers.some((l) => l.id === j));
+      const pick = (jid: string) => {
+        const g = gen.get(jid);
+        const cur = mine[jid] ?? g ?? 'free';
+        return h(
+          'select',
+          {
+            'aria-label': `Points ${leverNum(il, `pts:${jid}`)} for ${r.label}`,
+            on: {
+              change: (e: Event) => {
+                const v = (e.target as HTMLSelectElement).value as 'normal' | 'reverse' | 'free';
+                setOverride((o) => {
+                  const m = ((o.routes ??= {})[okey] ??= {});
+                  if (v === (g ?? 'free')) delete m[jid];
+                  else m[jid] = v;
+                  if (!Object.keys(m).length) delete o.routes![okey];
+                });
+              },
+            },
+          },
+          option('normal', `Normal${g === 'normal' ? ' (generated)' : ''}`, cur === 'normal'),
+          option('reverse', `Reverse${g === 'reverse' ? ' (generated)' : ''}`, cur === 'reverse'),
+          option('free', `Not locked${!g ? ' (generated)' : ''}`, cur === 'free'),
+        );
+      };
+      const others = pointsLevers.filter((l) => !ids.includes(l.id));
+      return h(
+        'div',
+        { class: 'sg-lock-route' },
+        h('strong', null, r.label),
+        r.overridden ? h('span', { class: 'tag' }, ' changed') : null,
+        ...ids.map((jid) => h('div', { class: 'row sg-lock-pt' }, h('span', null, `Points ${leverNum(il, `pts:${jid}`)}`), pick(jid))),
+        others.length
+          ? h(
+              'select',
+              {
+                'aria-label': `Also lock points for ${r.label}`,
+                on: { change: (e: Event) => { const jid = (e.target as HTMLSelectElement).value; if (jid) setOverride((o) => { ((o.routes ??= {})[okey] ??= {})[jid] = 'normal'; }); } },
+              },
+              option('', 'Also lock points…', true),
+              ...others.map((l) => option(l.id, `Points ${l.number}`, false)),
+            )
+          : null,
+      );
+    });
+    const locked = [...(il.locks.get(s.id) ?? [])];
+    const removed = (ov.removedLocks ?? []).filter(([a, b]) => a === s.id || b === s.id).map(([a, b]) => (a === s.id ? b : a));
+    const candidates = signalsOf(layout).filter((x) => x.boxId === s.boxId && x.id !== s.id && x.number && SIGNAL_KINDS[x.kind].lever && x.kind !== 'distant' && !locked.includes(x.id));
+    const num = (id: string) => signalsOf(layout).find((x) => x.id === id)?.number || '?';
+    return h(
+      'fieldset',
+      { class: 'sg-routes sg-lock' },
+      h('legend', null, 'Interlocking'),
+      rel.length ? h('p', { class: 'muted small' }, 'How each route locks the points (FPLs follow: points met facing on a running line are bolted).') : h('p', { class: 'muted small' }, 'No route: it can never come off.'),
+      ...routeRows,
+      h('div', { class: 'sg-lock-locks' },
+        h('strong', null, 'Locks at danger: '),
+        ...(locked.length
+          ? locked.map((o) =>
+              h('button', {
+                class: 'btn small sg-lock-chip',
+                type: 'button',
+                title: 'Remove this lock',
+                on: {
+                  click: () =>
+                    setOverride((ov2) => {
+                      const k = lockKey(s.id, o);
+                      if ((ov2.extraLocks ?? []).some(([a, b]) => lockKey(a, b) === k)) ov2.extraLocks = ov2.extraLocks!.filter(([a, b]) => lockKey(a, b) !== k);
+                      else (ov2.removedLocks ??= []).push([s.id, o]);
+                    }),
+                },
+              }, `${num(o)} ✕`),
+            )
+          : [h('span', { class: 'muted small' }, 'nothing')]),
+      ),
+      removed.length
+        ? h('div', { class: 'sg-lock-locks' }, h('span', { class: 'muted small' }, 'Locks you removed: '), ...removed.map((o) => h('button', { class: 'btn small', type: 'button', on: { click: () => setOverride((ov2) => { ov2.removedLocks = (ov2.removedLocks ?? []).filter(([a, b]) => lockKey(a, b) !== lockKey(s.id, o)); }) } }, `Restore ${num(o)}`)))
+        : null,
+      candidates.length
+        ? h(
+            'select',
+            {
+              'aria-label': 'Add a lock with another signal',
+              on: { change: (e: Event) => { const o = (e.target as HTMLSelectElement).value; if (o) setOverride((ov2) => { ov2.removedLocks = (ov2.removedLocks ?? []).filter(([a, b]) => lockKey(a, b) !== lockKey(s.id, o)); (ov2.extraLocks ??= []).push([s.id, o]); }); } },
+            },
+            option('', 'Add a lock with…', true),
+            ...candidates.sort((a, b) => Number(a.number) - Number(b.number)).map((x) => option(x.id, `${x.number} ${x.name}`, false)),
+          )
+        : null,
+    );
+  }
+
+  const lockCase = ils.length
+    ? h(
+        'section',
+        { class: 'config-case sg-locking' },
+        h('h3', { class: 'label' }, 'Interlocking'),
+        h('p', { class: 'muted small' }, 'Worked out from the signals and their routes. A lever can be pulled only once the levers it is released by are pulled, and while it is pulled the levers it locks stay normal. Select a signal to change how its routes lock the points, or what it locks.'),
+        ...ils.map((il) => {
+          const box = st.boxes.find((b) => b.id === il.boxId);
+          const rows = lockingTable(st, layout, il);
+          return h(
+            'div',
+            { class: 'table-wrap' },
+            h(
+              'table',
+              { class: 'sg-table sg-lock-table' },
+              h('caption', null, `${box?.name ?? 'No box'} · locking table`),
+              h('thead', null, h('tr', null, h('th', null, 'Lever'), h('th', null, 'Works'), h('th', null, 'Released by'), h('th', null, 'Locks'), h('th', null, 'Both ways'))),
+              h(
+                'tbody',
+                null,
+                ...rows.map((r) =>
+                  h(
+                    'tr',
+                    { class: `k-${r.lever.kind}${r.lever.kind === 'signal' && r.lever.id === ui.sel ? ' selected' : ''}` },
+                    h('td', { class: 'num' }, r.lever.number || '—'),
+                    h('td', null, r.lever.kind === 'signal' ? h('button', { class: 'linkish', type: 'button', on: { click: () => { ui.sel = r.lever.id; rerender(); } } }, r.lever.name) : r.lever.name, r.note ? h('div', { class: 'muted small' }, r.note) : null),
+                    h('td', { class: 'num' }, r.releasedBy.join(' ') || '—'),
+                    h('td', { class: 'num' }, r.locks.join(' ') || '—'),
+                    h('td', { class: 'num' }, r.bothWays.join(' ') || '—'),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      )
+    : null;
+
   // ---------------------------------------------------------------- list and checks
   const issues = signalIssues(st, layout);
   const issuesCase = issues.length
@@ -344,7 +509,7 @@ export function layoutSignalling(ctx: Ctx, layoutId: string): HTMLElement {
       )
     : null;
 
-  return h('div', { class: 'config-shelf sg-page' }, h('div', { class: 'sg-grid' }, h('div', { class: 'sg-main' }, generateCase, boardCase, issuesCase, listCase), h('div', { class: 'sg-side' }, inspector, pointsCase)));
+  return h('div', { class: 'config-shelf sg-page' }, h('div', { class: 'sg-grid' }, h('div', { class: 'sg-main' }, generateCase, boardCase, issuesCase, listCase, lockCase), h('div', { class: 'sg-side' }, inspector, pointsCase)));
 
   function field(label: string, control: HTMLElement): HTMLElement {
     return h('div', { class: 'field' }, h('label', { for: control.id }, label), control);

@@ -2126,3 +2126,17 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
 .side-case .code-play, .side-case .btn.small:not(.primary) { background: var(--shelf-bg); color: var(--btn-fg); border-color: var(--btn-border); }
 .side-case a { color: var(--btn-hover); }
 .side-case .panel, .side-case .card, .side-case .yard, .side-case fieldset { background: var(--shelf-bg); border-color: var(--btn-border); color: var(--btn-fg); }
+/* v0.3.31: signals off (signaller play mode) */
+.dg-sig.off .dg-spec, .dg-sig.off .dg-l-go { fill: #2bb24c; }
+.dg-sig.off .dg-l-stop { fill: #3a2320; }
+.dg-sig.off .dg-pl-stop { fill: #f4f1e6; }
+.dg-sig.off .dg-feather { fill: #f4f1e6; }
+.dg-arm, .dg-band { transition: transform 0.4s ease; }
+/* v0.3.31: interlocking in the Signalling tab */
+.sg-lock-route { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--wood-edge); }
+.sg-lock-route:first-of-type { border-top: 0; }
+.sg-lock-pt { justify-content: space-between; align-items: center; gap: 8px; }
+.sg-lock-pt select, .sg-lock-route > select, .sg-lock > select { max-width: 100%; }
+.sg-lock-locks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sg-lock-chip { min-height: 28px; padding: 2px 8px; }
+.sg-lock-table tr.k-points td, .sg-lock-table tr.k-fpl td { color: var(--btn-muted); }

@@ -7,8 +7,10 @@ import { Emitter, type Scheduler } from './scheduler';
 import type { SectionSession } from './session';
 import type { ThroughWorkings } from './throughTrains';
 import { findCircuit } from './trackPlan';
+import { boxInterlocking, Frame, type Release } from './interlocking';
+import { postKey, signalsOf, SIGNAL_KINDS } from './signals';
 import type { TrainEventSource } from './trainEvents';
-import type { AppState, Layout, Loco, PlaceRef, StockRake } from './types';
+import type { AppState, Layout, Loco, PlaceRef, PlanSignal, StockRake } from './types';
 
 /*
  * THE SIMULATED RAILWAY (signaller play mode, v0.3.28).
@@ -32,6 +34,15 @@ import type { AppState, Layout, Loco, PlaceRef, StockRake } from './types';
  *  - each signal goes back to danger as the train passes it, and a route's circuits and points are
  *    freed as the train's tail clears them.
  * The lever frame (a later stage) will replace the automatic signaller; the rules stay.
+ *
+ * SIGNALS PLACED ON THE PLAN (v0.3.31): when a box's layout has signals of its own, trains obey them.
+ * A train stops at the first signal at danger facing it on its path (running trains the stop signals,
+ * shunts the shunt signals, else whatever stands there; distants are passed at caution). Once the
+ * rules above have set a route (the path runs on past a signal), the automatic signaller sets the
+ * points and FPLs and pulls the signal off through the box's lever FRAME, which allows it only as the
+ * interlocking does (core/interlocking.ts); a distant comes off once every stop signal it needs is
+ * off. Each goes back to danger as the head passes it, and points no route needs go back to normal.
+ * A post none of whose arms reads a route for the movement does not apply to it.
  *
  * ROUTES are worked out when the train is given its orders (accepted, sent away, or shunted) and
  * again every moment until they are locked: a train goes round a road that has become occupied, to
@@ -169,6 +180,8 @@ export class RailwaySim {
   private ticking = false;
   private lastTick = 0;
   private outgoingStatus = new Map<string, string>();
+  /** Each box's lever frame, when its layout has signals placed on the plan (v0.3.31). */
+  private frames = new Map<string, { key: string; frame: Frame }>();
 
   constructor(private o: RailwaySimOptions) {}
 
@@ -218,6 +231,7 @@ export class RailwaySim {
     this.trains = [];
     this.signalState.clear();
     this.lie.clear();
+    this.frames.clear();
     this.o.board.forget((id) => id !== MARKED);
     this.reportedOcc.clear();
   }
@@ -250,7 +264,9 @@ export class RailwaySim {
       this.spawnIncoming(layout);
       this.startOutgoing(layout);
       this.signaller(layout);
+      this.placedSignaller(layout);
       for (const t of [...this.trains]) this.move(layout, t, secs);
+      this.tidyFrames(layout);
       this.reportOccupancy(layout);
       this.reportArrivals(layout);
     } finally {
@@ -670,6 +686,141 @@ export class RailwaySim {
     }
   }
 
+  // ------------------------------------------------------------------------------ signals placed on the plan
+
+  /** The box's lever frame (null when the layout has no signals of this box's on the plan). */
+  frameOf(boxId: string, layout: Layout | undefined = this.layout): Frame | null {
+    if (!layout || !signalsOf(layout).some((s) => s.boxId === boxId)) return null;
+    const p = layout.trackPlan;
+    const key = JSON.stringify([p.signals, p.interlocking, p.junctions.map((j) => [j.id, j.kind, j.number, j.fplNumber, j.lock, j.boxId])]);
+    const f = this.frames.get(boxId);
+    if (f && f.key === key) return f.frame;
+    const il = boxInterlocking(this.state, layout, boxId);
+    if (f) {
+      f.frame.update(il);
+      f.key = key;
+      return f.frame;
+    }
+    const frame = new Frame(il);
+    this.frames.set(boxId, { key, frame });
+    return frame;
+  }
+
+  /** Signals that apply to this train's movement, where they stand along its path (metres), post by post. */
+  private postsAhead(layout: Layout, t: SimTrain, opts: { behind?: boolean } = {}): Array<{ pos: number; arms: PlanSignal[]; part: number; passable: boolean; frame: Frame }> {
+    const end = this.partsTotal(t);
+    const shunt = t.purpose.kind === 'shunt';
+    const all = signalsOf(layout);
+    if (!all.length) return [];
+    const out: Array<{ pos: number; arms: PlanSignal[]; part: number; passable: boolean; frame: Frame }> = [];
+    t.parts.forEach((p, i) => {
+      if (!p.circuitId) return;
+      const here = all.filter((s) => s.circuitId === p.circuitId && s.end === p.toward && s.kind !== 'distant' && s.kind !== 'shuntAhead' && s.kind !== 'limitOfShunt' && this.box(s.boxId));
+      const posts = new Map<string, PlanSignal[]>();
+      for (const s of here) posts.set(postKey(s), [...(posts.get(postKey(s)) ?? []), s]);
+      for (const arms of posts.values()) {
+        const frame = this.frameOf(arms[0].boxId, layout);
+        if (!frame) continue;
+        const pos = p.start + Math.max(0, p.metres - arms[0].back);
+        // Signals at the very end of the path are not passed (the train stops there anyway).
+        if (pos >= end - 0.5) continue;
+        if (opts.behind ? pos >= t.head - 0.5 : pos < t.head - 0.01) continue;
+        // The arms for this kind of movement: running trains the stop signals, shunts the shunt signals (else whatever is there).
+        const main = arms.filter((s) => SIGNAL_KINDS[s.kind].cls === 'main');
+        const sh = arms.filter((s) => SIGNAL_KINDS[s.kind].cls === 'shunt');
+        const mine = (shunt ? (sh.length ? sh : main) : main.length ? main : sh).filter((s) => frame.has(`sig:${s.id}`));
+        if (!mine.length) continue;
+        const off = mine.some((s) => frame.reversed(`sig:${s.id}`));
+        // A post whose arms read no route for this movement does not apply to it (rather than hold the train for ever).
+        const applies = mine.some((s) => (frame.il.releases.get(s.id) ?? []).some((r) => this.releaseFits(t, i, s, r)));
+        out.push({ pos, arms: mine, part: i, passable: off || !applies, frame });
+      }
+    });
+    return out.sort((a, b) => a.pos - b.pos);
+  }
+
+  /** Does a signal's route match the way the train is going from it? */
+  private releaseFits(t: SimTrain, partIndex: number, s: PlanSignal, r: Release): boolean {
+    const from = s.back > 0 ? partIndex : partIndex + 1;
+    const seq = t.parts.slice(from).filter((p) => p.circuitId);
+    const n = Math.min(seq.length, r.steps.length);
+    if (!n) return false;
+    for (let k = 0; k < n; k++) if (seq[k].circuitId !== r.steps[k].circuitId || seq[k].toward !== r.steps[k].toward) return false;
+    return true;
+  }
+
+  /**
+   * The automatic signaller, with signals on the plan: once a train's route is set (its path runs on
+   * past a signal), set the points and pull the signal off through the box's frame, as the locking
+   * allows; then the distant, once the stop signals ahead are off.
+   */
+  private placedSignaller(layout: Layout): void {
+    for (const t of this.trains) {
+      if (t.arrived) continue;
+      for (const x of this.postsAhead(layout, t)) {
+        if (x.passable) continue;
+        let why = '';
+        for (const s of x.arms) {
+          why = x.frame.setRoute(s.id, (r) => this.releaseFits(t, x.part, s, r));
+          if (!why) break;
+        }
+        if (why && t.head >= x.pos - 1) {
+          const num = x.arms.map((s) => s.number).join('/');
+          t.status = `Waiting at signal ${num}: ${why}.`;
+        }
+      }
+      // Distants ahead: off once every stop signal they need is off.
+      const end = this.partsTotal(t);
+      for (const p of t.parts) {
+        if (!p.circuitId) continue;
+        for (const d of signalsOf(layout).filter((s) => s.kind === 'distant' && s.circuitId === p.circuitId && s.end === p.toward && this.box(s.boxId))) {
+          const pos = p.start + Math.max(0, p.metres - d.back);
+          if (pos < t.head - 0.01 || pos >= end) continue;
+          this.frameOf(d.boxId, layout)?.setRoute(d.id);
+        }
+      }
+    }
+  }
+
+  /** Placed signals (and distants) the train's head has passed go back to danger. */
+  private replaceBehind(layout: Layout, t: SimTrain): void {
+    const all = signalsOf(layout);
+    if (!all.length) return;
+    for (const p of t.parts) {
+      if (!p.circuitId || p.start >= t.head) continue;
+      for (const s of all) {
+        if (s.circuitId !== p.circuitId || s.end !== p.toward || !this.box(s.boxId)) continue;
+        const pos = p.start + Math.max(0, p.metres - s.back);
+        if (pos > t.head - 0.5) continue;
+        const f = this.frameOf(s.boxId, layout);
+        if (f?.reversed(`sig:${s.id}`)) f.replace(s.id);
+      }
+    }
+  }
+
+  /** Points and FPLs no train's route needs go back to normal. */
+  private tidyFrames(layout: Layout): void {
+    for (const b of this.boxes) {
+      const f = this.frameOf(b.boxId, layout);
+      if (!f) continue;
+      f.normalise((j) => this.trains.some((t) => t.junctionsLocked.has(j)));
+    }
+  }
+
+  /** Signals of a box now off (placed signals), for the diagram. */
+  signalsOff(boxId: string): string[] {
+    return this.frameOf(boxId)?.offSignals() ?? [];
+  }
+
+  /** Each junction's lie by its points lever (placed signals), for the diagram. */
+  pointsLies(boxId: string): Map<string, 'normal' | 'reverse'> {
+    const f = this.frameOf(boxId);
+    const out = new Map<string, 'normal' | 'reverse'>();
+    if (!f) return out;
+    for (const l of f.il.levers) if (l.kind === 'points') out.set(l.id, f.pointsLie(l.id));
+    return out;
+  }
+
   // ------------------------------------------------------------------------------ moving
 
   private move(layout: Layout, t: SimTrain, secs: number): void {
@@ -684,8 +835,12 @@ export class RailwaySim {
       const lm = l ? locoMaxSpeed(l) : null;
       if (lm) v = Math.min(v, lm);
       if (t.purpose.kind === 'shunt') v = Math.min(v, DEFAULT_DIVERGING_SPEED);
-      t.head = Math.min(end, t.head + v * secs);
+      // Signals placed on the plan: stop at the first one at danger ahead (the end of its authority).
+      const stopAt = this.postsAhead(layout, t).find((x) => !x.passable)?.pos ?? Infinity;
+      t.head = Math.max(t.head, Math.min(end, stopAt, t.head + v * secs));
     }
+    // Placed signals go back to danger as the head passes them.
+    this.replaceBehind(layout, t);
     // Signals go back to danger behind the head of the train.
     for (const p of t.parts) if (p.signalId && t.head > p.start + p.metres + 0.5 && this.signalState.get(p.signalId) === 'clear') this.signalState.set(p.signalId, 'danger');
     // Circuits and points are freed as the tail clears them (not those it comes back over after reversing).

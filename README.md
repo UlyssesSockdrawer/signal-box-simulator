@@ -226,6 +226,30 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Interlocking, and trains that obey the signals (v0.3.31)
+
+* **Interlocking** (core/interlocking.ts), worked out from the signals placed on the plan and the
+  routes they read, shown as a classic **locking table** per box on the Signalling tab (lever,
+  released by, locks, both ways). A signal comes off for one of its routes only when the points on
+  it lie the right way (the through road is normal, the turnout reverse; catch points closed) and
+  facing points are bolted by their FPL. Signals whose routes share any track lock each other at
+  danger, unless one stands on the other's route facing the same way. A distant needs the stop
+  signals ahead off for a clear run on to the line. Points can't move with their FPL in, or while a
+  signal off holds them.
+* **Your adjustments**: select a signal to set how each of its routes locks the points (normal,
+  reverse, not locked, or lock other points too), remove a lock or add one with another signal. The
+  table is generated again from that. Kept on the plan (`trackPlan.interlocking`).
+* **Trains obey the signals** in signaller play mode. A train stops at any signal at danger facing it
+  on its path (running trains the stop signals, shunts the shunt signals; distants are passed at
+  caution). When the automatic signaller has set a train's route, it sets the points and FPLs and
+  pulls each signal off through the box's lever frame, which allows only what the interlocking does;
+  the distant comes off once the stop signals it needs are off. Signals go back to danger as the
+  train passes, and points no route needs go back to normal. A train held by the locking says why
+  ("Waiting at signal 16: locked by 2").
+* **Aspects on the diagram**: arms drop, disc bands turn, lamps change (and junction indicators
+  light) as signals come off.
+* Layouts with no signals placed run on the implicit home and section signals as before.
+
 ## Fixes and a tidier box (v0.3.30)
 
 * **Signals stay put.** Posts are placed the same whatever the diagram's labels show; with
@@ -277,8 +301,7 @@ Each layout can now have its own signals. The Layout configurator has a new **Si
   feather for each diverging route. Posts stand back along the line to keep clear of labels, track
   and each other.
 
-The signals are a plan for now: trains in play mode do not obey them yet. The interlocking and
-trains that stop at signals come next (v0.3.31).
+Trains obey them in play mode from v0.3.31, with the interlocking.
 
 The **Tutorial** is now in tabs (Absolute block, Worked examples, Tapper & tokens, Try it,
 Timetables, Signals) instead of one long page, with a new **Signals** page explaining each kind of
@@ -682,6 +705,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   trainEvents.ts       Source of train events (what trains did) and the running mode: the seam between a box and its railway
   routing.ts           Routes over the track plan, implicit home and section signals, play-mode readiness
   signals.ts           Signals placed on the plan: kinds, routes they read, generating, lever numbers, facing point locks
+  interlocking.ts      Locking table worked out from the signals' routes, overrides, and the lever frame engine
   occupancy.ts         Track occupancy board (fed by train events)
   railwaySim.ts        The simulated railway: trains moving through the plan, automatic signaller, rakes of stock
   railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units

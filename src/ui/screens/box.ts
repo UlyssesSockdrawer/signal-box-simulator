@@ -14,6 +14,7 @@ import { getBoxRuntime, takeFinishedScore, takeOpeningMode, type BoxRuntime, typ
 import type { ThroughWorkings } from '../../core/throughTrains';
 import { drawDiagram, hasDiagram, setOccupied, setRoutes, setTrainLabels, type DiagramLabels } from '../planDiagram';
 import { enableZoom, type ZoomControl } from '../diagramZoom';
+import { setSignalAspects } from '../signalDrawing';
 import { changeBoxMode } from '../openBox';
 import { reportedOccupancy } from '../../core/routing';
 import { showScoreSheet } from '../scoreSheet';
@@ -335,6 +336,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const r = sim.routes();
     if (st.settings.showRoutes) setRoutes(svgEl, r.circuits, r.junctions.map((j) => j.junctionId));
     else setRoutes(svgEl, [], []);
+    // Signals placed on the plan, as the automatic signaller works them.
+    setSignalAspects(svgEl, sim.signalsOff(box.id));
     setTrainLabels(st, layout, svgEl, sim.trainLabels().map((t) => ({ circuitId: t.circuitId, text: st.roster.find((l) => l.id === t.locoId)?.number || '?' })));
   };
   /** Model railway mode, occupancy shown: a tap marks a track circuit occupied, or clears a mark. */
