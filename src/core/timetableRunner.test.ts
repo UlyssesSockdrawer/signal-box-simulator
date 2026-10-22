@@ -170,7 +170,7 @@ describe('timetable runner', () => {
     t.tick();
     // It has left Fiddle Yard West: when it should pass the box.
     expect(t.runner.dueAtBox('sigsim-central', 'sgc-west')?.through).toBe(true);
-    expect(t.item('seq-ex1').status).toMatch(/due to pass Sigsim Central at about/);
+    expect(t.item('seq-ex1').status).toMatch(/due to pass Sigsim Central (at about|in )/);
     t.east.sendBell('2');
     t.tick();
     t.west.confirmIncomingArrived(null, { moveLoco: false });
@@ -199,6 +199,15 @@ describe('timetable runner', () => {
     expect(log).toMatch(/Done: 1E01 The Express/);
     expect(t.workings.route('sgc-west')).toBe('');
     expect(t.east.view.incoming).toMatchObject({ locoId: 'lms5025' });
+  });
+
+  it('can start a session clock at the time now, in step with the device clock', () => {
+    const t = setup({ minutes: 12 * 60 + 43 });
+    t.runner.load(t.tt('tt-sgc-morning'));
+    t.runner.start({ clockFromNow: true });
+    expect(t.runner.clockNow()).toBe(12 * 60 + 43);
+    t.tick(5 * 60_000);
+    expect(Math.round(t.runner.clockNow()!)).toBe(12 * 60 + 48);
   });
 
   it('runs a session clock: moves are released at their times, any loco is found by its job', () => {

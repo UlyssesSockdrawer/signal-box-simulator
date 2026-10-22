@@ -156,6 +156,9 @@ export class TimetableRunner {
   /** Locos chosen for "any loco" trains, by train id. */
   private anyLoco = new Map<string, string>();
   private startedAt = 0;
+  /** Session clock started from the time now (in step with this device's clock), and the time it began (minutes). */
+  private fromNow = false;
+  private fromNowAt = 0;
   /** False until every box being worked on the layout is open on all its lines: nothing is released, the clock waits. */
   private begun = false;
   private pausedAt: number | null = null;
@@ -183,9 +186,25 @@ export class TimetableRunner {
     if (!tt || tt.timing === 'sequence') return null;
     const now = this.o.scheduler.now();
     if (tt.timing === 'clock') return (this.o.minutesOfDay ?? defaultMinutesOfDay)(now);
-    if (!this.started || !this.begun) return tt.elapsed ? 0 : tt.startAt;
+    // A session clock started from the time now reads this device's clock until it begins, then runs from it.
+    if (!this.started || !this.begun) return this.fromNow ? (this.o.minutesOfDay ?? defaultMinutesOfDay)(now) : tt.elapsed ? 0 : tt.startAt;
     const run = (this.pausedAt ?? now) - this.startedAt - this.pausedTotal;
-    return (tt.elapsed ? 0 : tt.startAt) + (run * tt.speed) / 60_000;
+    return (this.fromNow ? this.fromNowAt : tt.elapsed ? 0 : tt.startAt) + (run * tt.speed) / 60_000;
+  }
+
+  /**
+   * When something will happen (a scheduler time), as the timetable's clock will show it ("09:08"),
+   * so it matches the clock on the box; "in about 4 min" for an operations sequence (no clock).
+   */
+  timeText(at: number): string {
+    const now = this.o.scheduler.now();
+    const c = this.clockNow();
+    if (c === null || !this.tt) {
+      const min = Math.round((at - now) / 60_000);
+      return min < 1 ? 'in under a minute' : `in about ${min} min`;
+    }
+    const speed = this.tt.timing === 'session' ? this.tt.speed : 1;
+    return `at about ${fmt(c + ((at - now) * speed) / 60_000)}`;
   }
 
   /** Moves whose time has already passed (real time timetables), for the Start dialog. */
@@ -279,9 +298,10 @@ export class TimetableRunner {
   }
 
   /** Start the loaded timetable, optionally with positioning moves first and earlier real-time moves skipped. */
-  start(opts: { operator?: RunOperator; past?: PastMode; positioning?: Positioning[] } = {}): void {
+  start(opts: { operator?: RunOperator; past?: PastMode; positioning?: Positioning[]; clockFromNow?: boolean } = {}): void {
     if (!this.tt) return;
     this.operator = opts.operator ?? this.operator;
+    this.fromNow = this.tt.timing === 'session' && !!opts.clockFromNow;
     if (opts.positioning?.length) {
       // After any moves still finishing from a timetable switched away from (they free the locos first).
       const at = this.items.findIndex((x) => !x.finishing);
@@ -560,6 +580,7 @@ export class TimetableRunner {
       if (this.waitingForOpen()) return;
       this.begun = true;
       this.startedAt = this.o.scheduler.now();
+      if (this.fromNow) this.fromNowAt = (this.o.minutesOfDay ?? defaultMinutesOfDay)(this.startedAt);
       this.pausedTotal = 0;
       if (this.pausedAt !== null) this.pausedAt = this.startedAt;
       if (this.layoutBoxes().length) this.note(`${this.layoutBoxes().map((b) => b.name).join(' and ')} open: ${this.tt.name} begins${this.tt.timing === 'session' ? ` (clock ${fmt(this.clockNow())})` : ''}.`);
@@ -935,10 +956,10 @@ export class TimetableRunner {
             it.status =
               s.kind === 'through'
                 ? now < at
-                  ? `On its way from ${name}, through to ${toName}: due to pass ${here} at about ${clock(at)}.`
+                  ? `On its way from ${name}, through to ${toName}: due to pass ${here} ${this.timeText(at)}.`
                   : `Passing ${here} now: send 2 (Train entering section) to ${toName}, then report it passed complete.`
                 : now < at
-                  ? `On its way from ${name}: due at ${here} at about ${clock(at)}.`
+                  ? `On its way from ${name}: due at ${here} ${this.timeText(at)}.`
                   : inc.arrived
                     ? `Arrived at ${here}: send 2-1 to ${name}.`
                     : `Due at ${here} now: report "Train arrived complete" once its tail lamp is in.`;
@@ -1070,7 +1091,7 @@ export class TimetableRunner {
         this.tick();
       }, ms);
     }
-    it.status = `On its way to ${where}: the simulated operator reports it arrived at about ${clock(s.arriveAt ?? this.o.scheduler.now())} (or press "Arrived" yourself).`;
+    it.status = `On its way to ${where}: the simulated operator reports it arrived ${this.timeText(s.arriveAt ?? this.o.scheduler.now())} (or press "Arrived" yourself).`;
   }
 
   /** The road a train sent to a far place arrives on: its timetabled road if free, else the first free road. */
@@ -1193,7 +1214,7 @@ export class TimetableRunner {
     const conn = st.boxes.find((b) => b.id === boxId)?.connections.find((c) => c.id === connId);
     const far = conn?.neighbourName ?? 'the far box';
     const timed = this.tt.timing !== 'sequence';
-    const lead = `Timetable${this.paused ? ' (paused)' : ''}: the section is clear. Trains are offered to you, and departures chosen for you, as they fall due.`;
+    const lead = `Timetable${this.paused ? ' (paused)' : ''}: the section is clear.`;
     for (const it of this.items) {
       if (it.state !== 'waiting' && it.state !== 'active') continue;
       if (it.state === 'active' && it.seg > 0) continue;
@@ -1204,13 +1225,13 @@ export class TimetableRunner {
       const when = timed && it.entry.dep !== null ? `, due at about ${fmt(it.entry.dep)}` : it.positioning ? ', first' : ` (step ${it.step})`;
       const what =
         s.kind === 'outgoing'
-          ? `${who} departs to ${far}${when}: it will be chosen in the Departure panel and Next step will tell you when to offer it.`
+          ? `${who} departs to ${far}${when}.`
           : s.kind === 'through' && s.toConnId === connId
             ? `${who} runs through to ${far}${when}: offer it on once you have accepted it from ${st.boxes.find((b) => b.id === boxId)?.connections.find((c) => c.id === s.fromConnId)?.neighbourName ?? 'the line before'}.`
-            : `${who} from ${far}${when}: ${far} will offer it to you (call attention, then its Is line clear code).`;
+            : `${who} from ${far}${when}: ${far} will offer it.`;
       return `${lead} Next on this line: ${what}`;
     }
-    return `${lead} ${this.endless ? 'Nothing is booked on this line just yet: Endless plans more as it runs.' : 'Nothing more is booked on this line.'}`;
+    return `${lead} ${this.endless ? 'Nothing booked on this line yet.' : 'Nothing more booked on this line.'}`;
   }
 
   guidance(boxId: string): { text: string; connId: string } | null {
@@ -1225,7 +1246,7 @@ export class TimetableRunner {
       if (v.outgoing?.locoId !== it.locoId || v.outgoing.departed || accepted || v.incoming) continue;
       const code = trainCode(set, it.entry.trainTypeId);
       const conn = st.boxes.find((b) => b.id === boxId)?.connections.find((c) => c.id === s.connId);
-      return { connId: s.connId, text: `Timetable: ${it.entry.headcode ? `${it.entry.headcode} ` : ''}${this.locoName(it.locoId)} is due to depart to ${conn?.neighbourName ?? 'the next box'}. Offer it: call attention (${signalCode(set, 'call_attention')}), then ${code || 'its Is line clear code'}.` };
+      return { connId: s.connId, text: `Timetable: ${it.entry.headcode ? `${it.entry.headcode} ` : ''}${this.locoName(it.locoId)} is due to depart to ${conn?.neighbourName ?? 'the next box'}. Call attention (${signalCode(set, 'call_attention')}), then send ${code || 'its Is line clear code'}.` };
     }
     return null;
   }
@@ -1300,12 +1321,6 @@ export class TimetableRunner {
   private emit(): void {
     this.events.emit('change', undefined);
   }
-}
-
-/** "19:49:10" (local time) for a scheduler time. */
-function clock(t: number): string {
-  const d = new Date(t);
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 function trainName(it: RunItem): string {

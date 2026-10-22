@@ -285,8 +285,11 @@ export function isPoints(j: Junction): boolean {
 
 // ---------------------------------------------------------------------------- where a signal is drawn
 
-/** The point beside the track where a signal stands (grid units), and the way trains run there. */
-export function signalPoint(state: AppState, layout: Layout, s: { circuitId: string; end: 0 | 1; back: number }, minUnits = 0.7): { x: number; y: number; dx: number; dy: number } | null {
+/**
+ * Where a signal stands on the drawn plan (grid units) and the way trains run there. `extraUnits`
+ * moves it further back along the track (the diagram does this to keep posts clear of labels).
+ */
+export function signalPoint(state: AppState, layout: Layout, s: { circuitId: string; end: 0 | 1; back: number }, minUnits = 0.7, extraUnits = 0): { x: number; y: number; dx: number; dy: number } | null {
   const plan = layout.trackPlan;
   const c = findCircuit(plan, s.circuitId);
   if (!c) return null;
@@ -302,7 +305,7 @@ export function signalPoint(state: AppState, layout: Layout, s: { circuitId: str
     total += l;
   }
   const metres = circuitLength(state, layout, c).metres || 1;
-  let d = Math.min(total * 0.92, Math.max(Math.min(minUnits, total / 2), (s.back / metres) * total));
+  let d = Math.min(total * (extraUnits ? 0.95 : 0.92), Math.max(Math.min(minUnits, total / 2), (s.back / metres) * total) + extraUnits);
   for (let i = 1; i < pts.length; i++) {
     const l = segs[i - 1];
     if (d <= l || i === pts.length - 1) {

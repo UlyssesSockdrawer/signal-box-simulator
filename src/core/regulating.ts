@@ -135,8 +135,8 @@ export class BoxRegulator {
     const first = firsts.find((x) => !x.held) ?? firsts[0];
     const lowerText = lower.map((x) => `${x.line}'s ${words(x)}`).join(' and ');
     const take = first.held
-      ? `${first.line} is holding ${words(first)}, a higher class: let it go first. Answer ${first.line} when it offers the train again, and do not accept ${lowerText} before it.`
-      : `${first.line} is offering ${words(first)}, a higher class: accept it first (repeat ${first.code} to ${first.line}). Let ${lowerText} wait: do not reply to it yet.`;
+      ? `${first.line} is holding ${words(first)}, a higher class: accept it first when it is offered again. Don’t accept ${lowerText} before it.`
+      : `Accept ${first.line}’s ${words(first)} first (higher class): repeat ${first.code}. Let ${lowerText} wait.`;
     return { text: `Regulating: ${take}`, connId: first.connId };
   }
 

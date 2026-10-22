@@ -13,6 +13,8 @@ import type { BoxDef, ConnectionDef, InstrumentState, Loco } from '../../core/ty
 import { getBoxRuntime, takeFinishedScore, takeOpeningMode, type BoxRuntime, type ConnRuntime } from '../boxRuntime';
 import type { ThroughWorkings } from '../../core/throughTrains';
 import { drawDiagram, hasDiagram, setOccupied, setRoutes, setTrainLabels, type DiagramLabels } from '../planDiagram';
+import { enableZoom, type ZoomControl } from '../diagramZoom';
+import { changeBoxMode } from '../openBox';
 import { reportedOccupancy } from '../../core/routing';
 import { showScoreSheet } from '../scoreSheet';
 import { activeCodeSet, locationText, locoFullName, locoName, trainTypeName, type Ctx, type Screen } from '../app';
@@ -255,14 +257,31 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     }
     const b = st.boxes.find((x) => x.id === box.id) ?? box;
     const layout = b.layoutId ? findLayout(st, b.layoutId) : undefined;
-    const key = JSON.stringify([layout?.trackPlan, layout?.name, layout?.places.map((y) => y.name), st.settings.diagramLabels, st.boxes.map((x) => [x.id, x.shortName, x.connections.map((c) => [c.id, c.neighbourName, c.neighbourShort])])]);
+    const key = JSON.stringify([layout?.trackPlan, layout?.name, layout?.places.map((y) => y.name), st.settings.diagramLabels, st.settings.showRoutes, runtime.mode, st.boxes.map((x) => [x.id, x.shortName, x.connections.map((c) => [c.id, c.neighbourName, c.neighbourShort])])]);
     if (key === diagramKey) return;
     diagramKey = key;
+    // Zoom (wheel, pinch, or these buttons), set routes on or off (play mode), and what the track is labelled with.
+    let zoom: ZoomControl | null = null;
+    const zoomOut = h('button', { class: 'dg-tool', type: 'button', title: 'Zoom out', 'aria-label': 'Zoom out', on: { click: () => zoom?.zoomBy(1 / 1.5) } }, '−');
+    const zoomFit = h('button', { class: 'dg-tool', type: 'button', title: 'Show the whole diagram', on: { click: () => zoom?.reset() } }, 'Fit');
+    const zoomIn = h('button', { class: 'dg-tool', type: 'button', title: 'Zoom in (or scroll, or pinch)', 'aria-label': 'Zoom in', on: { click: () => zoom?.zoomBy(1.5) } }, '+');
     const labelsSeg = h(
       'div',
-      { class: 'dg-tools', role: 'group', 'aria-label': 'Track labels' },
-      ...(['none', 'codes', 'names'] as DiagramLabels[]).map((v) =>
-        h('button', { class: 'dg-tool', type: 'button', 'aria-pressed': String(st.settings.diagramLabels === v), on: { click: () => store.update((s) => { s.settings.diagramLabels = v; }) } }, v === 'none' ? 'No labels' : v === 'codes' ? 'Codes' : 'Names'),
+      { class: 'dg-toolbar' },
+      h('div', { class: 'dg-tools', role: 'group', 'aria-label': 'Zoom' }, zoomOut, zoomFit, zoomIn),
+      runtime.mode === 'play'
+        ? h(
+            'div',
+            { class: 'dg-tools', role: 'group', 'aria-label': 'Routes' },
+            h('button', { class: 'dg-tool', type: 'button', 'aria-pressed': String(st.settings.showRoutes), title: 'Light up the routes set for trains', on: { click: () => store.update((s) => { s.settings.showRoutes = !s.settings.showRoutes; }) } }, 'Routes'),
+          )
+        : null,
+      h(
+        'div',
+        { class: 'dg-tools', role: 'group', 'aria-label': 'Track labels' },
+        ...(['none', 'codes', 'names'] as DiagramLabels[]).map((v) =>
+          h('button', { class: 'dg-tool', type: 'button', 'aria-pressed': String(st.settings.diagramLabels === v), on: { click: () => store.update((s) => { s.settings.diagramLabels = v; }) } }, v === 'none' ? 'No labels' : v === 'codes' ? 'Codes' : 'Names'),
+        ),
       ),
     );
     const editPlan = (label: string) =>
@@ -282,6 +301,10 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     // The layout's signals as planned (Layout configurator → Signalling), with their lever numbers. They are worked from v0.3.30.
     const svgEl = drawDiagram(st, layout, { boxId: box.id, labels: st.settings.diagramLabels, signals: true });
     svgNow = svgEl;
+    if (svgEl) zoom = enableZoom(svgEl, `box:${box.id}`, (v) => {
+      zoomOut.toggleAttribute('disabled', v.scale <= 1.001);
+      zoomFit.toggleAttribute('disabled', v.scale <= 1.001);
+    });
     const tappable = runtime.mode === 'model' && st.settings.modelOccupancy && !!runtime.railway;
     replace(
       diagramEl,
@@ -310,7 +333,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const sim = runtime.sim;
     if (!sim) return;
     const r = sim.routes();
-    setRoutes(svgEl, r.circuits, r.junctions.map((j) => j.junctionId));
+    if (st.settings.showRoutes) setRoutes(svgEl, r.circuits, r.junctions.map((j) => j.junctionId));
+    else setRoutes(svgEl, [], []);
     setTrainLabels(st, layout, svgEl, sim.trainLabels().map((t) => ({ circuitId: t.circuitId, text: st.roster.find((l) => l.id === t.locoId)?.number || '?' })));
   };
   /** Model railway mode, occupancy shown: a tap marks a track circuit occupied, or clears a mark. */
@@ -336,7 +360,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     h('h1', { class: 'nameboard' }, box.name),
     clock,
     h('span', { class: `chip ${learner() ? 'chip-learner' : 'chip-strict'}` }, learner() ? 'Learner' : 'Strict'),
-    h('span', { class: `chip chip-mode`, title: runtime.mode === 'play' ? 'Signaller play mode: simulated trains on the track plan' : 'Model railway mode: you report where your trains get to' }, runtime.mode === 'play' ? 'Play' : 'Model railway'),
+    h('button', { class: `chip chip-mode`, type: 'button', title: `${runtime.mode === 'play' ? 'Signaller play mode: simulated trains on the track plan' : 'Model railway mode: you report where your trains get to'}. Press to change mode.`, on: { click: () => changeBoxMode(ctx, box) } }, runtime.mode === 'play' ? 'Play ▾' : 'Model railway ▾'),
     shelfMap,
     h(
       'div',
@@ -1456,14 +1480,14 @@ function connectionUI(
   const ttHint = (): string => {
     const r = runner();
     const at = r?.autoArrivalAt(box.id, conn.id);
-    const auto = at ? `Timetable: the simulated fiddle yard operator reports it arrived at about ${clockTime(at, true)}, or press the arrived button yourself.` : '';
+    const auto = at && r ? `Timetable: reported arrived ${r.timeText(at)} (or press Arrived yourself).` : '';
     // When a timetabled train on its way should reach your box (until there is track to watch it on).
     const due = r?.dueAtBox(box.id, conn.id);
     const inc = c.view.incoming;
     const soon = due && inc && !inc.arrived
       ? Date.now() < due.at
-        ? `Timetable: due to ${due.through ? 'pass' : 'reach'} ${box.name} at about ${clockTime(due.at, true)}.`
-        : `Timetable: it should be ${due.through ? 'passing' : 'at'} ${box.name} now.`
+        ? `Timetable: due ${r!.timeText(due.at)}.`
+        : `Timetable: due ${due.through ? 'to pass' : 'to arrive'} now.`
       : '';
     return auto || soon;
   };
@@ -1486,7 +1510,7 @@ function connectionUI(
         const place = st().layouts.flatMap((l) => l.places).find((p) => p.id === conn.placeId)?.name ?? conn.neighbourName;
         text = text.replace(
           drive,
-          `The simulated fiddle yard operator brings ${loco ? locoName(loco) : 'the train'} into ${place} and reports it arrived at about ${clockTime(at, true)} (or press the arrived button yourself if it gets there first). Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`,
+          `${loco ? locoName(loco) : 'The train'} is brought into ${place} for you (arrives ${r!.timeText(at)}). Then answer 1 and repeat 2-1.`,
         );
         return { text, hint: lastHint };
       }
@@ -1494,14 +1518,13 @@ function connectionUI(
       if (sim) {
         if (drive && text.includes(drive)) {
           const place = st().layouts.flatMap((l) => l.places).find((p) => p.id === conn.placeId)?.name ?? conn.neighbourName;
-          text = text.replace(drive, `The train runs to ${place} on its own, and the railway reports it arrived. Then answer ${conn.neighbourName}'s call attention and repeat Train out of section.`);
+          text = text.replace(drive, `The train runs to ${place} by itself. Then answer 1 and repeat 2-1.`);
         }
         text = text
-          .replace(/Drive (.+?) into (.+?)\. When it has arrived complete with its tail lamp, press "Train arrived"/, '$1 runs into $2 on its own. When the track circuits show it has arrived complete, press "Train arrived"')
-          .replace(/Then drive (.+?) into the station\./, '$1 runs in on its own.')
-          .replace('Clear your starting signal on the layout. When the train leaves, send 2', 'The starting signal is cleared for you (no levers yet). As the train enters the section, send 2')
-          .replace(/clear your starting signal, and when the train (leaves|departs) send 2/, 'the starting signal is then cleared for you; as the train enters the section send 2')
-          .replace('Give it to the driver (on the layout), ', '');
+          .replace(/Drive (.+?) into (.+?)\. When it is in complete with its tail lamp, press "Train arrived"/, '$1 runs into $2 by itself. When the track circuits show it in, press "Train arrived"')
+          .replace(/Then drive (.+?) into the station\./, '$1 runs in by itself.')
+          .replace('Clear your signal, and send 2 (Train entering section) as the train leaves.', 'Your signal clears by itself; send 2 (Train entering section) as the train leaves.')
+          .replace(/(Hand (it|the token) to the driver), clear your signal, and send 2 as the train leaves\./, '$1; send 2 as the train leaves.');
       }
       if (c.view.guidanceIdle) text = r?.lineText(box.id, conn.id) ?? text;
       // Once you have reported the train arrived (or passed, for a through train), the far box still
@@ -1511,8 +1534,8 @@ function connectionUI(
         const l = inc.locoId ? st().roster.find((x) => x.id === inc.locoId) : undefined;
         const passed = workings.through(conn.id)?.stage === 'passed';
         const v = c.view;
-        const token = v.mode === 'token' && v.tokenInHand ? ' Put the token back in the instrument first (Replace token).' : '';
-        text = `${l ? locoName(l) : 'The train'} has ${passed ? 'passed' : 'arrived'} complete with its tail lamp.${token} Call attention (1), then send 2-1 (Train out of section) to ${conn.neighbourName}${v.mode === 'ab' && v.myInstrument !== 'LB' ? ', and put your instrument back to LINE BLOCKED' : ''}.`;
+        const token = v.mode === 'token' && v.tokenInHand ? ' Press "Replace token" first.' : '';
+        text = `${l ? locoName(l) : 'The train'} has ${passed ? 'passed' : 'arrived'} complete.${token} Call attention (1), then send 2-1 to ${conn.neighbourName}${v.mode === 'ab' && v.myInstrument !== 'LB' ? ', and put your instrument to LINE BLOCKED' : ''}.`;
       }
       return { text, hint: lastHint || ttHint() };
     },
@@ -1556,7 +1579,7 @@ function sidePanel(ctx: Ctx, box: BoxDef): { el: HTMLElement; toggle(tab: SideTa
   const render = () => {
     if (el.hidden) return;
     for (const b of tabs.querySelectorAll<HTMLElement>('.side-tab')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    replace(body, tab === 'codes' ? codeReference(ctx, true) : tab === 'timetable' ? timetablePanel(ctx, box) : layoutEditor(ctx, true, ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId ?? ""));
+    replace(body, h('div', { class: 'side-case' }, tab === 'codes' ? codeReference(ctx, true) : tab === 'timetable' ? timetablePanel(ctx, box) : layoutEditor(ctx, true, ctx.store.state.boxes.find((b) => b.id === boxId)?.layoutId ?? '')));
   };
   // Data changes rebuild the panel once focus has moved on, keeping the user's place.
   const rerender = safeRerender(() => body, render, () => body);

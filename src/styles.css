@@ -1379,7 +1379,7 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
    the track diagram board; the score chip and score sheet.
    ===================================================================== */
 .desk { background: var(--shelf-bg); }
-.desk-panel {
+:is(.desk-panel, .side-case) {
   background: var(--btn-bg);
   border: 2px solid var(--btn-border);
   border-radius: 10px;
@@ -1387,33 +1387,33 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
   box-shadow: 0 4px 0 var(--ink);
   padding: 14px;
 }
-.desk-panel .label, .desk-panel .muted, .desk-panel .reg-loc-meta, .desk-panel .log time { color: var(--btn-muted); }
-.desk-panel h2.label { color: var(--btn-fg); }
-.desk-panel .field label, .desk-panel .quick-row label, .desk-panel .line-bar label { color: var(--btn-fg); }
-.desk-panel input[type='text'], .desk-panel input[type='number'], .desk-panel select {
+:is(.desk-panel, .side-case) .label, :is(.desk-panel, .side-case) .muted, :is(.desk-panel, .side-case) .reg-loc-meta, :is(.desk-panel, .side-case) .log time { color: var(--btn-muted); }
+:is(.desk-panel, .side-case) h2.label { color: var(--btn-fg); }
+:is(.desk-panel, .side-case) .field label, :is(.desk-panel, .side-case) .quick-row label, :is(.desk-panel, .side-case) .line-bar label { color: var(--btn-fg); }
+:is(.desk-panel, .side-case) input[type='text'], :is(.desk-panel, .side-case) input[type='number'], :is(.desk-panel, .side-case) select {
   background: var(--shelf-bg);
   color: var(--btn-fg);
   border: 1px solid var(--btn-border);
 }
-.desk-panel input:hover, .desk-panel select:hover { border-color: var(--btn-hover); }
-.desk-panel select option { background: var(--shelf-bg); color: var(--btn-fg); }
-.desk-panel input::placeholder { color: var(--btn-muted); opacity: 0.8; }
-.desk-panel .btn:not(.primary) { background: var(--shelf-bg); }
-.desk-panel .btn.danger.armed { background: var(--signal-red); color: #fff; }
-.desk-panel .status.go { color: #9be3b4; }
-.desk-panel .train-card { border-color: var(--btn-border); background: var(--shelf-bg); }
-.desk-panel .dcc { background: var(--ink); color: #f5f3ec; border: 1px solid var(--btn-border); }
-.desk-panel .working-editor { border-color: var(--btn-border); }
-.desk-panel .reg-loc { border-top-color: var(--btn-border); }
-.desk-panel .yard-list dd.muted, .desk-panel .yard-list dt.muted { color: var(--btn-muted); }
-.desk-panel .log li { border-bottom: 1px solid color-mix(in srgb, var(--btn-border) 60%, transparent); border-radius: 0; }
-.desk-panel .log-bellOut span { color: #e9cf8a; }
-.desk-panel .log-hint { background: rgba(230, 180, 80, 0.16); border-radius: 4px; }
-.desk-panel .log-irregularity span { color: var(--btn-danger-fg); }
-.desk-panel .log-status span, .desk-panel .log-action span { color: var(--btn-muted); }
-.desk-panel .log-register span { color: var(--btn-fg); }
-.desk-panel .status.held { color: #e9cf8a; }
-.desk-panel :focus-visible { outline-color: var(--btn-hover); }
+:is(.desk-panel, .side-case) input:hover, :is(.desk-panel, .side-case) select:hover { border-color: var(--btn-hover); }
+:is(.desk-panel, .side-case) select option { background: var(--shelf-bg); color: var(--btn-fg); }
+:is(.desk-panel, .side-case) input::placeholder { color: var(--btn-muted); opacity: 0.8; }
+:is(.desk-panel, .side-case) .btn:not(.primary) { background: var(--shelf-bg); }
+:is(.desk-panel, .side-case) .btn.danger.armed { background: var(--signal-red); color: #fff; }
+:is(.desk-panel, .side-case) .status.go { color: #9be3b4; }
+:is(.desk-panel, .side-case) .train-card { border-color: var(--btn-border); background: var(--shelf-bg); }
+:is(.desk-panel, .side-case) .dcc { background: var(--ink); color: #f5f3ec; border: 1px solid var(--btn-border); }
+:is(.desk-panel, .side-case) .working-editor { border-color: var(--btn-border); }
+:is(.desk-panel, .side-case) .reg-loc { border-top-color: var(--btn-border); }
+:is(.desk-panel, .side-case) .yard-list dd.muted, :is(.desk-panel, .side-case) .yard-list dt.muted { color: var(--btn-muted); }
+:is(.desk-panel, .side-case) .log li { border-bottom: 1px solid color-mix(in srgb, var(--btn-border) 60%, transparent); border-radius: 0; }
+:is(.desk-panel, .side-case) .log-bellOut span { color: #e9cf8a; }
+:is(.desk-panel, .side-case) .log-hint { background: rgba(230, 180, 80, 0.16); border-radius: 4px; }
+:is(.desk-panel, .side-case) .log-irregularity span { color: var(--btn-danger-fg); }
+:is(.desk-panel, .side-case) .log-status span, :is(.desk-panel, .side-case) .log-action span { color: var(--btn-muted); }
+:is(.desk-panel, .side-case) .log-register span { color: var(--btn-fg); }
+:is(.desk-panel, .side-case) .status.held { color: #e9cf8a; }
+:is(.desk-panel, .side-case) :focus-visible { outline-color: var(--btn-hover); }
 @media (max-width: 999px) {
   .desk { padding-top: 6px; }
   .desk-tabs { border-bottom-color: var(--btn-border); }
@@ -1456,6 +1456,13 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .dg-circuit.occupied .dg-line { stroke: var(--signal-red); }
 .dg-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; opacity: 0.55; transition: opacity 0.15s; }
 .dg-board:hover .dg-tools, .dg-tools:focus-within { opacity: 1; }
+/* The box's diagram: zoom, routes and labels, grouped along the top right. */
+.dg-toolbar { position: absolute; top: 4px; right: 4px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; opacity: 0.55; transition: opacity 0.15s; }
+.dg-board:hover .dg-toolbar, .dg-toolbar:focus-within { opacity: 1; }
+.dg-toolbar .dg-tools { position: static; opacity: 1; }
+.dg-tool:disabled { opacity: 0.45; cursor: default; }
+.dg-svg.dg-zoomed { cursor: grab; }
+.dg-svg.dg-zoomed:active { cursor: grabbing; }
 .dg-tool {
   font: inherit; font-size: 0.72rem; font-weight: 700; min-height: 28px; padding: 2px 8px; cursor: pointer;
   border: 1px solid #0c0a08; background: #f6f1e3; color: var(--enamel-ink); border-radius: 3px;
@@ -1469,12 +1476,14 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
   .dg-board { overflow-x: auto; overscroll-behavior-x: contain; }
   .dg-svg { width: max(100%, 640px); max-height: none; }
   .dg-tools { position: static; justify-content: flex-end; opacity: 1; margin-top: 4px; }
+  .dg-toolbar { position: static; opacity: 1; margin-top: 4px; }
+  .dg-toolbar .dg-tools { margin-top: 0; }
 }
 @media (max-height: 560px) and (orientation: landscape) {
   .diagram-shelf { padding-block: 4px; }
   .dg-board { border-width: 5px; padding: 2px 6px; }
   .dg-svg { max-height: 22vh; }
-  .dg-tools { display: none; }
+  .dg-tools, .dg-toolbar { display: none; }
   .score-word { display: none; }
   .score-chip { min-height: 36px; padding: 2px 10px; }
   .head-tools { min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -2089,3 +2098,31 @@ details.loco[open] > .loco-jobs { background: var(--surface); border: 1px solid 
 .sg-points select { max-width: 100%; }
 .dg-sig-label { font: 700 8px/1 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; fill: #1d2124; paint-order: stroke; stroke: #ece4cf; stroke-width: 2px; stroke-linejoin: round; }
 .dg-sig.selected .dg-sig-label { fill: #8a5a00; }
+button.chip-mode { cursor: pointer; border: 1px solid transparent; line-height: inherit; }
+button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink); }
+
+/* The box's side panel (Timetable, Bell codes, Trains in places): a teak shelf with its contents
+   in a mahogany case, like the desk, so liveries recolour it too. */
+.side-panel { background: var(--shelf-bg); border-left: 3px solid var(--ink); }
+.side-head { background: var(--shelf-bg); border-bottom: 3px solid var(--ink); }
+.side-head .btn:not([aria-selected='true']) { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-border); }
+.side-head .side-tab[aria-selected='true'] { background: var(--btn-primary-bg); color: var(--btn-primary-fg); border-color: var(--ink); }
+.side-body { padding: 12px; }
+.side-case { display: flex; flex-direction: column; gap: 12px; }
+.side-case h2, .side-case h3, .side-case .ttp-title { color: var(--btn-fg); }
+.side-case .help, .side-case small, .side-case .ttp-status, .side-case .ttp-log time { color: var(--btn-muted); }
+.side-case .ttp-run, .side-case .ttp-item { background: var(--shelf-bg); border-color: var(--btn-border); color: var(--btn-fg); }
+.side-case .ttp-item.active { border-left-color: var(--brass); }
+.side-case .ttp-item.needs { border-left-color: #6fa8dc; background: color-mix(in srgb, var(--shelf-bg) 80%, #1d4f7a); }
+.side-case .ttp-state { border-color: var(--btn-border); color: var(--btn-muted); }
+.side-case .ttp-state.active { border-color: #e9cf8a; color: #e9cf8a; }
+.side-case .ttp-state.done { border-color: #9be3b4; color: #9be3b4; }
+.side-case .ttp-late { color: #ff9a8a; }
+.side-case .ttp-log li { border-bottom-color: color-mix(in srgb, var(--btn-border) 60%, transparent); }
+.side-case .ttp-endless { border-left-color: var(--brass); }
+.side-case .check { color: var(--btn-fg); }
+.side-case table, .side-case th, .side-case td { color: var(--btn-fg); border-color: var(--btn-border); }
+.side-case th { color: var(--btn-muted); }
+.side-case .code-play, .side-case .btn.small:not(.primary) { background: var(--shelf-bg); color: var(--btn-fg); border-color: var(--btn-border); }
+.side-case a { color: var(--btn-hover); }
+.side-case .panel, .side-case .card, .side-case .yard, .side-case fieldset { background: var(--shelf-bg); border-color: var(--btn-border); color: var(--btn-fg); }

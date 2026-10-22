@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   scoring: true,
   boxDiagram: false,
   diagramLabels: 'codes',
+  showRoutes: true,
   units: 'imperial',
   simSpeed: 13.4112, // 30 mph
   timeScale: 1,

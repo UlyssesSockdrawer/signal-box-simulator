@@ -347,6 +347,8 @@ export interface Settings {
   modelOccupancy: boolean;
   /** What the diagram board labels its track circuits with. */
   diagramLabels: 'none' | 'codes' | 'names';
+  /** Show set routes (lit up along the track) on the box's diagram board, in signaller play mode. */
+  showRoutes: boolean;
 }
 
 // ---------------------------------------------------------------------------

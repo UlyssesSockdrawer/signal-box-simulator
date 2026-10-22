@@ -301,70 +301,99 @@ function localBox(g: SVGGElement): Box {
   return b;
 }
 
-/** A local box turned, scaled and moved to the diagram: the box around its corners. */
-function screenBox(b: Box, post: Post, shift: number): Box {
-  const r = (post.rot * Math.PI) / 180;
-  const c = Math.cos(r) * SCALE;
-  const s = Math.sin(r) * SCALE;
-  const ox = post.bx - post.dx * shift;
-  const oy = post.by - post.dy * shift;
-  const out = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-  for (const [x, y] of [
-    [b.x0, b.y0],
-    [b.x1, b.y0],
-    [b.x0, b.y1],
-    [b.x1, b.y1],
-  ]) {
-    const sx = ox + x * c - y * s;
-    const sy = oy + x * s + y * c;
-    out.x0 = Math.min(out.x0, sx);
-    out.x1 = Math.max(out.x1, sx);
-    out.y0 = Math.min(out.y0, sy);
-    out.y1 = Math.max(out.y1, sy);
-  }
-  return out;
+/** A box turned to any angle: centre, unit axes and half sizes (screen pixels). */
+export interface Obb {
+  cx: number;
+  cy: number;
+  ux: number;
+  uy: number;
+  vx: number;
+  vy: number;
+  ex: number;
+  ey: number;
 }
 
-const overlap = (a: Box, b: Box, pad: number) => Math.max(0, Math.min(a.x1, b.x1) + pad - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) + pad - Math.max(a.y0, b.y0));
+export function obbOfBox(b: Box): Obb {
+  return { cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, ux: 1, uy: 0, vx: 0, vy: 1, ex: (b.x1 - b.x0) / 2, ey: (b.y1 - b.y0) / 2 };
+}
+
+/** A post's own box, turned with it. */
+function obbOfPost(b: Box, post: Post): Obb {
+  const r = (post.rot * Math.PI) / 180;
+  const ux = Math.cos(r);
+  const uy = Math.sin(r);
+  const lx = ((b.x0 + b.x1) / 2) * SCALE;
+  const ly = ((b.y0 + b.y1) / 2) * SCALE;
+  return { cx: post.bx + lx * ux - ly * uy, cy: post.by + lx * uy + ly * ux, ux, uy, vx: -uy, vy: ux, ex: ((b.x1 - b.x0) / 2) * SCALE, ey: ((b.y1 - b.y0) / 2) * SCALE };
+}
+
+/** Do two boxes overlap (with `pad` pixels to spare)? Separating axes. */
+export function obbHit(a: Obb, b: Obb, pad: number): boolean {
+  const dx = a.cx - b.cx;
+  const dy = a.cy - b.cy;
+  for (const [lx, ly] of [
+    [a.ux, a.uy],
+    [a.vx, a.vy],
+    [b.ux, b.uy],
+    [b.vx, b.vy],
+  ]) {
+    const d = Math.abs(dx * lx + dy * ly);
+    const ra = a.ex * Math.abs(a.ux * lx + a.uy * ly) + a.ey * Math.abs(a.vx * lx + a.vy * ly);
+    const rb = b.ex * Math.abs(b.ux * lx + b.uy * ly) + b.ey * Math.abs(b.vx * lx + b.vy * ly);
+    if (d > ra + rb + pad) return false;
+  }
+  return true;
+}
 
 /**
- * Every signal on the plan, post by post. `obstacles` are the diagram's labels and `lines` its track
- * (screen boxes): each post stands back along the line, up to a few track widths, until it is clear
- * of them and of the posts already placed.
+ * Every signal on the plan, post by post. `obstacles` are the diagram's fixed tags and markers and
+ * `lines` its track (screen boxes). Each post steps back along its track (following curves), up to
+ * four grid squares, until it is clear of them and of the posts already placed. Returns the layer
+ * and where the posts ended up, so circuit names can make room for them.
  */
-export function drawSignals(state: AppState, layout: Layout, X: (v: number) => number, Y: (v: number) => number, opts: SignalDrawOptions, obstacles: Box[] = [], lines: Box[] = []): SVGGElement {
+export function drawSignals(state: AppState, layout: Layout, X: (v: number) => number, Y: (v: number) => number, opts: SignalDrawOptions, obstacles: Box[] = [], lines: Box[] = []): { layer: SVGGElement; posts: Obb[] } {
   const layer = svg('g', { class: 'dg-signals' });
   const groups = new Map<string, PlanSignal[]>();
   for (const sg of layout.trackPlan.signals ?? []) {
     const k = postKey(sg);
     groups.set(k, [...(groups.get(k) ?? []), sg]);
   }
-  const posts: Array<{ post: Post; local: Box; size: number }> = [];
-  for (const arms of groups.values()) {
-    const at = signalPoint(state, layout, arms[0], 1.2);
-    if (!at) continue;
-    const post = drawPost(state, layout, arms, at, X, Y, opts);
-    posts.push({ post, local: localBox(post.g), size: arms.length });
-  }
-  // Big posts (brackets) first: they have the least room to move.
-  posts.sort((a, b) => b.size - a.size);
-  const taken = [...obstacles];
-  const step = (X(1) - X(0)) / 3;
-  for (const { post, local } of posts) {
-    let best = { shift: 0, cost: Infinity, box: screenBox(local, post, 0) };
+  // Brackets first (they have the least room to move), then the rest nearest their circuit's end
+  // first, so a signal further out (a distant) steps back clear of the one before it.
+  const list = [...groups.values()].sort((a, b) => Number(b.length > 1) - Number(a.length > 1) || a[0].back - b[0].back);
+  const fixed = obstacles.map(obbOfBox);
+  const track = lines.map(obbOfBox);
+  const placed: Obb[] = [];
+  for (const arms of list) {
+    let best: { post: Post; box: Obb; cost: number } | null = null;
+    let last = '';
+    let end: { at: NonNullable<ReturnType<typeof signalPoint>>; i: number } | null = null;
     for (let i = 0; i <= 12; i++) {
-      const shift = i * step;
-      const box = screenBox(local, post, shift);
-      const hit = taken.reduce((sum, o) => sum + overlap(box, o, 6), 0) + lines.reduce((sum, o) => sum + overlap(box, o, 0), 0);
-      const cost = hit + i * 2;
-      if (cost < best.cost) best = { shift, cost, box };
-      if (hit === 0) break; // clear
+      let at: ReturnType<typeof signalPoint> = end ? null : signalPoint(state, layout, arms[0], 1.2, i / 3);
+      if (!end && !at) break;
+      const where = at ? `${at.x.toFixed(2)},${at.y.toFixed(2)}` : '';
+      if (at && where === last) {
+        // Out of this circuit: carry on back in a straight line (onto the track before it).
+        end = { at, i: i - 1 };
+        at = null;
+      }
+      if (end) at = { ...end.at, x: end.at.x - end.at.dx * ((i - end.i) / 3), y: end.at.y - end.at.dy * ((i - end.i) / 3) };
+      if (!at) break;
+      last = where;
+      const post = drawPost(state, layout, arms, at, X, Y, opts);
+      const box = obbOfPost(localBox(post.g), post);
+      const hits = fixed.filter((o) => obbHit(box, o, 5)).length * 10 + placed.filter((o) => obbHit(box, o, 5)).length * 10 + track.filter((o) => obbHit(box, o, 0)).length;
+      const cost = hits * 10 + i;
+      if (!best || cost < best.cost) best = { post, box, cost };
+      if (!hits) break; // clear
     }
-    taken.push(best.box);
-    post.g.setAttribute('transform', `translate(${(post.bx - post.dx * best.shift).toFixed(1)} ${(post.by - post.dy * best.shift).toFixed(1)}) rotate(${post.rot.toFixed(1)}) scale(${SCALE})`);
+    if (!best) continue;
+    placed.push(best.box);
+    const { post } = best;
+    post.g.setAttribute('transform', `translate(${post.bx.toFixed(1)} ${post.by.toFixed(1)}) rotate(${post.rot.toFixed(1)}) scale(${SCALE})`);
     layer.append(post.g);
   }
-  return layer;
+  return { layer, posts: placed };
 }
 
 /** One signal on its own, drawn as on the diagram, for trains running left to right (tutorial, keys). */

@@ -17,7 +17,7 @@ import {
   TURNTABLE_RADIUS,
   type Pt,
 } from '../core/trackPlan';
-import { drawSignals, type Box } from './signalDrawing';
+import { drawSignals, obbHit, obbOfBox, type Box, type Obb } from './signalDrawing';
 import type { AppState, ExitTarget, Junction, Layout, MarkerBox, TrackCircuit } from '../core/types';
 
 /*
@@ -229,7 +229,14 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
       const level = a.y === z.y;
       const text = opts.labels === 'names' ? circuitLabel(c) : c.code;
       const ly = platformUp ? my + FONT + 8 : my - 9;
-      labels.append(svg('text', { x: level ? mx : mx + 9, y: level ? ly : my, 'text-anchor': level ? 'middle' : 'start', class: 'dg-label', fill: col }, text));
+      // Tagged with its stretch of line, so it can slide along to make room for signals.
+      labels.append(
+        svg(
+          'text',
+          { x: level ? mx : mx + 9, y: level ? ly : my, 'text-anchor': level ? 'middle' : 'start', class: 'dg-label dg-clabel', fill: col, 'data-seg': [X(a.x), Y(a.y), X(z.x), Y(z.y)].map((v) => v.toFixed(1)).join(','), 'data-below': platformUp ? '1' : undefined },
+          text,
+        ),
+      );
     }
   }
 
@@ -316,7 +323,10 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
         }
       }
     }
-    sigLayer.append(drawSignals(state, layout, X, Y, { selected: opts.selectedSignal, boxId: box?.id }, labelBoxes(labels), lines));
+    // Signals are placed the same whatever labels are showing; circuit names then make room for them.
+    const drawn = drawSignals(state, layout, X, Y, { selected: opts.selectedSignal, boxId: box?.id }, labelBoxes(labels), lines);
+    sigLayer.append(drawn.layer);
+    makeRoom(labels, drawn.posts);
   }
   return s;
 }
@@ -341,16 +351,63 @@ function labelBoxes(labels: SVGGElement): Box[] {
       out.push({ x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
       continue;
     }
-    const x = n(el, 'x');
-    const y = n(el, 'y');
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    const w = (el.textContent ?? '').length * FONT * 0.62;
-    const anchor = el.getAttribute('text-anchor');
-    const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
-    if (el.getAttribute('transform')?.includes('rotate')) out.push({ x0: x - FONT * 0.7, y0: y - w, x1: x + FONT * 0.7, y1: y + w });
-    else out.push({ x0, y0: y - FONT, x1: x0 + w, y1: y + 3 });
+    if (el.classList.contains('dg-clabel')) continue; // circuit names move for the signals instead
+    const tb = textBox(el);
+    if (tb) out.push(tb);
   }
   return out;
+}
+
+/** Roughly where a label's text lies (no layout needed). */
+function textBox(el: Element, x = Number(el.getAttribute('x')), y = Number(el.getAttribute('y')), anchor = el.getAttribute('text-anchor')): Box | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const w = (el.textContent ?? '').length * FONT * 0.62;
+  const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+  if (el.getAttribute('transform')?.includes('rotate')) return { x0: x - FONT * 0.7, y0: y - w, x1: x + FONT * 0.7, y1: y + w };
+  return { x0, y0: y - FONT + 2, x1: x0 + w, y1: y + 2 };
+}
+
+/**
+ * Slide each circuit name along its stretch of line (or to the other side of it) until it is clear
+ * of the signals, so the signals never move when labels are switched on, off or to names.
+ */
+function makeRoom(labels: SVGGElement, posts: Obb[]): void {
+  if (!posts.length) return;
+  const others: Obb[] = [];
+  for (const el of labels.querySelectorAll('rect')) {
+    const x = Number(el.getAttribute('x'));
+    const y = Number(el.getAttribute('y'));
+    if (Number.isFinite(x) && Number.isFinite(y)) others.push(obbOfBox({ x0: x, y0: y, x1: x + Number(el.getAttribute('width')), y1: y + Number(el.getAttribute('height')) }));
+  }
+  const names = [...labels.querySelectorAll('.dg-clabel')];
+  for (const el of names) {
+    // Other circuit names count too, where they stand now.
+    const near = names.filter((x) => x !== el).map((x) => textBox(x)).filter((x): x is Box => !!x).map(obbOfBox);
+    const clashes = (b: Box | null) => (!b ? 99 : posts.filter((p) => obbHit(obbOfBox(b), p, 3)).length * 2 + [...others, ...near].filter((o) => obbHit(obbOfBox(b), o, 2)).length);
+    if (!clashes(textBox(el))) continue;
+    const [ax, ay, zx, zy] = (el.getAttribute('data-seg') ?? '').split(',').map(Number);
+    if (![ax, ay, zx, zy].every(Number.isFinite)) continue;
+    const level = Math.abs(ay - zy) < 0.5;
+    const below = el.getAttribute('data-below') === '1';
+    let best: { x: number; y: number; anchor: string; n: number } | null = null;
+    for (const side of below ? [1, -1] : [-1, 1]) {
+      for (const t of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9, 0]) {
+        const mx = ax + (zx - ax) * t;
+        const my = ay + (zy - ay) * t;
+        const x = level ? mx : side < 0 ? mx + 9 : mx - 9;
+        const y = level ? (side < 0 ? my - 9 : my + FONT + 8) : my;
+        const anchor = level ? 'middle' : side < 0 ? 'start' : 'end';
+        const n = clashes(textBox(el, x, y, anchor));
+        if (!best || n < best.n) best = { x, y, anchor, n };
+        if (!n) break;
+      }
+      if (best && !best.n) break;
+    }
+    if (!best) continue;
+    el.setAttribute('x', best.x.toFixed(1));
+    el.setAttribute('y', best.y.toFixed(1));
+    el.setAttribute('text-anchor', best.anchor);
+  }
 }
 
 /** Light up occupied track circuits (for simulated running). Circuits not listed are shown clear. */

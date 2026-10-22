@@ -1,6 +1,6 @@
 {
   "name": "signal-box-simulator",
-  "version": "0.3.29",
+  "version": "0.3.30",
   "private": true,
   "description": "Absolute block signal box bell and instrument simulator for model railways. Ships with an example layout, Sigsim Central, to try it out.",
   "type": "module",

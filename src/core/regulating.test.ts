@@ -227,7 +227,7 @@ describe('regulating', () => {
     expect(t.reg.outstanding()).toHaveLength(2);
     const advice = t.reg.advice()!;
     expect(advice.connId).toBe(t.sessions[1].connection.id);
-    expect(advice.text).toMatch(/Tansley Spa is offering 4 .*accept it first/);
+    expect(advice.text).toMatch(/Accept Tansley Spa’s 4 .*first/);
     t.ts.sendBell('4');
     t.tick(1000);
     expect(t.rules()).toEqual(['in_accepted', 'regulated_ok']);

@@ -226,6 +226,25 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Fixes and a tidier box (v0.3.30)
+
+* **Signals stay put.** Posts are placed the same whatever the diagram's labels show; with
+  Codes or Names, the circuit names slide along their track (or to its other side) to make room
+  instead. On curves and angled track a post steps back along the track itself (following the
+  curve), and a distant with no room left on its own circuit carries on back onto the line before.
+* **Zoom the box's diagram**: scroll wheel on a PC, pinch on a phone or tablet, or the − Fit +
+  buttons; once zoomed in, drag to move about. The zoom is kept while the box is open.
+* **Routes** button on the diagram (signaller play mode) turns the lit-up routes on or off.
+* **Change mode.** Opening a box that is already being worked asks whether to carry on, or switch
+  between model railway and signaller play (which ends that session, as closing the box would).
+  The mode chip on the box's top bar does the same.
+* **Endless on a session clock** can start the clock at the time now, so it keeps in step with the
+  device's clock (at ×1). Times in Next step and the timetable strip are given on the timetable's
+  clock ("due at about 09:08"), not the device's.
+* **Shorter Next step prompts**: plain instructions, so the bar takes less room on a phone.
+* The box's side panel (Timetable, Bell codes, Trains in places) is a mahogany case on a teak
+  shelf like the desk, and follows the liveries.
+
 ## Signals on the layout (v0.3.29)
 
 Each layout can now have its own signals. The Layout configurator has a new **Signalling** tab:
@@ -256,7 +275,7 @@ Each layout can now have its own signals. The Layout configurator has a new **Si
   and each other.
 
 The signals are a plan for now: trains in play mode do not obey them yet. The interlocking and
-trains that stop at signals come next (v0.3.30).
+trains that stop at signals come next (v0.3.31).
 
 The **Tutorial** is now in tabs (Absolute block, Worked examples, Tapper & tokens, Try it,
 Timetables, Signals) instead of one long page, with a new **Signals** page explaining each kind of
@@ -684,6 +703,7 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   screens/places.ts    The layout configurator's Places tab
   screens/signalling.ts  The layout configurator's Signalling tab
   signalDrawing.ts     Signals on the diagram, post by post (brackets, feathers, ground signals)
+  diagramZoom.ts       Wheel, pinch and drag zoom for diagrams
   screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
   screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
   screens/timetableGenerate.ts  Generate a timetable; lampDiagram.ts draws lamp headcodes
