@@ -62,6 +62,8 @@ On phones the shelf shows one instrument group at a time and the desk becomes ta
 * In the Device theme that means wood and brass throughout. The Big Four themes swap the shelf and
   button colours for the company's livery (`--shelf-bg`, `--btn-*` tokens in styles.css); the
   instrument cases on the block shelf stay wood and brass in every theme.
+* Every full screen (from v0.3.33) is centred and sits on the teak shelf (`.config-shelf`), its parts
+  in mahogany cases (`.config-case`) headed by a brass plate (`.plate`).
 
 ## Adding boxes and connections (v0.3.5)
 
@@ -225,6 +227,19 @@ joined by junctions. The plan starts empty: build your own.
   automatically, including any already in saved plans.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
+
+## Style guide pass (v0.3.33)
+
+* **Settings**, **Bell code reference**, **Tutorial** and **Trains in places** now follow the style
+  guide like the configurators: centred on the page, on the teak shelf, with each part in a mahogany
+  case headed by a brass plate.
+* Settings flows its cases into columns, so short cases leave no gaps under them.
+* The bell code tables line up (same column widths in both), and on a phone each code becomes a
+  compact row (code, class, meaning, Play) instead of a table that scrolls sideways.
+* The tutorial is a centred reading column, one case per section.
+* Trains in places: road cards on teak inside the place cases; the move selector fills the row when
+  it wraps.
+* The box's side panel (Timetable, Bell codes, Trains in places) keeps its own layout.
 
 ## Station limits, blocking back and shunting into the section (v0.3.32)
 

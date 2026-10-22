@@ -56,7 +56,7 @@ export function layoutEditor(ctx: Ctx, stacked = false, layoutId?: string): HTML
     const workers = p.workedBy.map((w) => workerName(st, w));
     return h(
       'section',
-      { class: 'panel place-panel' },
+      { class: `${stacked ? 'panel' : 'config-case'} place-panel` },
       h('div', { class: 'place-head' }, h('h2', { class: 'nameboard section-board' }, p.name), h('span', { class: 'chip' }, kindInfo(p.kind).name)),
       h('p', { class: 'muted small' }, workers.length ? `Worked by ${workers.join(', ')}` : 'Not worked by any signal box yet.'),
       p.notes ? h('p', { class: 'pre small' }, p.notes) : null,
@@ -93,7 +93,7 @@ export function layoutEditor(ctx: Ctx, stacked = false, layoutId?: string): HTML
     const occ = st.roster.filter((l) => l.location.kind === 'atBox' && l.location.boxId === b.id);
     return h(
       'section',
-      { class: 'panel place-panel' },
+      { class: `${stacked ? 'panel' : 'config-case'} place-panel` },
       h('div', { class: 'place-head' }, h('h2', { class: 'nameboard section-board' }, `At ${b.name}`), h('span', { class: 'chip' }, 'Signal box')),
       h('p', { class: 'muted small' }, findLayout(st, b.layoutId) ? `${b.name} works no place, so trains arriving there stand at the box.` : `${b.name} box is not on a layout yet, so trains arriving there stand at the box.`),
       occ.length ? h('ul', { class: 'plain' }, ...occ.map(occupantRow)) : h('p', { class: 'muted small' }, 'Empty'),
@@ -130,11 +130,15 @@ export function layoutScreen(ctx: Ctx): Screen {
     title: 'Trains in places',
     el: h(
       'main',
-      { class: 'page' },
+      { class: 'page config-page places-page' },
       topBar(ctx, 'Trains in places'),
-      activeLayout(ctx.store.state) ? h('p', { class: 'nameboard splash-layout yard-layout' }, activeLayout(ctx.store.state)!.name) : null,
-      h('p', { class: 'muted' }, 'Set up what is standing where before a session. Trains move automatically as you signal them; you can correct anything here.'),
-      layoutEditor(ctx),
+      h(
+        'div',
+        { class: 'config-shelf' },
+        activeLayout(ctx.store.state) ? h('p', { class: 'nameboard splash-layout yard-layout' }, activeLayout(ctx.store.state)!.name) : null,
+        h('p', { class: 'shelf-note' }, 'Set up what is standing where before a session. Trains move automatically as you signal them; you can correct anything here.'),
+        layoutEditor(ctx),
+      ),
     ),
   };
 }

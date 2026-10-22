@@ -400,11 +400,10 @@ details.loco .row.end { padding: 0 16px 16px; }
 .occupant > div { flex: 1 1 200px; min-width: 0; }
 .occupant select, .occupant input { flex: 0 1 200px; min-width: 0; }
 
-/* ---------- Settings ---------- */
-.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
-.settings-grid .panel.wide { grid-column: 1 / -1; }
-.settings-grid .panel h3 { font-size: 1rem; margin: 16px 0 4px; }
-@media (max-width: 400px) { .settings-grid { grid-template-columns: minmax(0, 1fr); } }
+/* ---------- Settings: mahogany cases flowed into columns (no gaps under short cases) ---------- */
+.settings-grid { columns: 3 300px; column-gap: 14px; }
+.settings-grid > .config-case { break-inside: avoid; margin-bottom: 14px; }
+.settings-grid h3 { font-size: 1rem; margin: 6px 0 -4px; }
 
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; max-width: 100%; }
@@ -2140,3 +2139,61 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
 .sg-lock-locks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .sg-lock-chip { min-height: 28px; padding: 2px 8px; }
 .sg-lock-table tr.k-points td, .sg-lock-table tr.k-fpl td { color: var(--btn-muted); }
+
+/* =====================================================================
+   v0.3.33 Style guide pass: Settings, Bell code reference, Tutorial and
+   Trains in places sit on the teak shelf in mahogany cases with brass
+   plates, centred, like the configurators.
+   ===================================================================== */
+.config-case h2.plate, .config-case h3.plate { margin: 0; }
+.config-case h3 { color: var(--btn-fg); }
+.config-case .muted, .config-case .dots { color: var(--btn-muted); }
+.config-case .check { color: var(--btn-fg); }
+.config-case .check input { accent-color: var(--brass); }
+.config-case a { color: var(--btn-hover); }
+.config-case textarea { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); }
+.config-case input[type='file'] { color: var(--btn-muted); max-width: 100%; }
+.config-case input[type='range'] { accent-color: var(--brass); }
+.config-case table, .config-case th, .config-case td { color: var(--btn-fg); border-color: var(--btn-border); }
+.config-case th { color: var(--btn-muted); }
+.config-case .code-cell strong { color: var(--btn-fg); }
+.config-shelf > .muted, .config-shelf > p, .config-shelf .shelf-note { color: var(--btn-muted); margin: 0; }
+/* Bell code reference */
+.code-ref:not(.compact) { gap: 14px; }
+.code-ref .codes td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+.code-ref .ref-sources { color: var(--btn-muted); }
+/* Tutorial: a reading-width column, centred, one case per section */
+.tut-page { max-width: 940px; }
+.tut-page .tut-tabs { max-width: none; margin: 0; }
+.tut-cases { display: flex; flex-direction: column; gap: 14px; }
+.tut-case { max-width: none; }
+.tut-case h2.plate { margin: 0; }
+.tut-case h3 { margin-top: 6px; }
+.tut-case .tut-diagram { border-color: var(--btn-border); background: var(--shelf-bg); }
+.tut-case .lead { color: var(--btn-fg); }
+/* Trains in places */
+.places-page .yard-layout { align-self: center; margin: 0; }
+.config-case.place-panel .road { background: var(--shelf-bg); border-color: var(--btn-border); border-left-color: var(--btn-border); color: var(--btn-fg); }
+.config-case.place-panel .road.occupied { border-left-color: var(--brass); }
+.config-case.place-panel .pre { color: var(--btn-fg); }
+.config-case.place-panel .place-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.config-case.place-panel .chip { background: var(--shelf-bg); color: var(--btn-muted); border-color: var(--btn-border); }
+.config-case.place-panel .road select { background: var(--btn-bg); }
+.config-case .check { align-items: flex-start; }
+.config-case .check input { flex: 0 0 auto; margin-top: 2px; }
+.code-ref:not(.compact) .codes th:first-child, .code-ref:not(.compact) .codes td:first-child { width: 8em; }
+.code-ref:not(.compact) .codes th:nth-child(2), .code-ref:not(.compact) .codes td:nth-child(2) { width: 7.5em; white-space: nowrap; }
+.code-ref:not(.compact) .codes th:nth-child(2) { white-space: normal; }
+.config-case.place-panel .occupant select { flex: 1 1 200px; }
+@media (max-width: 600px) {
+  .code-ref:not(.compact) .codes thead { display: none; }
+  .code-ref:not(.compact) .codes tr { display: grid; grid-template-columns: 4.6em minmax(0, 1fr) auto; column-gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--btn-border); }
+  .code-ref:not(.compact) .codes td { border: 0; padding: 0; width: auto; }
+  .code-ref:not(.compact) .codes td:nth-child(1) { grid-column: 1; grid-row: 1; width: auto; }
+  .code-ref:not(.compact) .codes td:nth-child(2) { grid-column: 1; grid-row: 2; width: auto; font-size: 0.8rem; color: var(--btn-muted); white-space: normal; }
+  .code-ref:not(.compact) .codes td:nth-child(3) { grid-column: 2; grid-row: 1 / span 2; }
+  .code-ref:not(.compact) .codes td:nth-child(4) { grid-column: 3; grid-row: 1; }
+  .settings-grid { columns: 1; }
+}
+@media (max-width: 600px) { .code-ref:not(.compact) .codes td.ca-cell::before { content: 'Call attn first: '; } }
+.code-ref.compact .codes td:nth-child(2) { white-space: nowrap; }

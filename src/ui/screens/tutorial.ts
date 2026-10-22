@@ -433,7 +433,21 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
 
   let current: TutorialTab = TUTORIAL_TABS.includes(tab as TutorialTab) ? (tab as TutorialTab) : lastTab;
   const tabsEl = h('nav', { class: 'config-tabs tut-tabs', 'aria-label': 'Tutorial pages' });
-  const article = h('article', { class: 'prose' });
+  const article = h('article', { class: 'tut-cases' });
+  /** A page's content as mahogany cases: one per section, each headed by its title on a brass plate. */
+  const asCases = (els: HTMLElement[]): HTMLElement[] => {
+    const out: HTMLElement[] = [];
+    let cur: HTMLElement | null = null;
+    for (const el of els) {
+      if (el.tagName === 'H2' || !cur) {
+        cur = h('section', { class: 'config-case prose tut-case' });
+        out.push(cur);
+      }
+      if (el.tagName === 'H2') el.classList.add('plate');
+      cur.append(el);
+    }
+    return out;
+  };
   const show = () => {
     lastTab = current;
     tabsEl.replaceChildren(
@@ -461,8 +475,9 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
     );
     const nextIdx = TUTORIAL_TABS.indexOf(current) + 1;
     const next = TUTORIAL_TABS[nextIdx];
-    article.replaceChildren(
-      ...pages[current].filter((x): x is HTMLElement => !!x),
+    const cases = asCases(pages[current].filter((x): x is HTMLElement => !!x));
+    article.replaceChildren(...cases);
+    cases[cases.length - 1]?.append(
       ...(next
         ? [
             h(
@@ -493,6 +508,6 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
 
   return {
     title: 'Tutorial',
-    el: h('main', { class: 'page prose-page' }, topBar(ctx, 'Tutorial'), tabsEl, article),
+    el: h('main', { class: 'page config-page tut-page' }, topBar(ctx, 'Tutorial'), h('div', { class: 'config-shelf' }, tabsEl, article)),
   };
 }
