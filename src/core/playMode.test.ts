@@ -222,9 +222,9 @@ describe('real-railway data: lengths and speeds', () => {
 
   it('Sigsim Central with no values given: sections share 2 miles, station circuits 220 yd, short ones 55 yd', () => {
     const { s, l, c } = sgc();
-    for (const code of ['T1', 'T2', 'T10', 'T11']) expect(circuitLength(s, l, c(code))).toEqual({ metres: METRES_PER_MILE, basis: 'section' });
-    for (const code of ['T3', 'T6', 'T7']) expect(circuitLength(s, l, c(code))).toEqual({ metres: SHORT_CIRCUIT_LENGTH, basis: 'short' });
-    for (const code of ['T4', 'T5', 'T8', 'T9']) expect(circuitLength(s, l, c(code))).toEqual({ metres: STATION_CIRCUIT_LENGTH, basis: 'ordinary' });
+    for (const code of ['T1', 'T2', 'T12', 'T13']) expect(circuitLength(s, l, c(code))).toEqual({ metres: METRES_PER_MILE, basis: 'section' });
+    for (const code of ['T4', 'T7', 'T8']) expect(circuitLength(s, l, c(code))).toEqual({ metres: SHORT_CIRCUIT_LENGTH, basis: 'short' });
+    for (const code of ['T5', 'T6', 'T9', 'T10']) expect(circuitLength(s, l, c(code))).toEqual({ metres: STATION_CIRCUIT_LENGTH, basis: 'ordinary' });
     expect(DEFAULT_SECTION_LENGTH).toBeCloseTo(3218.688, 6);
     expect(STATION_CIRCUIT_LENGTH).toBeCloseTo(10 * METRES_PER_CHAIN, 6);
     expect(SHORT_CIRCUIT_LENGTH).toBeCloseTo(2.5 * METRES_PER_CHAIN, 6);
@@ -241,8 +241,8 @@ describe('real-railway data: lengths and speeds', () => {
     // A stated length longer than the section: the others are never shorter than a short circuit.
     c('T1').length = 10_000;
     expect(circuitLength(s, l, c('T2')).metres).toBe(SHORT_CIRCUIT_LENGTH);
-    c('T6').length = 120;
-    expect(circuitLength(s, l, c('T6'))).toEqual({ metres: 120, basis: 'stated' });
+    c('T7').length = 120;
+    expect(circuitLength(s, l, c('T7'))).toEqual({ metres: 120, basis: 'stated' });
   });
 
   it("a double line's up and down lines each run the whole section", () => {
@@ -256,25 +256,25 @@ describe('real-railway data: lengths and speeds', () => {
   it('short circuits: both ends on point-work, or named as a neck, throat or release; never a road or platform', () => {
     const { s, l, c } = sgc();
     void s;
-    expect(isShortCircuit(l, c('T3'))).toBe(true); // between points 1 and 2
-    expect(isShortCircuit(l, c('T6'))).toBe(true); // points 2 to catch points 5
-    expect(isShortCircuit(l, c('T4'))).toBe(false); // platform road between points
-    expect(isShortCircuit(l, c('T8'))).toBe(false); // a goods road
+    expect(isShortCircuit(l, c('T4'))).toBe(true); // between points 1 and 2
+    expect(isShortCircuit(l, c('T7'))).toBe(true); // points 2 to catch points 5
+    expect(isShortCircuit(l, c('T5'))).toBe(false); // platform road between points
+    expect(isShortCircuit(l, c('T9'))).toBe(false); // a goods road
     expect(isShortCircuit(l, c('T1'))).toBe(false); // line circuit
     // Named as a loco release, even with a buffer stop at one end.
-    c('T9').name = 'Loco release';
+    c('T10').name = 'Loco release';
     l.places.find((p) => p.id === 'sgc-goods')!.roads.forEach((r) => r.circuitId === 'sgc-t9' && delete r.circuitId);
-    expect(isShortCircuit(l, c('T9'))).toBe(true);
+    expect(isShortCircuit(l, c('T10'))).toBe(true);
   });
 
   it('speeds: the layout default, circuit overrides, diverging speed of points, loco maximum', () => {
     const { s, l, c } = sgc();
     expect(layoutLineSpeed(l)).toBeCloseTo(60 * MPS_PER_MPH, 9);
-    expect(circuitLineSpeed(l, c('T4'))).toBe(DEFAULT_LINE_SPEED);
+    expect(circuitLineSpeed(l, c('T5'))).toBe(DEFAULT_LINE_SPEED);
     l.lineSpeed = parseSpeed('40 mph')!;
-    c('T6').lineSpeed = parseSpeed('10 mph')!;
-    expect(formatSpeed(circuitLineSpeed(l, c('T4')), 'imperial')).toBe('40 mph');
-    expect(formatSpeed(circuitLineSpeed(l, c('T6')), 'imperial')).toBe('10 mph');
+    c('T7').lineSpeed = parseSpeed('10 mph')!;
+    expect(formatSpeed(circuitLineSpeed(l, c('T5')), 'imperial')).toBe('40 mph');
+    expect(formatSpeed(circuitLineSpeed(l, c('T7')), 'imperial')).toBe('10 mph');
     const pts = l.trackPlan.junctions.find((j) => j.kind !== 'joint')!;
     expect(divergingSpeed(pts)).toBe(DEFAULT_DIVERGING_SPEED);
     pts.divergingSpeed = parseSpeed('25 km/h')!;
@@ -348,8 +348,9 @@ describe('saved data with real-railway values', () => {
       expect(s.schemaVersion).toBe(SCHEMA_VERSION);
       expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
       expect(s.settings.units).toBe('imperial');
-      // Nothing is filled in: lengths and speeds stay absent, so the defaults apply.
-      expect(JSON.stringify(s)).not.toMatch(/"(sectionLength|length|lineSpeed|divergingSpeed|maxSpeed)"/);
+      // Nothing is filled in: lengths and speeds stay absent, so the defaults apply (Sigsim Central's
+      // two inner circuits come with their 440 yd, the station limits, and nothing else).
+      expect(JSON.stringify(s).replace(/"length":402\.336/g, '')).not.toMatch(/"(sectionLength|length|lineSpeed|divergingSpeed|maxSpeed)"/);
       if (make === shippedState) {
         expect(s.layouts).toEqual(before.layouts);
         expect(s.boxes).toEqual(before.boxes);

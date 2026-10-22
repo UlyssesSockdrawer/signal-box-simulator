@@ -6,21 +6,21 @@ import { accept, play } from './simHarness';
 import { addTimetable, addTrain } from './timetables';
 
 describe('routing and signals on the plan', () => {
-  it('Sigsim Central: home signals where the lines meet the station, section signals on the roads leading out', () => {
+  it('Sigsim Central: home signals where the lines meet the station, section signals at the ends of the inner circuits (the station limits)', () => {
     const s = shippedState();
     const sig = boxSignals(s, s.layouts[0], s.boxes[0]).map((x) => `${x.kind}:${x.connectionId}:${s.layouts[0].trackPlan.circuits.find((c) => c.id === x.circuitId)!.code}`);
-    expect(sig.sort()).toEqual(['home:sgc-east:T10', 'home:sgc-west:T2', 'section:sgc-east:T4', 'section:sgc-east:T5', 'section:sgc-west:T3', 'section:sgc-west:T5'].sort());
+    expect(sig.sort()).toEqual(['home:sgc-east:T12', 'home:sgc-west:T2', 'section:sgc-east:T11', 'section:sgc-west:T3'].sort());
     expect(playReadiness(s, s.boxes[0])).toEqual([]);
   });
 
-  it('finds the way round: P1 to the west via T3; the goods shed via the neck and throat', () => {
+  it('finds the way round: P1 to the west via T4 and the West inner; the goods shed via the neck and throat', () => {
     const s = shippedState();
     const l = s.layouts[0];
     const codes = (p: { circuitId: string }[] | null) => p?.map((x) => l.trackPlan.circuits.find((c) => c.id === x.circuitId)!.code);
-    expect(codes(findPath(s, l, { circuitId: 'sgc-t4', toward: 0 }, (d) => d.circuitId === 'sgc-t1'))).toEqual(['T4', 'T3', 'T2', 'T1']);
-    expect(codes(findPath(s, l, { circuitId: 'sgc-t2', toward: 1 }, (d) => d.circuitId === 'sgc-t9'))).toEqual(['T2', 'T3', 'T6', 'T7', 'T9']);
+    expect(codes(findPath(s, l, { circuitId: 'sgc-t4', toward: 0 }, (d) => d.circuitId === 'sgc-t1'))).toEqual(['T5', 'T4', 'T3', 'T2', 'T1']);
+    expect(codes(findPath(s, l, { circuitId: 'sgc-t2', toward: 1 }, (d) => d.circuitId === 'sgc-t9'))).toEqual(['T2', 'T3', 'T4', 'T7', 'T8', 'T10']);
     // With P1 blocked, an eastbound train goes round the loop.
-    expect(codes(findPath(s, l, { circuitId: 'sgc-t2', toward: 1 }, (d) => d.circuitId === 'sgc-t10', { blocked: (c) => c === 'sgc-t4' }))).toEqual(['T2', 'T5', 'T10']);
+    expect(codes(findPath(s, l, { circuitId: 'sgc-t2', toward: 1 }, (d) => d.circuitId === 'sgc-t10', { blocked: (c) => c === 'sgc-t4' }))).toEqual(['T2', 'T3', 'T6', 'T11', 'T12']);
   });
 
   it('says why a box cannot be run in play mode', () => {
@@ -32,8 +32,8 @@ describe('routing and signals on the plan', () => {
 describe('simulated running (signaller play mode)', () => {
   it('lights up standing trains and stock where they stand', () => {
     const t = play();
-    // The Jinty in the goods siding (T8); the fiddle yards are off the plan.
-    expect(t.occupied()).toEqual(['T8']);
+    // The Jinty in the goods siding (T9); the fiddle yards are off the plan.
+    expect(t.occupied()).toEqual(['T9']);
   });
 
   it('a train off the west line: runs circuit by circuit, is held at the home signal, routed round an occupied road, and may only be reported arrived once detected', () => {
@@ -42,7 +42,7 @@ describe('simulated running (signaller play mode)', () => {
     accept(t, t.west, '4-1');
     expect(t.west.view.incoming?.departed).toBe(true);
     t.tick(500);
-    expect(t.occupied()).toEqual(['T1', 'T8']);
+    expect(t.occupied()).toEqual(['T1', 'T9']);
     // The person cannot report it arrived yet: the track circuits do not show it.
     expect(t.trains.source.report({ type: 'arrived', connectionId: 'sgc-west', locoId: 'lms8233', at: null, by: 'person' })).toBe('notDetected');
     const view = () => t.sim.incoming('sigsim-central', 'sgc-west')!;
@@ -60,10 +60,10 @@ describe('simulated running (signaller play mode)', () => {
     expect(t.sim.setDestination('sigsim-central', 'sgc-west', { placeId: 'sgc-station', roadId: 'sgc-p2' })).toMatch(/can no longer be changed/);
     const seen = new Set<string>();
     expect(t.until(() => (t.occupied().forEach((c) => seen.add(c)), !!view()?.arrivedDetected))).toBe(true);
-    for (const c of ['T1', 'T2', 'T3', 'T6', 'T7', 'T9']) expect(seen).toContain(c);
+    for (const c of ['T1', 'T2', 'T4', 'T7', 'T8', 'T10']) expect(seen).toContain(c);
     expect(home().clear).toBe(false);
     // Arrived complete in the shed road, clear of the line.
-    expect(t.occupied()).toEqual(['T8', 'T9']);
+    expect(t.occupied()).toEqual(['T9', 'T10']);
     expect(t.trains.source.report({ type: 'arrived', connectionId: 'sgc-west', locoId: 'lms8233', at: view().at, by: 'person' })).toBe('applied');
     expect(t.loco('lms8233').location).toEqual({ kind: 'place', placeId: 'sgc-goods', roadId: 'sgc-shed' });
     t.west.sendBell('1');
@@ -74,7 +74,7 @@ describe('simulated running (signaller play mode)', () => {
     t.tick();
     expect(t.west.view.incoming).toBeNull();
     // Standing in the shed road still.
-    expect(t.occupied()).toEqual(['T8', 'T9']);
+    expect(t.occupied()).toEqual(['T9', 'T10']);
   });
 
   it('the road chosen by the signaller (or the timetable) is used; a train is held at the home signal while it is occupied', () => {
@@ -102,7 +102,7 @@ describe('simulated running (signaller play mode)', () => {
     const sec = () => t.sim.signals('sigsim-central').filter((x) => x.kind === 'section' && x.connectionId === 'sgc-east');
     expect(sec().every((x) => !x.clear)).toBe(true);
     expect(t.sim.outgoingText('sigsim-central', 'sgc-east')).toMatch(/until Fiddle Yard East gives Line Clear/);
-    expect(t.occupied()).toEqual(['T8']);
+    expect(t.occupied()).toEqual(['T9']);
     t.east.sendBell('1');
     t.tick();
     t.east.sendBell('3');
@@ -114,7 +114,7 @@ describe('simulated running (signaller play mode)', () => {
     t.east.sendBell('2');
     t.tick();
     expect(t.until(() => !!t.east.view.outgoing?.arrived)).toBe(true);
-    for (const c of ['T8', 'T7', 'T6', 'T3', 'T4', 'T10', 'T11']) expect(seen).toContain(c);
+    for (const c of ['T9', 'T8', 'T7', 'T4', 'T5', 'T12', 'T13']) expect(seen).toContain(c);
     expect(seen).not.toContain('T2');
     expect(t.occupied()).toEqual([]);
     t.tick(5000);
@@ -153,8 +153,8 @@ describe('simulated running (signaller play mode)', () => {
     // A clear run: the home signal comes off while it is still in the first circuit.
     expect(t.until(() => !!view()?.locked, 20_000)).toBe(true);
     expect(t.occupied()).toContain('T1');
-    expect(t.until(() => seen.has('T4'))).toBe(true);
-    expect(seen).not.toContain('T5');
+    expect(t.until(() => seen.has('T5'))).toBe(true);
+    expect(seen).not.toContain('T6');
     t.east.sendBell('2');
     t.tick();
     expect(t.until(() => !!view()?.passedDetected)).toBe(true);
@@ -174,16 +174,17 @@ describe('simulated running (signaller play mode)', () => {
     expect(view().locked).toBe(false);
     expect(t.until(() => view().locked)).toBe(true);
     expect(t.occupied()).toContain('T2');
-    // It runs through P1 to the section signal and stands there, clear of the west line.
+    // It runs through P1 to the section signal (the advanced starter) and stands there on the East
+    // inner, clear of the platform and the west line.
     expect(t.until(() => view().arrivedDetected)).toBe(true);
-    expect(t.occupied()).toEqual(['T4', 'T8']);
+    expect(t.occupied()).toEqual(['T9', 'T11']);
     expect(view().passedDetected).toBe(false);
     // Offer it on; the east accepts; the section signal clears and away it goes.
     t.east.sendBell('1');
     t.tick();
     t.east.sendBell('4');
     t.tick();
-    expect(t.until(() => t.occupied().includes('T10'), 60_000)).toBe(true);
+    expect(t.until(() => t.occupied().includes('T12'), 60_000)).toBe(true);
     t.east.sendBell('2');
     t.tick();
     expect(t.until(() => view().passedDetected)).toBe(true);
@@ -198,7 +199,7 @@ describe('simulated running (signaller play mode)', () => {
     expect(t.until(() => view().locked)).toBe(true);
     expect(view().dest).toEqual({ placeId: 'sgc-station', roadId: 'sgc-p2' });
     expect(t.until(() => view().arrivedDetected)).toBe(true);
-    expect(t.occupied()).toEqual(['T4', 'T5']);
+    expect(t.occupied()).toEqual(['T5', 'T6']);
   });
 
   it('a light engine move leaves its coaches in the road as a rake, which keeps the circuit occupied; the next train from there takes them', () => {
@@ -209,20 +210,20 @@ describe('simulated running (signaller play mode)', () => {
     bf.location = { kind: 'place', placeId: 'sgc-station', roadId: 'sgc-p1' };
     bf.working = { trainTypeId: 'light_engine', consist: '4 coaches', headcode: '' };
     t.tick(500);
-    expect(t.occupied()).toEqual(['T4', 'T8']);
+    expect(t.occupied()).toEqual(['T5', 'T9']);
     let done = false;
     const seen = new Set<string>();
     expect(t.sim.shunt('sigsim-central', 'lms5025', { placeId: 'sgc-goods', roadId: 'sgc-shed' }, () => (done = true))).toBeNull();
     expect(s.layouts[0].stock).toHaveLength(1);
     expect(s.layouts[0].stock![0]).toMatchObject({ description: '4 coaches', placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t4' });
     expect(bf.working.consist).toBe('');
-    // It sets back in the west end (T3) to get from P1 into the goods yard; the coaches keep P1 occupied.
+    // It sets back in the west end (T4) to get from P1 into the goods yard; the coaches keep P1 occupied.
     expect(t.until(() => (t.occupied().forEach((c) => seen.add(c)), done))).toBe(true);
-    for (const c of ['T3', 'T6', 'T7', 'T9']) expect(seen).toContain(c);
+    for (const c of ['T4', 'T7', 'T8', 'T10']) expect(seen).toContain(c);
     expect(seen).not.toContain('T2');
     bf.location = { kind: 'place', placeId: 'sgc-goods', roadId: 'sgc-shed' };
     t.tick(500);
-    expect(t.occupied()).toEqual(['T4', 'T8', 'T9']);
+    expect(t.occupied()).toEqual(['T5', 'T9', 'T10']);
     expect(t.board.occupants('sgc-t4')[0]).toMatch(/^rake:/);
     // Back on to the coaches (into a road with only stock in it), then away east with them as a train.
     done = false;
@@ -236,7 +237,7 @@ describe('simulated running (signaller play mode)', () => {
     t.east.sendBell('3-1');
     expect(t.until(() => !(s.layouts[0].stock ?? []).length, 20_000)).toBe(true);
     expect(bf.working.consist).toBe('4 coaches');
-    expect(t.until(() => t.occupied().includes('T10'))).toBe(true);
+    expect(t.until(() => t.occupied().includes('T12'))).toBe(true);
   });
 
   it('a timetabled shunt runs through the plan by itself in play mode (no card to press)', () => {
@@ -257,12 +258,12 @@ describe('simulated running (signaller play mode)', () => {
     t.board.onChange(() => t.occupied().forEach((c) => seen.add(c)));
     expect(t.until(() => t.runner.items[0].state === 'done')).toBe(true);
     // Out of the goods siding, setting back in the west end, into a platform road.
-    for (const c of ['T7', 'T6', 'T3']) expect(seen).toContain(c);
+    for (const c of ['T8', 'T7', 'T4']) expect(seen).toContain(c);
     const loc = t.loco('lms7298').location as { placeId: string; roadId: string };
     expect(loc.placeId).toBe('sgc-station');
     expect(['sgc-p1', 'sgc-p2']).toContain(loc.roadId);
     t.tick(500);
-    expect(t.occupied()).toEqual([loc.roadId === 'sgc-p1' ? 'T4' : 'T5']);
+    expect(t.occupied()).toEqual([loc.roadId === 'sgc-p1' ? 'T5' : 'T6']);
   });
 
   it('model railway mode: no simulated trains; circuits marked by hand go on the board', () => {

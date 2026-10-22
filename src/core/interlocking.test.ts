@@ -17,38 +17,39 @@ const sgc = () => {
 describe('interlocking', () => {
   it('generates the locking table for Sigsim Central from the signals and their routes', () => {
     const { row } = sgc();
-    // Distant: a clear run through P1 or P2 and out on to the line.
-    expect(row('1').releasedBy).toEqual(['(2.16 or 3.17)']);
-    // Home to P1: FPLs in; points 6 and 11 normal; opposing starters and home locked.
-    expect(row('2').releasedBy).toEqual(['5', '10']);
-    expect(row('2').locks).toEqual(['6', '7', '11', '12', '18']);
-    // Home to P2: points 6 reversed and bolted.
-    expect(row('3').releasedBy).toEqual(['5', '6']);
-    // Goods home: points 11 and catch points 14 reversed, yard points 15 held whichever way the road is.
-    expect(row('4').releasedBy).toEqual(['5', '10', '11', '14', '(– or 15)']);
-    expect(row('4').bothWays).toEqual(['15']);
+    // Distant: a clear run through P1 or P2 to the advanced starter, and out on to the line.
+    expect(row('1').releasedBy).toEqual(['25', '(2.18 or 3.19)']);
+    // Home to P1: FPLs in; points 8 and 13 normal; the opposing advanced starter, starter, discs and home locked.
+    expect(row('2').releasedBy).toEqual(['7', '12']);
+    expect(row('2').locks).toEqual(['5', '8', '10', '13', '14', '20', '23']);
+    // Home to P2: points 8 reversed and bolted.
+    expect(row('3').releasedBy).toEqual(['7', '8']);
+    // Goods home: points 13 and catch points 16 reversed, yard points 17 held whichever way the road is.
+    expect(row('4').releasedBy).toEqual(['7', '12', '13', '16', '(– or 17)']);
+    expect(row('4').bothWays).toEqual(['17']);
     // Points only move with their FPL out.
-    expect(row('6').note).toMatch(/with 5 normal/);
-    expect(row('22').releasedBy).toEqual(['(18.12.7 or 19.8)']);
+    expect(row('8').note).toMatch(/with 7 normal/);
+    expect(row('26').releasedBy).toEqual(['5', '(23.14 or 24.9)']);
   });
 
   it('works the frame: points need their FPL out, signals need the route set and no conflict off', () => {
     const { il, sig } = sgc();
     const f = new Frame(il());
     const two = `sig:${sig('2').id}`;
-    expect(f.why(two, 'R')).toMatch(/FPL 5 must be in/);
+    expect(f.why(two, 'R')).toMatch(/FPL 7 must be in/);
     // Set the route by hand: FPLs in, then the home comes off.
-    const j1 = il().levers.find((x) => x.number === '6')!.id;
+    const j1 = il().levers.find((x) => x.number === '8')!.id;
     f.move(`fpl:${j1}`, 'R');
-    expect(f.move(`pts:${j1}`, 'R')).toMatch(/FPL 5 is in/);
-    f.move(`fpl:${il().levers.find((x) => x.number === '11')!.id}`, 'R');
+    expect(f.move(`pts:${j1}`, 'R')).toMatch(/FPL 7 is in/);
+    f.move(`fpl:${il().levers.find((x) => x.number === '13')!.id}`, 'R');
     expect(f.move(two, 'R')).toBe('');
     // With the home to P1 off, the opposing home and starter are locked, and the points held.
-    expect(f.why(`sig:${sig('18').id}`, 'R')).toMatch(/locked by 2|FPL/);
+    expect(f.why(`sig:${sig('23').id}`, 'R')).toMatch(/locked by 2|FPL/);
     expect(f.why(`fpl:${j1}`, 'N')).toMatch(/held by 2/);
-    // The distant only once the starter ahead is off too.
-    expect(f.why(`sig:${sig('1').id}`, 'R')).toMatch(/16 must be off/);
-    expect(f.setRoute(sig('16').id)).toBe('');
+    // The distant only once the starter and advanced starter ahead are off too.
+    expect(f.why(`sig:${sig('1').id}`, 'R')).toMatch(/(18|25) must be off/);
+    expect(f.setRoute(sig('18').id)).toBe('');
+    expect(f.setRoute(sig('25').id)).toBe('');
     expect(f.move(`sig:${sig('1').id}`, 'R')).toBe('');
     // The home can't go back while the distant is off; replace() puts the distant back first.
     expect(f.why(two, 'N')).toMatch(/held off by 1/);
@@ -61,13 +62,13 @@ describe('interlocking', () => {
     const { il, sig } = sgc();
     const f = new Frame(il());
     expect(f.setRoute(sig('3').id)).toBe('');
-    expect(f.pointsLie(il().levers.find((x) => x.number === '6')!.id)).toBe('reverse');
+    expect(f.pointsLie(il().levers.find((x) => x.number === '8')!.id)).toBe('reverse');
     // The starter from P2 westbound is locked by the home into P2.
-    expect(f.setRoute(sig('8').id)).toMatch(/locked by 3/);
+    expect(f.setRoute(sig('9').id)).toMatch(/locked by 3/);
     f.replace(sig('3').id);
     f.normalise();
-    expect(f.pointsLie(il().levers.find((x) => x.number === '6')!.id)).toBe('normal');
-    expect(f.setRoute(sig('8').id)).toBe('');
+    expect(f.pointsLie(il().levers.find((x) => x.number === '8')!.id)).toBe('normal');
+    expect(f.setRoute(sig('9').id)).toBe('');
   });
 
   it('applies overrides: points left free, a lock added or removed', () => {
@@ -76,14 +77,14 @@ describe('interlocking', () => {
     // The goods home no longer holds the yard points on its route to the siding.
     l.trackPlan.interlocking = { routes: { [`${sig('4').id}|buffers:sgc-t8`]: { [j3.id]: 'free' }, [`${sig('4').id}|buffers:sgc-t9`]: { [j3.id]: 'free' } } };
     expect(row('4').bothWays).toEqual([]);
-    // Add a lock between home 2 and disc 13; remove the one between 2 and 7.
-    l.trackPlan.interlocking = { extraLocks: [[sig('2').id, sig('13').id]], removedLocks: [[sig('2').id, sig('7').id]] };
-    expect(row('2').locks).toContain('13');
-    expect(row('2').locks).not.toContain('7');
+    // Add a lock between home 2 and disc 15; remove the one between 2 and 5.
+    l.trackPlan.interlocking = { extraLocks: [[sig('2').id, sig('15').id]], removedLocks: [[sig('2').id, sig('5').id]] };
+    expect(row('2').locks).toContain('15');
+    expect(row('2').locks).not.toContain('5');
     // Kept through a save and load; pruned when a signal goes.
     const back = migrate(JSON.parse(JSON.stringify(s)));
     expect(back.layouts[0].trackPlan.interlocking?.extraLocks).toHaveLength(1);
-    l.trackPlan.signals = l.trackPlan.signals!.filter((x) => x.number !== '13');
+    l.trackPlan.signals = l.trackPlan.signals!.filter((x) => x.number !== '15');
     pruneInterlocking(l);
     expect(l.trackPlan.interlocking?.extraLocks).toBeUndefined();
   });

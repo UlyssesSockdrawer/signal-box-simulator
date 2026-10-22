@@ -111,6 +111,30 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     window.removeEventListener('pointerup', onUp, true);
     window.removeEventListener('pointercancel', onUp, true);
   });
+  /** Next step for blocking back and shunting into the section (signaller play mode), or ''. */
+  const permissionGuidance = (): string => {
+    const sim = runtime.sim;
+    if (!sim) return '';
+    const p = sim.permissions(box.id);
+    for (const s of sessions) {
+      const v = s.controller.view;
+      const conn = s.connection;
+      // Not while a train is being offered or worked on this line (its own exchange comes first).
+      if (v.incoming && !v.incoming.held) continue;
+      const held = v.permission;
+      const w = p.waiting.find((x) => x.connId === conn.id);
+      if (w && !held.rear && !held.forward) {
+        const l = store.state.roster.find((x) => x.id === w.locoId);
+        return `${l ? locoName(l) : 'A train'}: ${w.text.charAt(0).toLowerCase()}${w.text.slice(1)}`;
+      }
+      if ((held.rear || held.forward) && !p.inUse.has(conn.id)) {
+        if (held.forward === 'token') return v.tokenWithdrawnHere ? `The shunt is back clear of the line to ${conn.neighbourName}: take the token, press "Replace token", then send 1 and 2-5 to ${conn.neighbourName}.` : `The shunt is back clear of the line to ${conn.neighbourName}: call attention (1), then send 2-5 (token replaced).`;
+        if (held.forward) return `The shunt is back inside the section signal: call attention (1), then send 8 (Shunt withdrawn) to ${conn.neighbourName}.`;
+        return `The line from ${conn.neighbourName} is clear of the shunt: call attention (1), then send 2-1 (Obstruction removed)${v.mode === 'ab' ? ', and put your instrument back to LINE BLOCKED' : ''}.`;
+      }
+    }
+    return '';
+  };
   const renderNextStep = () => {
     if (pointerHeld) {
       stepPending = true;
@@ -125,6 +149,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     const reg = runtime.regulator.advice();
     // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
     const tg = runtime.workings.guidance();
+    // Station limits (play mode): a movement waiting for permission to use a line, or a line blocked for shunting now clear again.
+    const pg = !reg && !tg ? permissionGuidance() : '';
     // A quiet line selected while a train is still being worked on another, or another line is not
     // yet open (nothing can run, a timetable cannot start, until every line is): show that line's next step.
     const other = !tg && !ui.busy() ? (uis.find((u) => u !== ui && u.busy()) ?? (ui.isOpen() ? uis.find((u) => u !== ui && !u.isOpen()) : undefined)) : undefined;
@@ -134,7 +160,9 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       ? { text: reg.text, hint: '' }
       : tg
         ? { text: tg.text, hint: uis.map((u) => u.ttHint()).find(Boolean) ?? '' }
-        : other
+        : pg
+          ? { text: pg, hint: '' }
+          : other
           ? { ...other.guidance(), text: `${other.name}: ${other.guidance().text}` }
           : ttg
             ? { text: ttg.text, hint: '' }
@@ -351,6 +379,17 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   };
   ctx.onLeave(store.subscribe(renderDiagram));
   if (runtime.sim) ctx.onLeave(runtime.sim.events.on('change', applyOverlay));
+  // A movement starts (or stops) waiting for permission to use a line: the next step follows.
+  let lastPermText = '';
+  if (runtime.sim)
+    ctx.onLeave(
+      runtime.sim.events.on('change', () => {
+        const t = permissionGuidance();
+        if (t === lastPermText) return;
+        lastPermText = t;
+        renderNextStep();
+      }),
+    );
   if (runtime.railway) ctx.onLeave(runtime.railway.board.onChange(applyOverlay));
   // Signaller play mode is run from the diagram: show it.
   if (runtime.mode === 'play' && !store.state.settings.boxDiagram) store.update((s) => (s.settings.boxDiagram = true));

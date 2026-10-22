@@ -1,5 +1,5 @@
 import { describeCode } from './bellcodes';
-import type { LinkEnd, LinkMessage } from './link';
+import type { ForwardBlock, LinkEnd, LinkMessage, RearBlock } from './link';
 import type { ScoreRuleId } from './score';
 import { Emitter, type Scheduler } from './scheduler';
 import type { BellCode, CodeSet, InstrumentState, LineType, Location, TrainType, WorkingMode } from './types';
@@ -41,6 +41,12 @@ export interface SectionView {
   guidanceIdle: boolean;
   /** False until the box has been opened with the far box (5-5-5). */
   boxOpen: boolean;
+  /**
+   * Permission the far box has given to obstruct the line (v0.3.32): rear = this line blocked back
+   * (2-4 inside the home signal, 3-3 outside it); forward = a shunt into the section (3-3-2) or a
+   * token released for shunting (5-2). null = not given.
+   */
+  permission: { rear: RearBlock | null; forward: ForwardBlock | null };
 }
 
 /** The next incoming train, from being requested of the far box until it is out of section. */
@@ -132,6 +138,7 @@ export class SectionController {
       guidanceDrive: '',
       guidanceIdle: false,
       boxOpen: false,
+      permission: { rear: null, forward: null },
     };
     o.link.onMessage((m) => this.onMessage(m));
   }
@@ -232,6 +239,13 @@ export class SectionController {
     this.addLog(kind, text);
   }
 
+  /** An irregularity seen on the layout itself (by the railway): kept in the register and scored, as if the far box had reported it. */
+  penalise(rule: ScoreRuleId, text: string, locoId: string | null = null): void {
+    this.irregularities.push(text);
+    this.addLog('irregularity', text);
+    this.events.emit('score', { rule, detail: '', locoId });
+  }
+
   cancelIncoming(): void {
     if (!this.v.incoming || this.v.incoming.departed) return;
     this.o.link.send({ type: 'operator', action: 'cancelIncoming' });
@@ -296,6 +310,14 @@ export class SectionController {
         this.v.releaseAvailable = m.active;
         this.changed();
         break;
+      case 'permission': {
+        const before = this.v.permission;
+        this.v.permission = { rear: m.rear, forward: m.forward };
+        if (before.rear !== m.rear) this.addLog('status', m.rear ? `Line blocked back (${m.rear === 'inside' ? 'inside the home signal' : 'outside the home signal'})` : 'Obstruction removed: line no longer blocked back');
+        if (before.forward !== m.forward) this.addLog('status', m.forward ? (m.forward === 'shunt' ? 'Shunt into the forward section accepted' : 'Token released for shunting') : before.forward === 'shunt' ? 'Shunt withdrawn: section clear' : 'Shunting token replaced');
+        this.changed();
+        break;
+      }
       case 'boxState':
         this.v.boxOpen = m.open;
         this.changed();

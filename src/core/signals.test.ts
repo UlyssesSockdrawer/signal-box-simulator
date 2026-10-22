@@ -32,28 +32,29 @@ describe('signals on the plan', () => {
   it('generates a complete semaphore arrangement for Sigsim Central, numbered west to east', () => {
     const { s, l, code, junction } = sgc();
     const r = generateSignals(s, l, { style: 'semaphore', shunt: true, shuntAhead: false });
-    expect(r).toEqual({ added: 14, kept: 0 });
+    expect(r).toEqual({ added: 18, kept: 0 });
     const sig = signalsOf(l);
     expect(sig.every((x) => x.style === 'semaphore' && !x.manual && x.boxId === 'sigsim-central')).toBe(true);
     const byKind = (k: string) => sig.filter((x) => x.kind === k).map((x) => `${code(x.circuitId)}.${x.end}`).sort();
     // Homes where each line meets the station: three arms from the west (P1, P2, goods), two from the east.
-    expect(byKind('home')).toEqual(['T10.0', 'T10.0', 'T2.1', 'T2.1', 'T2.1']);
-    // Starters at the ends of the platforms; an advanced starter at the west end, as the goods yard joins in between.
-    expect(byKind('starter')).toEqual(['T3.0', 'T4.0', 'T4.1', 'T5.0', 'T5.1']);
-    expect(byKind('distant')).toEqual(['T10.0', 'T2.1']);
-    // Shunt signals: out of the goods neck, and on the west end for setting back.
-    expect(byKind('shunt')).toEqual(['T3.1', 'T6.0']);
+    expect(byKind('home')).toEqual(['T12.0', 'T12.0', 'T2.1', 'T2.1', 'T2.1']);
+    // Starters at the ends of the platforms; an advanced starter at each end, at the end of the inner
+    // circuits (the west one would be there anyway, as the goods yard joins in between).
+    expect(byKind('starter')).toEqual(['T11.1', 'T3.0', 'T5.0', 'T5.1', 'T6.0', 'T6.1']);
+    expect(byKind('distant')).toEqual(['T12.0', 'T2.1']);
+    // Shunt signals: out of the goods neck, both ways on the west end, and back in from each inner circuit.
+    expect(byKind('shunt')).toEqual(['T11.0', 'T3.1', 'T4.0', 'T4.1', 'T7.0']);
     // The home arms read one destination each.
     const homes = sig.filter((x) => x.kind === 'home' && x.circuitId === 'sgc-t2');
     expect(homes.map((x) => signalRoutes(s, l, x).map((rt) => rt.label).sort().join('+')).sort()).toEqual(['to Goods shed+to Goods siding', 'to P1', 'to P2']);
-    // Levers 1 to 22 in one frame, west to east, with no gaps or repeats.
+    // Levers 1 to 26 in one frame, west to east, with no gaps or repeats.
     const levers = [...sig.filter((x) => x.number).map((x) => Number(x.number)), ...l.trackPlan.junctions.flatMap((j) => (j.kind === 'joint' ? [] : [Number(j.number), ...(j.fplNumber ? [Number(j.fplNumber)] : [])]))];
-    expect(levers.sort((a, b) => a - b)).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
+    expect(levers.sort((a, b) => a - b)).toEqual(Array.from({ length: 26 }, (_, i) => i + 1));
     expect(sig.find((x) => x.kind === 'distant' && x.circuitId === 'sgc-t2')!.number).toBe('1');
-    expect(sig.find((x) => x.kind === 'distant' && x.circuitId === 'sgc-t10')!.number).toBe('22');
+    expect(sig.find((x) => x.kind === 'distant' && x.circuitId === 'sgc-t10')!.number).toBe('26');
     // Points take their lever numbers; facing points on running lines have locks just before them.
-    expect(junction('sgc-j1').number).toBe('6');
-    expect(junction('sgc-j1').fplNumber).toBe('5');
+    expect(junction('sgc-j1').number).toBe('8');
+    expect(junction('sgc-j1').fplNumber).toBe('7');
     expect(needsFpl(s, l, junction('sgc-j1'))).toBe(true);
     expect(needsFpl(s, l, junction('sgc-j2'))).toBe(true);
     expect(needsFpl(s, l, junction('sgc-j4'))).toBe(true);
@@ -63,9 +64,9 @@ describe('signals on the plan', () => {
     expect(signalIssues(s, l)).toEqual([]);
   });
 
-  it('running roads: the lines, the platforms and the west end; not the goods neck, throat or yard roads', () => {
+  it('running roads: the lines, the inner circuits, the platforms and the west end; not the goods neck, throat or yard roads', () => {
     const { s, l, code } = sgc();
-    expect([...runningCircuits(s, l, s.boxes[0])].map(code).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T10', 'T11']);
+    expect([...runningCircuits(s, l, s.boxes[0])].map(code).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T11', 'T12', 'T13']);
   });
 
   it('colour light or mixed; shunt-ahead with a limit of shunt in the section', () => {
@@ -75,7 +76,7 @@ describe('signals on the plan', () => {
     expect(sig.every((x) => x.style === 'colourLight')).toBe(true);
     expect(sig.some((x) => x.kind === 'shunt')).toBe(false);
     const sa = sig.filter((x) => x.kind === 'shuntAhead');
-    expect(sa).toHaveLength(4);
+    expect(sa).toHaveLength(2);
     const los = sig.filter((x) => x.kind === 'limitOfShunt');
     expect(los.map((x) => [x.circuitId, x.end, x.back, x.number])).toEqual([
       ['sgc-t2', 0, 1409, ''],
@@ -133,7 +134,7 @@ describe('signals on the plan', () => {
     const { s, l, code } = sgc();
     generateSignals(s, l);
     const fromWestEnd = routesFrom(s, l, { circuitId: 'sgc-t3', end: 1, back: 0 }, 'shunt').map((r) => `${r.label}:${r.steps.map((x) => code(x.circuitId)).join('-')}`);
-    expect(fromWestEnd.sort()).toEqual(['to Goods shed:T6-T7-T9', 'to Goods siding:T6-T7-T8', 'to P1:T4']);
+    expect(fromWestEnd.sort()).toEqual(['to Goods shed:T7-T8-T10', 'to Goods siding:T7-T8-T9', 'to P1:T5']);
     // From the goods neck to the west end's advanced starter.
     const disc = signalsOf(l).find((x) => x.kind === 'shunt' && x.circuitId === 'sgc-t6')!;
     expect(signalRoutes(s, l, disc).map((r) => r.label)).toEqual(['to West end']);
@@ -149,7 +150,7 @@ describe('signals on the plan', () => {
     expect(pd.x).toBeLessThan(ph.x); // the distant stands out on the line, west of the home
     expect(pd.dx).toBeGreaterThan(0); // for eastbound trains
     const extra = addSignal(s, l, { circuitId: 'sgc-t8', end: 0, back: 20 }, 'shuntYellow', 'semaphore');
-    expect(extra.number).toBe('23');
+    expect(extra.number).toBe('27');
     updateSignal(l, extra.id, { number: '2' });
     expect(signalIssues(s, l).map((i) => i.text).join(' ')).toMatch(/Lever 2 is used twice/);
     numberLevers(s, l);
@@ -169,7 +170,7 @@ describe('signals on the plan', () => {
     expect(ms.find((x) => x.id === 'x2')).toBeUndefined();
     expect(ms.find((x) => x.id === 'x3')).toMatchObject({ back: 0, style: 'semaphore', number: '7', boxId: '', manual: false });
     expect(m.layouts[0].trackPlan.junctions[1].lock).toBeUndefined();
-    expect(ms).toHaveLength(15);
+    expect(ms).toHaveLength(19);
     expect(migrate(JSON.parse(JSON.stringify(m)))).toEqual(m);
     // Track deleted: its signals go with it.
     l.trackPlan.circuits = l.trackPlan.circuits.filter((c) => c.id !== 'sgc-t6');

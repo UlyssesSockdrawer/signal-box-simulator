@@ -226,6 +226,35 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Station limits, blocking back and shunting into the section (v0.3.32)
+
+* **Station limits** (core/stationLimits.ts): a box's own track, from its home signals out to its
+  section signals. **Sigsim Central** now has a **West inner** and an **East inner** circuit
+  (440 yd each) between the lines and the points, so its homes stand a quarter of a mile out; the
+  circuit codes are renumbered west to east (T1–T13; ids unchanged). Generating signals puts an
+  **advanced starter** at the end of each, as the box's track runs on 200 m or more past the points.
+* **Clearing point**: 440 yd inside each home signal, editable per layout on the Details tab
+  (`layout.clearingPoint`). Giving Line Clear while the line is obstructed that far in loses points.
+* **New bell codes**: **2-4** Blocking back inside home signal, **3-3** now Blocking back outside home
+  signal, **3-3-2** Shunt into forward section and **8** Shunt withdrawn (with **5-2** and **2-5** for
+  token lines). Saved code sets get them unless they already use the code. The simulated box answers
+  them: it gives 2-4 only after 2-1 for the last train with your instrument at Line Blocked, refuses
+  3-3 or 3-3-2 (no reply) while a train is signalled, holds its trains while the line is blocked,
+  shows Train On Line on your repeater for a shunt in the section, and takes 2-1 (Obstruction
+  removed), 8 or 2-5 as the line given back. Your line's view shows the permission given.
+* **In play mode trains need permission**: a shunt (or a train setting back) over the clearing point
+  waits for 2-4; a movement out past the section signal on to the line waits for 3-3-2 (a token on
+  a token line); out past the home signal from behind, for 3-3. A train's own run in, or out with
+  Line Clear, needs none. The Next step says what to ring, and when to give the line back.
+* **Setting back clear of the points**: a train sets back only where it fits clear of the points
+  behind it; one too long for the road draws forward beyond it first (over box track, and if need be
+  a little way into the section, as far as the limit of shunt or the clearing point), then sets back
+  from where it stands.
+* Scoring: permission asked for and given back (+5 each); asked while a train was signalled (−10);
+  Line Blocked while blocked back (−20); on the line without permission (−40); Line Clear with the
+  clearing point obstructed (−25).
+* Tutorial: **Station limits and shunting on the line**, on the Worked examples page.
+
 ## Interlocking, and trains that obey the signals (v0.3.31)
 
 * **Interlocking** (core/interlocking.ts), worked out from the signals placed on the plan and the
@@ -706,6 +735,7 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   routing.ts           Routes over the track plan, implicit home and section signals, play-mode readiness
   signals.ts           Signals placed on the plan: kinds, routes they read, generating, lever numbers, facing point locks
   interlocking.ts      Locking table worked out from the signals' routes, overrides, and the lever frame engine
+  stationLimits.ts     Station limits: circuits within the clearing point, a box's lines (blocking back, shunting into the section)
   occupancy.ts         Track occupancy board (fed by train events)
   railwaySim.ts        The simulated railway: trains moving through the plan, automatic signaller, rakes of stock
   railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units
@@ -751,7 +781,7 @@ npm run typecheck
 ## Where it goes next
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
-* Signaller play mode, in stages: signals placed on the plan, a lever frame with interlocking, train performance (braking, acceleration), then scoring on delays.
+* Signaller play mode, in stages: signals placed on the plan ✓, a lever frame with interlocking ✓, station limits and blocking back ✓, levers you pull yourself, train performance (braking, acceleration), then scoring on delays.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.
 * Android APK via Capacitor wrapping `dist/pwa/`.

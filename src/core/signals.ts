@@ -2,6 +2,9 @@ import { boxesOn } from './layouts';
 import { circuitLength } from './railway';
 import { boxSignals, canRun, lineCircuits, nextSteps, portsFrom, type Dir, type Step } from './routing';
 import { newId } from './store';
+
+/** Box track this long between the last points and the line gets an advanced starter. */
+const ADVANCED_STARTER_ROOM = 200;
 import { circuitPath, findCircuit, findJunction, portUse } from './trackPlan';
 import type { AppState, BoxDef, Junction, Layout, PlanSignal, SignalKind, SignallingOptions, SignalStyle, TrackCircuit } from './types';
 
@@ -26,7 +29,8 @@ import type { AppState, BoxDef, Junction, Layout, PlanSignal, SignalKind, Signal
  * not running roads.
  *  - Starters: at the exit end of every station road that leads on to a line through running track
  *    only; an advanced starter (the section signal) at the line itself when trains from sidings also
- *    join in between, or no station road leads there.
+ *    join in between, no station road leads there, or the box's track runs on 200 m or more past the
+ *    last points (room for a train to stand between the starter and the advanced starter).
  *  - Homes: where a line meets the box's track, one per destination (each station road, each siding
  *    or goods place, on through to a line) as arms on one post; a single home if there is one.
  *  - Distants: on the last circuit of the line before each home, 1,000 yards out (less on a short circuit).
@@ -450,7 +454,10 @@ export function generateSignals(state: AppState, layout: Layout, opts: Signallin
         sectionAt.push({ ...r, connId: d.connectionId });
         if (!has(at, 'main')) put(box.id, 'starter', at, `Starter to ${to} (${circuitPlaceName(layout, r.circuitId)})`);
       }
-      if (!isStationRoad(layout, n) && (sidingsJoin || !roads.length)) {
+      // An advanced starter also where the box's own track runs on a fair way past the points (its
+      // station limits stretch out along the line), so a train can stand clear of the station.
+      const roomy = n.owner.kind !== 'line' && circuitLength(state, layout, n).metres >= ADVANCED_STARTER_ROOM;
+      if (!isStationRoad(layout, n) && (sidingsJoin || !roads.length || roomy)) {
         const at = { circuitId: n.id, end: d.end, back: 0 };
         sectionAt.push({ circuitId: n.id, end: d.end, connId: d.connectionId });
         if (!has(at, 'main')) put(box.id, 'starter', at, `Advanced starter to ${to}`);

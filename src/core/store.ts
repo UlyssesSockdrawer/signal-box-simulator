@@ -1,4 +1,5 @@
 import { createDefaultState, DEFAULT_SETTINGS, FALLBACK_LAYOUT_NAME, SCHEMA_VERSION } from './defaults';
+import { COMMON_SIGNALS } from './bellcodes';
 import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
 import { sanitiseTimetables } from './timetables';
@@ -91,6 +92,18 @@ export function migrate(raw: unknown): AppState {
     for (const [id, e] of Object.entries(cs.trainCodes)) {
       const r = d.trainCodes[id]?.rank;
       if (e && typeof e.rank !== 'number' && typeof r === 'number') e.rank = r;
+    }
+  }
+  // Signals added in later versions (v0.3.32: blocking back inside the home, shunting into the forward
+  // section and shunt withdrawn) join every saved code set, unless that set already uses the code.
+  for (const cs of state.codeSets) {
+    if (!cs.signals || typeof cs.signals !== 'object') continue;
+    const used = new Set<string>([...Object.values(cs.signals), ...Object.values(cs.trainCodes ?? {}).map((e) => e?.code)]);
+    for (const id of ['blocking_back_inside', 'shunt_into_forward', 'shunt_withdrawn']) {
+      const code = COMMON_SIGNALS[id];
+      if (id in cs.signals || used.has(code)) continue;
+      cs.signals[id] = code;
+      used.add(code);
     }
   }
   if (!state.codeSets.some((c) => c.id === state.settings.codeSetId)) state.settings.codeSetId = state.codeSets[0].id;

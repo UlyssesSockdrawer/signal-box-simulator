@@ -110,6 +110,14 @@ export function layoutLineSpeed(layout: Layout | undefined): number {
   return positive(layout?.lineSpeed) ?? DEFAULT_LINE_SPEED;
 }
 
+/** The clearing point (440 yards) inside a home signal, in metres. */
+export const DEFAULT_CLEARING_POINT = 402.336;
+
+/** How far inside its home signals a layout's clearing point is, in metres. */
+export function layoutClearingPoint(layout: Layout | undefined): number {
+  return positive(layout?.clearingPoint) ?? DEFAULT_CLEARING_POINT;
+}
+
 /** A track circuit's line speed (its own, else the layout's), in metres per second. */
 export function circuitLineSpeed(layout: Layout, c: TrackCircuit): number {
   return positive(c.lineSpeed) ?? layoutLineSpeed(layout);
@@ -347,6 +355,7 @@ export function sanitiseRailwayData(state: AppState): void {
   for (const b of state.boxes) for (const c of b.connections) clean(c, 'sectionLength');
   for (const l of state.layouts) {
     clean(l, 'lineSpeed');
+    clean(l, 'clearingPoint');
     for (const c of l.trackPlan.circuits) {
       clean(c, 'length');
       clean(c, 'lineSpeed');

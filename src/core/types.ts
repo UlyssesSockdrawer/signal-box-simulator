@@ -571,6 +571,11 @@ export interface Layout {
   headcodeEra?: HeadcodeEra;
   /** Line speed in metres per second for its track (circuits may differ); absent = the default (60 mph). */
   lineSpeed?: number;
+  /**
+   * How far inside each home signal the clearing point is, in metres (v0.3.32); absent = the default
+   * (440 yards). The line may not be accepted (Line Clear) while it is obstructed this far in.
+   */
+  clearingPoint?: number;
   /** Rolling stock standing on its own (uncoupled from a loco): rakes left in roads (signaller play mode, v0.3.28). */
   stock?: StockRake[];
 }

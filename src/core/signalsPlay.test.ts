@@ -32,24 +32,24 @@ describe('trains and signals placed on the plan', () => {
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), view().locked))).toBe(true);
     t.tick(500);
     t.offNow().forEach((n) => seen.add(n));
-    // The goods arm of the bracket (4), with points 11 and catch points 14 reversed and the FPLs in.
+    // The goods arm of the bracket (4), with points 13 and catch points 16 reversed and the FPLs in.
     expect(seen).toContain('4');
     const lever = (n: string) => t.frame().il.levers.find((x) => x.number === n)!;
-    expect(t.frame().pointsLie(lever('11').id)).toBe('reverse');
-    expect(t.frame().pointsLie(lever('14').id)).toBe('reverse');
-    expect(t.frame().reversed(lever('10').key)).toBe(true);
+    expect(t.frame().pointsLie(lever('13').id)).toBe('reverse');
+    expect(t.frame().pointsLie(lever('16').id)).toBe('reverse');
+    expect(t.frame().reversed(lever('12').key)).toBe(true);
     // The other arms stay at danger; the distant can't come off (no run through).
     expect(t.off('2') || t.off('3') || t.off('1')).toBe(false);
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), view().arrivedDetected))).toBe(true);
-    // The disc at the west end it passed on the way (9) was cleared for it.
-    expect(seen).toContain('9');
+    // The disc at the west end it passed on the way (11) was cleared for it.
+    expect(seen).toContain('11');
     // Everything back to danger behind it, and the points back to normal.
     t.tick(1000);
     expect(t.offNow()).toEqual([]);
-    expect(t.frame().pointsLie(lever('11').id)).toBe('normal');
+    expect(t.frame().pointsLie(lever('13').id)).toBe('normal');
   });
 
-  it('a through express with Line Clear ahead: home, starter, then the distant come off', () => {
+  it('a through express with Line Clear ahead: home, starter, advanced starter, then the distant come off', () => {
     const t = signalled();
     t.workings.setRoute('sgc-west', 'sgc-east');
     t.west.requestIncoming('lms6233', 'express_passenger');
@@ -67,8 +67,9 @@ describe('trains and signals placed on the plan', () => {
     t.west.setInstrument('TOL');
     const seen = new Set<string>();
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), seen.has('1')), 60_000)).toBe(true);
-    // The disc at the west end stands on its way (facing it), so it is cleared too.
-    expect([...seen].sort()).toEqual(['1', '16', '2', '9']);
+    // Home, starter and advanced starter, then the distant; the discs on the inner and the west end
+    // stand on its way (facing it), so they are cleared too.
+    expect([...seen].sort((a, b) => Number(a) - Number(b))).toEqual(['1', '2', '6', '11', '18', '25']);
     t.east.sendBell('2');
     expect(t.until(() => !!t.east.view.outgoing?.arrived)).toBe(true);
     expect(t.offNow()).toEqual([]);
@@ -76,21 +77,21 @@ describe('trains and signals placed on the plan', () => {
 
   it('the interlocking governs: with the starter locked by the home (an added lock), the train waits at the starter until the home is back at danger', () => {
     const t = signalled();
-    t.l.trackPlan.interlocking = { extraLocks: [[t.id('2'), t.id('16')]] };
+    t.l.trackPlan.interlocking = { extraLocks: [[t.id('2'), t.id('18')]] };
     t.east.setOutgoing('lms5025', 'ordinary_passenger');
-    // A departure from P1 east would need 16; first bring a train in to P1 from the west.
+    // A departure from P1 east would need 18; first bring a train in to P1 from the west.
     t.west.requestIncoming('lms6233', 'express_passenger');
     accept(t, t.west, '4');
     const view = () => t.sim.incoming('sigsim-central', 'sgc-west')!;
     expect(t.until(() => t.off('2'), 120_000)).toBe(true);
-    // While 2 is off, 16 can't be pulled.
-    expect(t.frame().why(`sig:${t.id('16')}`, 'R')).toMatch(/locked by 2/);
+    // While 2 is off, 18 can't be pulled.
+    expect(t.frame().why(`sig:${t.id('18')}`, 'R')).toMatch(/locked by 2/);
     expect(t.until(() => !t.off('2'))).toBe(true);
-    expect(t.frame().why(`sig:${t.id('16')}`, 'R')).not.toMatch(/locked by 2/);
+    expect(t.frame().why(`sig:${t.id('18')}`, 'R')).not.toMatch(/locked by 2/);
     expect(t.until(() => view().arrivedDetected)).toBe(true);
   });
 
-  it('a departure from the goods yard: out under the disc, setting back at the west end under the next disc, then the starter with Line Clear', () => {
+  it('a departure from the goods yard: out under the disc, setting back at the west end under the next disc, then the starter and advanced starter with Line Clear', () => {
     const t = signalled();
     t.loco('lms7298').working.trainTypeId = 'pickup_goods';
     t.east.setOutgoing('lms7298', 'pickup_goods');
@@ -103,7 +104,7 @@ describe('trains and signals placed on the plan', () => {
     t.east.sendBell('2');
     const seen = new Set<string>();
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), !!t.east.view.outgoing?.arrived))).toBe(true);
-    expect(t.pulled()).toEqual(['9', '13', '16']);
+    expect(t.pulled()).toEqual(['11', '15', '18', '25']);
     expect(t.offNow()).toEqual([]);
   });
 
@@ -117,8 +118,8 @@ describe('trains and signals placed on the plan', () => {
     t.runner.load(tt);
     t.runner.start();
     expect(t.until(() => t.runner.items[0].state === 'done')).toBe(true);
-    // Out under the goods neck disc (13), back under the west end disc (9).
-    expect(t.pulled()).toEqual(['9', '13']);
+    // Out under the goods neck disc (15), back under the west end disc (11).
+    expect(t.pulled()).toEqual(['11', '15']);
     expect(t.offNow()).toEqual([]);
   });
 });

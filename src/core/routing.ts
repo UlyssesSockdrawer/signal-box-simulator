@@ -93,8 +93,8 @@ export function findPath(
     blocked?: (circuitId: string) => boolean;
     anyWay?: boolean;
     junctionFree?: (junctionId: string) => boolean;
-    /** Circuits a train may reverse in (none unless given). */
-    reverseIn?: (circuitId: string) => boolean;
+    /** Circuits a train may reverse in (none unless given), having run into it towards `toward`. */
+    reverseIn?: (circuitId: string, toward: 0 | 1) => boolean;
   } = {},
 ): Step[] | null {
   const key = (d: Dir) => `${d.circuitId}|${d.toward}`;
@@ -122,7 +122,7 @@ export function findPath(
       return path;
     }
     const around: Step[] = nextSteps(state, layout, s, { anyWay: opts.anyWay });
-    if (opts.reverseIn?.(s.circuitId) && prev.has(k)) {
+    if (prev.has(k) && opts.reverseIn?.(s.circuitId, s.toward)) {
       const c = findCircuit(layout.trackPlan, s.circuitId)!;
       const back = (1 - s.toward) as 0 | 1;
       if (opts.anyWay || canRun(c, back)) around.push({ circuitId: s.circuitId, toward: back, metres: s.metres, via: null, reverse: true });

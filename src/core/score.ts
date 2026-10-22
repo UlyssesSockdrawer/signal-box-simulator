@@ -34,6 +34,8 @@ export const SCORE_RULES = {
   in_blocked: { points: 5, label: 'Block instrument returned to Line Blocked', category: 'working' },
   clean_working: { points: 20, label: 'Clean working bonus: the whole train movement without an irregularity', category: 'working' },
   // ---- Regulating (two or more trains offered at once) ----
+  block_given: { points: 5, label: 'Permission to shunt on the line asked for and given (2-4, 3-3, 3-3-2 or 5-2)', category: 'working' },
+  block_cleared: { points: 5, label: 'Line given back after shunting (2-1 Obstruction removed, 8 Shunt withdrawn or 2-5)', category: 'working' },
   regulated_ok: { points: 5, label: 'Regulated correctly: accepted the higher class train first', category: 'procedure' },
 
   // ---- Procedure irregularities: mistakes that do not put a train at risk ----
@@ -50,6 +52,8 @@ export const SCORE_RULES = {
   tol_late: { points: -10, label: 'Train On Line not shown while the train was in the section', category: 'procedure' },
   lb_late: { points: -5, label: 'Instrument left off Line Blocked after the train cleared', category: 'procedure' },
   unexpected_out_of_section: { points: -10, label: 'Train out of section sent with no train in the section', category: 'procedure' },
+  block_busy: { points: -10, label: 'Asked to block the line while a train was signalled on it', category: 'procedure' },
+  block_not_expected: { points: -5, label: 'Gave back a line that had not been blocked', category: 'procedure' },
   regulated_wrong: { points: -10, label: 'Regulating: accepted a lower class train while a higher class one was waiting', category: 'procedure' },
 
   // ---- Safety: the ones that matter on a real railway ----
@@ -57,6 +61,9 @@ export const SCORE_RULES = {
   offered_section_busy: { points: -25, label: 'Train offered into a section that was not clear', category: 'safety' },
   out_of_section_early: { points: -40, label: 'Train out of section sent before the train arrived complete with tail lamp', category: 'safety' },
   lb_with_train: { points: -40, label: 'Line Blocked shown with a train in or approaching the section', category: 'safety' },
+  lb_while_blocked: { points: -20, label: 'Line Blocked shown while the line was blocked back for shunting', category: 'safety' },
+  shunt_without_permission: { points: -40, label: 'Shunted out on to the line without permission (blocking back, 3-3-2 or a token)', category: 'safety' },
+  lc_clearing_point: { points: -25, label: 'Line Clear given with the line inside the home signal obstructed (clearing point not clear)', category: 'safety' },
   no_line_clear: { points: -50, label: 'Train sent without Line Clear', category: 'safety' },
   no_token: { points: -50, label: 'Train sent without a token', category: 'safety' },
   unsignalled_train: { points: -50, label: 'Train ran without being signalled', category: 'safety' },

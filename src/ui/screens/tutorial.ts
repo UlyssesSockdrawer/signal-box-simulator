@@ -11,6 +11,7 @@ import { drawDiagram } from '../planDiagram';
 import { signalSample } from '../signalDrawing';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
+import { formatLength, layoutClearingPoint } from '../../core/railway';
 
 /*
  * The tutorial, in tabs: absolute block and bell codes explained, worked examples, the tapper and tokens,
@@ -43,6 +44,13 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
   const MISDESC = signalCode(cs, 'incorrectly_described');
   const ord = trainCode(cs, 'ordinary_passenger') || '3-1';
   const le = trainCode(cs, 'light_engine') || '2-3';
+  const BB_IN = signalCode(cs, 'blocking_back_inside');
+  const BB_OUT = signalCode(cs, 'blocking_back');
+  const SH_FWD = signalCode(cs, 'shunt_into_forward');
+  const SH_WD = signalCode(cs, 'shunt_withdrawn');
+  const TOKEN_REL = signalCode(cs, 'release_token');
+  const TOKEN_BACK = signalCode(cs, 'token_replaced');
+  const cpText = formatLength(layoutClearingPoint(layout ?? undefined), st.settings.units);
 
   // Trains named in the exercises, from where they stand now.
   const describe = (l: Loco | undefined) => {
@@ -370,6 +378,34 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
     ]),
   ];
 
+  const limits = [
+    h('h2', null, 'Station limits and shunting on the line'),
+    h('p', null, `${boxName}’s own track runs from its home signals out to its section signals (the advanced starters): its `, h('em', null, 'station limits'), '. The block sections are the lines between the boxes. Inside each home signal the line must be clear as far as the ', h('em', null, 'clearing point'), ` (${cpText} in) before you may accept a train: you must not give Line Clear while anything stands there.`),
+    h('p', null, 'So a train that has to shunt over the clearing point (to set back clear of points, say), or go out past your signals on to the line, needs the line protected first, by asking the box at the other end:'),
+    h(
+      'ul',
+      null,
+      h('li', null, h('strong', null, `${BB_IN} Blocking back inside home signal`), `: to the box in rear, before shunting over the clearing point. Only once you have sent ${TOOS} for the last train and your instrument is at LINE BLOCKED. Turn it to TRAIN ON LINE when they repeat it; when the line is clear again, send ${TOOS} (Obstruction removed) and put it back.`),
+      h('li', null, h('strong', null, `${BB_OUT} Blocking back outside home signal`), `: to the box in rear, before a movement goes out past your home signal on to the line behind it. Given only when the line is clear; ${TOOS} when finished.`),
+      h('li', null, h('strong', null, `${SH_FWD} Shunt into forward section`), `: to the box in advance, before a train draws forward past your section signal (no further than the limit of shunt). Their instrument shows TRAIN ON LINE; send ${SH_WD} (Shunt withdrawn) once it is back inside.`),
+      h('li', null, h('strong', null, `${TOKEN_REL} Release token for shunting`), `: on a token line, instead: they hold the plunger, you withdraw a token for the driver, and when it is back in your instrument you send ${TOKEN_BACK}.`),
+    ),
+    h('p', null, 'In play mode the trains wait at the clearing point or the signal until the permission is given, and the Next step says what to ring. Giving the line back while the shunt is still on it, or giving Line Clear with the clearing point obstructed, loses points.'),
+    h('div', { class: 'row' }, play(BB_IN, `${BB_IN}  Blocking back inside home`), play(BB_OUT, `${BB_OUT}  Blocking back outside home`), play(SH_FWD, `${SH_FWD}  Shunt into forward section`), play(SH_WD, `${SH_WD}  Shunt withdrawn`)),
+    h('h3', null, 'A goods train too long to set back inside'),
+    steps([
+      ['You', '', 'A long goods train leaving the yard must draw forward over the clearing point to set back clear of the points. It waits there.'],
+      ['You', CA, `Call attention to ${fy}.`],
+      [fy, CA, 'They are listening.'],
+      ['You', BB_IN, 'Blocking back inside home signal.'],
+      [fy, BB_IN, 'Repeated: the line is blocked back. Turn your instrument to TRAIN ON LINE. The train draws forward and sets back.'],
+      ['You', CA, 'Once it is clear of the clearing point, call attention.'],
+      [fy, CA, 'They are listening.'],
+      ['You', TOOS, 'Obstruction removed. Turn your instrument back to LINE BLOCKED.'],
+      [fy, TOOS, 'Repeated: the line is clear for their next train.'],
+    ]),
+  ];
+
   const tokenAndTapper = [
     h('h2', null, 'Using the tapper'),
     h('p', null, 'Press the TAPPER button (or the space bar) in rhythm. Beats close together are one group; a longer pause starts the next group. Stop tapping and the code is sent after a moment. The chips beside the tapper send the everyday codes, and the Code card lists them all. Timing can be adjusted in Settings.'),
@@ -387,7 +423,7 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
 
   const pages: Record<TutorialTab, Array<HTMLElement | null>> = {
     basics,
-    examples,
+    examples: [...examples, ...limits],
     tapper: tokenAndTapper,
     try: session.length ? session : [h('p', null, 'Set up a signal box with at least one connected box in the Box configurator, then come back here.'), tryButton()],
     timetables: ttSection,
