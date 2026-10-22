@@ -39,7 +39,9 @@ import type { AppState, Layout, Loco, PlaceRef, PlanSignal, StockRake } from './
  *
  * SIGNALS PLACED ON THE PLAN (v0.3.31): when a box's layout has signals of its own, trains obey them.
  * A train stops at the first signal at danger facing it on its path (running trains the stop signals,
- * shunts the shunt signals, else whatever stands there; distants are passed at caution). Once the
+ * shunts the shunt signals, else whatever stands there; distants are passed at caution). Once a running
+ * train has met a stop signal, the shunt signals on the route it gives are not for it (v0.3.34): they
+ * stay on. A train starting from a siding with no stop signal behind it obeys the discs out. Once the
  * rules above have set a route (the path runs on past a signal), the automatic signaller sets the
  * points and FPLs and pulls the signal off through the box's lever FRAME, which allows it only as the
  * interlocking does (core/interlocking.ts); a distant comes off once every stop signal it needs is
@@ -857,20 +859,38 @@ export class RailwaySim {
   /** Signals that apply to this train's movement, where they stand along its path (metres), post by post. */
   private postsAhead(layout: Layout, t: SimTrain, opts: { behind?: boolean } = {}): Array<{ pos: number; arms: PlanSignal[]; part: number; passable: boolean; frame: Frame }> {
     const end = this.partsTotal(t);
-    const shunt = t.purpose.kind === 'shunt';
+    const shuntMove = t.purpose.kind === 'shunt';
     const all = signalsOf(layout);
     if (!all.length) return [];
     const out: Array<{ pos: number; arms: PlanSignal[]; part: number; passable: boolean; frame: Frame }> = [];
-    t.parts.forEach((p, i) => {
-      if (!p.circuitId) return;
+    const postsOn = (p: Part) => {
       const here = all.filter((s) => s.circuitId === p.circuitId && s.end === p.toward && s.kind !== 'distant' && s.kind !== 'shuntAhead' && s.kind !== 'limitOfShunt' && this.box(s.boxId));
       const posts = new Map<string, PlanSignal[]>();
       for (const s of here) posts.set(postKey(s), [...(posts.get(postKey(s)) ?? []), s]);
-      for (const arms of posts.values()) {
+      return [...posts.values()];
+    };
+    // Where the movement first meets a stop signal (passed or not): beyond it, a running train is on the
+    // route that signal gives it, and shunt signals standing on that route do not apply to it.
+    let firstMain = Infinity;
+    t.parts.forEach((p) => {
+      if (!p.circuitId) return;
+      for (const arms of postsOn(p)) {
+        if (!arms.some((s) => SIGNAL_KINDS[s.kind].cls === 'main')) continue;
+        const pos = this.posIn(p, arms[0].back);
+        if (pos !== null && pos < firstMain) firstMain = pos;
+      }
+    });
+    t.parts.forEach((p, i) => {
+      if (!p.circuitId) return;
+      // Shunting here: a shunt move, a leg before the train sets back, or where it stood to set back.
+      const shunt = shuntMove || t.pending.length > 0 || !!p.setBack;
+      for (const arms of postsOn(p)) {
         const frame = this.frameOf(arms[0].boxId, layout);
         if (!frame) continue;
         const pos = this.posIn(p, arms[0].back);
         if (pos === null) continue;
+        // A running train already signalled by a stop signal passes the shunt signals on its route.
+        if (!shunt && pos > firstMain + 0.5 && !arms.some((s) => SIGNAL_KINDS[s.kind].cls === 'main')) continue;
         // Signals at the very end of the path are not passed (the train stops there anyway).
         if (pos >= end - 0.5) continue;
         if (opts.behind ? pos >= t.head - 0.5 : pos < t.head - 0.01) continue;

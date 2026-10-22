@@ -20,7 +20,7 @@ function signalled() {
 }
 
 describe('trains and signals placed on the plan', () => {
-  it('a goods train into the shed: the goods home and the disc on its way come off once the route is set, and go back behind it', () => {
+  it('a goods train into the shed: the goods home comes off once the route is set (not the disc on its way), and goes back behind it', () => {
     const t = signalled();
     t.west.requestIncoming('lms8233', 'mineral');
     accept(t, t.west, '4-1');
@@ -41,8 +41,8 @@ describe('trains and signals placed on the plan', () => {
     // The other arms stay at danger; the distant can't come off (no run through).
     expect(t.off('2') || t.off('3') || t.off('1')).toBe(false);
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), view().arrivedDetected))).toBe(true);
-    // The disc at the west end it passed on the way (11) was cleared for it.
-    expect(seen).toContain('11');
+    // The disc at the west end it passes on the way (11) stays on: the home signal routes the train past it.
+    expect(seen).not.toContain('11');
     // Everything back to danger behind it, and the points back to normal.
     t.tick(1000);
     expect(t.offNow()).toEqual([]);
@@ -67,9 +67,9 @@ describe('trains and signals placed on the plan', () => {
     t.west.setInstrument('TOL');
     const seen = new Set<string>();
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), seen.has('1')), 60_000)).toBe(true);
-    // Home, starter and advanced starter, then the distant; the discs on the inner and the west end
-    // stand on its way (facing it), so they are cleared too.
-    expect([...seen].sort((a, b) => Number(a) - Number(b))).toEqual(['1', '2', '6', '11', '18', '25']);
+    // Home, starter and advanced starter, then the distant. The discs on the inner and the west end
+    // (facing it on its way) stay on: the home signal routes a running train past them.
+    expect([...seen].sort((a, b) => Number(a) - Number(b))).toEqual(['1', '2', '18', '25']);
     t.east.sendBell('2');
     expect(t.until(() => !!t.east.view.outgoing?.arrived)).toBe(true);
     expect(t.offNow()).toEqual([]);
@@ -105,6 +105,19 @@ describe('trains and signals placed on the plan', () => {
     const seen = new Set<string>();
     expect(t.until(() => (t.offNow().forEach((n) => seen.add(n)), !!t.east.view.outgoing?.arrived))).toBe(true);
     expect(t.pulled()).toEqual(['11', '15', '18', '25']);
+    expect(t.offNow()).toEqual([]);
+  });
+
+  it('a light engine leaving the goods yard westbound: out under the discs (no stop signal behind it), then the advanced starter', () => {
+    const t = signalled();
+    t.west.setOutgoing('lms7298', 'light_engine');
+    t.west.sendBell('1');
+    t.tick();
+    t.west.sendBell('2-3');
+    t.tick(8000);
+    t.west.sendBell('2');
+    expect(t.until(() => !!t.west.view.outgoing?.arrived)).toBe(true);
+    expect(t.pulled()).toEqual(['5', '10', '15']);
     expect(t.offNow()).toEqual([]);
   });
 

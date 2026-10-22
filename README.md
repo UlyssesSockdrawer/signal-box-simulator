@@ -228,6 +228,13 @@ joined by junctions. The plan starts empty: build your own.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
 
+## Fix: shunt signals and running trains (v0.3.34)
+
+* In play mode the automatic signaller no longer pulls off ground (shunt) signals on the route of a
+  running train that a stop signal (home or starter) has already signalled: they stay on and the
+  train passes them. Shunt moves, trains setting back, and trains starting from a siding with no stop
+  signal behind them still go under the shunt signals.
+
 ## Style guide pass (v0.3.33)
 
 * **Settings**, **Bell code reference**, **Tutorial** and **Trains in places** now follow the style
