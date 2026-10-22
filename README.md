@@ -242,6 +242,9 @@ joined by junctions. The plan starts empty: build your own.
   device's clock (at ×1). Times in Next step and the timetable strip are given on the timetable's
   clock ("due at about 09:08"), not the device's.
 * **Shorter Next step prompts**: plain instructions, so the bar takes less room on a phone.
+* **Headshunts get a yellow shunt signal.** Generating signals now puts a yellow shunt signal on the
+  yard side of points where a headshunt leaves the way to the running line: a move into the headshunt
+  may pass it at danger, a move towards the running line may not.
 * The box's side panel (Timetable, Bell codes, Trains in places) is a mahogany case on a teak
   shelf like the desk, and follows the liveries.
 

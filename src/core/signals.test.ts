@@ -190,4 +190,26 @@ describe('signals on the plan', () => {
     expect(signalRoutes(s, l, p1)[0].to).toMatchObject({ kind: 'signal', circuitId: 'sgc-t4' });
     expect(signalIssues(s, l).filter((x) => homes.some((h) => h.id === x.signalId))).toEqual([]);
   });
+
+  it('puts a yellow shunt signal where a headshunt leaves the line to the yard', () => {
+    const { s, l } = sgc();
+    const p = l.trackPlan;
+    // Sigsim Central with a headshunt: points part way up the goods neck, the headshunt running back west.
+    p.circuits = p.circuits.filter((c) => c.id !== 'sgc-t6');
+    p.junctions.push({ id: 'hs-j', kind: 'pointsLeft', number: '6', boxId: 'sigsim-central', x: 21, y: -3, rotate: true, mirror: false } as (typeof p.junctions)[number]);
+    const t6 = shippedState().layouts[0].trackPlan.circuits.find((c) => c.id === 'sgc-t6')!;
+    p.circuits.push(
+      { ...t6, id: 'hs-t13', code: 'T13', name: 'Goods neck', ends: [{ kind: 'joined', junctionId: 'sgc-j2', port: 'reverse' }, { kind: 'joined', junctionId: 'hs-j', port: 'reverse' }] },
+      { ...t6, id: 'hs-t12', code: 'T12', name: 'Yard neck', via: undefined, ends: [{ kind: 'joined', junctionId: 'hs-j', port: 'toe' }, { kind: 'joined', junctionId: 'sgc-j5', port: 'b' }] },
+      { ...t6, id: 'hs-t14', code: 'T14', name: 'Headshunt', via: undefined, ends: [{ kind: 'joined', junctionId: 'hs-j', port: 'normal' }, { kind: 'bufferStops', x: 12, y: -3 }] },
+    );
+    generateSignals(s, l, { style: 'semaphore', shunt: true, shuntAhead: false });
+    const yellow = signalsOf(l).filter((x) => x.kind === 'shuntYellow');
+    // On the yard side of the headshunt points, facing them: into the headshunt at danger, towards the main line only when off.
+    expect(yellow.map((x) => [x.circuitId, x.end])).toEqual([['hs-t12', 0]]);
+    expect(signalRoutes(s, l, yellow[0]).map((r) => r.label).sort()).toEqual(['to Goods neck', 'to Headshunt']);
+    // Still a disc at the foot of the neck on to the running line, and none inside the yard.
+    expect(signalsOf(l).some((x) => x.kind === 'shunt' && x.circuitId === 'hs-t13' && x.end === 0)).toBe(true);
+    expect(signalsOf(l).some((x) => ['sgc-t8', 'sgc-t9', 'sgc-t7', 'hs-t14'].includes(x.circuitId))).toBe(false);
+  });
 });

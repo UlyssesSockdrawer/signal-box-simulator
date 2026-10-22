@@ -479,6 +479,20 @@ export function generateSignals(state: AppState, layout: Layout, opts: Signallin
     // ---- shunt signals
     if (opts.shunt) {
       const mine = plan.circuits.filter((c) => c.owner.kind === 'box' && c.owner.boxId === box.id);
+      /** Running the way it points along track off the running lines, does it reach a running line? */
+      const reachesRunning = (start: Dir): boolean => {
+        const seen = new Set<string>();
+        const todo: Dir[] = [start];
+        while (todo.length && seen.size < 200) {
+          const d = todo.pop()!;
+          const k = `${d.circuitId}|${d.toward}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          if (running.has(d.circuitId)) return true;
+          todo.push(...nextSteps(state, layout, d, { anyWay: true }));
+        }
+        return false;
+      };
       for (const c of mine) {
         for (const end of [0, 1] as const) {
           const e = c.ends[end];
@@ -493,8 +507,20 @@ export function generateSignals(state: AppState, layout: Layout, opts: Signallin
           const here = circuitPlaceName(layout, c.id);
           if (!running.has(c.id)) {
             // Out of the sidings on to running track.
-            if (!toRunning.length) continue;
-            put(box.id, toSidings.length ? 'shuntYellow' : 'shunt', at, `Shunt from ${here}`);
+            if (toRunning.length) {
+              put(box.id, toSidings.length ? 'shuntYellow' : 'shunt', at, `Shunt from ${here}`);
+              continue;
+            }
+            // Further back, where these points choose between heading for the running line and staying
+            // off it (a headshunt, or back into the yard): a yellow shunt signal, which a move into the
+            // headshunt may pass at danger but a move towards the running line may not.
+            if (!isPoints(j)) continue;
+            const legs = portsFrom(j, e.port)
+              .map((p) => portUse(plan, j.id, p))
+              .filter((u): u is { circuit: TrackCircuit; end: 0 | 1 } => !!u && u.circuit.id !== c.id)
+              .map((u) => ({ circuitId: u.circuit.id, toward: (1 - u.end) as 0 | 1 }));
+            const toMain = legs.filter((d) => reachesRunning(d));
+            if (toMain.length && toMain.length < legs.length) put(box.id, 'shuntYellow', at, `Shunt from ${here}`);
           } else if (c.owner.kind !== 'line') {
             // On running track, towards points with no running signal: for setting back.
             put(box.id, 'shunt', at, `Shunt from ${here}`);
