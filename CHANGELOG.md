@@ -2,6 +2,19 @@
 
 Short notes on what each version brought. Newest first.
 
+## 0.3.36
+
+* New kinds of place: carriage sidings, carriage shed, turntable, coaling stage, water column or tank,
+  and diesel fuelling point.
+* Play mode tracks which way each engine faces (smokebox or tender first). A turntable turns it;
+  running round does not. Arriving and departing trains say when they run tender first.
+* A connected box can be marked as working a turntable off the layout: engines sent to it come back
+  smokebox first.
+* Generated timetables turn steam engines when a turntable is to hand (on the layout, or at such a
+  box), send them for coal and water (diesels for fuel), and sometimes take the empty stock to the
+  carriage sidings and back into a platform. Without a turntable they note "runs tender first".
+* Released engines are suggested to the turntable or shed first when adding moves by hand.
+
 ## 0.3.35
 
 * A track circuit can be a road of several places, e.g. a platform that is also the parcels dock of

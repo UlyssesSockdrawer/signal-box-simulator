@@ -205,3 +205,86 @@ describe('engine release when generating (v0.3.35)', () => {
     expect(found).toBeGreaterThan(0);
   });
 });
+
+describe('turntables, servicing and carriage sidings when generating (v0.3.36)', () => {
+  const place = (id: string, kind: import('./types').PlaceKind, name: string, roads = 1) => ({ id, kind, name, shortName: '', notes: '', roads: Array.from({ length: roads }, (_, i) => ({ id: `${id}-r${i + 1}`, name: `Road ${i + 1}`, notes: '' })), workedBy: [{ kind: 'box' as const, boxId: 'becton' }] });
+  /** Becton with only the tender engine working stopping trains in and out. */
+  const terminus = () => {
+    const s = becton();
+    for (const l of s.roster) l.jobs = [];
+    s.roster[0].jobs = [{ id: 'j1', duty: 'stopping', trainTypeId: 'ordinary_passenger', placeIds: ['fy1', 'becton-station'], weight: 3 }];
+    return s;
+  };
+  const gen = (s: AppState, seed: number) => {
+    const l = s.layouts[0];
+    const r = generateTimetable(s, l, opts({ timing: 'session', seed, length: 150 }), 'G');
+    const w = walkTimetable(s, l, r.tt);
+    expect({ seed, errors: w.errors }).toEqual({ seed, errors: 0 });
+    return r.tt;
+  };
+
+  it('turns a steam engine on the turntable before it works back, and coals or waters it', () => {
+    let turned = 0;
+    let serviced = 0;
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = terminus();
+      s.layouts[0].places.push(place('tt', 'turntable', 'Becton turntable'), place('coal', 'coaling', 'Becton coal stage'), place('water', 'water', 'Becton water column'));
+      const tt = gen(s, seed);
+      const arrivals = tt.entries.filter((e) => e.kind === 'run' && e.to.placeId === 'becton-station');
+      for (const a of arrivals) {
+        const mine = tt.entries.filter((e) => e.trainId === a.trainId);
+        const after = mine.slice(mine.indexOf(a) + 1);
+        const out = after.findIndex((e) => e.kind === 'run');
+        if (out < 0) continue;
+        const between = after.slice(0, out);
+        expect(between.some((e) => e.to.placeId === 'tt')).toBe(true);
+        turned++;
+        if (between.some((e) => e.to.placeId === 'coal' || e.to.placeId === 'water')) serviced++;
+        expect(after[out].notes).not.toMatch(/tender first/);
+      }
+    }
+    expect(turned).toBeGreaterThan(0);
+    expect(serviced).toBeGreaterThan(0);
+  });
+
+  it('with no turntable it says the engine runs tender first', () => {
+    let found = 0;
+    for (let seed = 1; seed <= 10; seed++) found += gen(terminus(), seed).entries.filter((e) => /Runs tender first/.test(e.notes)).length;
+    expect(found).toBeGreaterThan(0);
+  });
+
+  it('a box beyond with a turntable turns it: light engine there and back', () => {
+    let found = 0;
+    for (let seed = 1; seed <= 20 && !found; seed++) {
+      const s = terminus();
+      s.boxes[0].connections[0].turntable = true;
+      const tt = gen(s, seed);
+      for (const e of tt.entries.filter((x) => x.kind === 'run' && x.trainTypeId === 'light_engine' && x.to.placeId === 'fy1' && /to be turned/.test(x.notes))) {
+        found++;
+        const mine = tt.entries.filter((x) => x.trainId === e.trainId);
+        const next = mine[mine.indexOf(e) + 1];
+        expect(next).toMatchObject({ kind: 'run', trainTypeId: 'light_engine', from: { placeId: 'fy1' } });
+        expect(next.notes).toMatch(/turned/);
+      }
+    }
+    expect(found).toBeGreaterThan(0);
+  });
+
+  it('empty stock to the carriage sidings and back into a platform for its next working', () => {
+    let found = 0;
+    for (let seed = 1; seed <= 30 && !found; seed++) {
+      const s = terminus();
+      s.layouts[0].places.push(place('cs', 'carriageSidings', 'Becton carriage sidings', 2));
+      const tt = gen(s, seed);
+      const out = tt.entries.filter((e) => e.kind === 'shunt' && e.trainTypeId === 'ecs' && e.from.placeId === 'becton-station' && e.to.placeId === 'cs');
+      for (const e of out) {
+        found++;
+        const mine = tt.entries.filter((x) => x.trainId === e.trainId);
+        const back = mine.slice(mine.indexOf(e) + 1).find((x) => x.trainTypeId === 'ecs');
+        expect(back).toMatchObject({ kind: 'shunt', from: { placeId: 'cs' }, to: { placeId: 'becton-station' } });
+        expect(mine[mine.indexOf(back!) + 1]).toMatchObject({ kind: 'run', from: back!.to });
+      }
+    }
+    expect(found).toBeGreaterThan(0);
+  });
+});

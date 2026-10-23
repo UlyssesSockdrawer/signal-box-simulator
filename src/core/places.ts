@@ -18,12 +18,22 @@ export const PLACE_SHORT_MAX = 6;
 
 export const PLACE_KINDS: Array<{ kind: PlaceKind; name: string; plural: string; newName: string; firstRoad: (n: number) => string }> = [
   { kind: 'station', name: 'Station', plural: 'Stations', newName: 'New station', firstRoad: (n) => `P${n}` },
+  { kind: 'carriageSidings', name: 'Carriage sidings', plural: 'Carriage sidings', newName: 'Carriage sidings', firstRoad: (n) => `Road ${n}` },
+  { kind: 'carriageShed', name: 'Carriage shed', plural: 'Carriage sheds', newName: 'Carriage shed', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
   { kind: 'sidings', name: 'Sidings', plural: 'Sidings', newName: 'New sidings', firstRoad: (n) => `Road ${n}` },
   { kind: 'goods', name: 'Goods yard or shed', plural: 'Goods yards and sheds', newName: 'Goods yard', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
   { kind: 'depot', name: 'Loco shed or depot', plural: 'Loco sheds and depots', newName: 'Loco shed', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
+  { kind: 'turntable', name: 'Turntable', plural: 'Turntables', newName: 'Turntable', firstRoad: (n) => (n === 1 ? 'Turntable road' : `Road ${n}`) },
+  { kind: 'coaling', name: 'Coaling stage', plural: 'Coaling stages', newName: 'Coaling stage', firstRoad: (n) => (n === 1 ? 'Coal road' : `Road ${n}`) },
+  { kind: 'water', name: 'Water column or tank', plural: 'Water columns and tanks', newName: 'Water column', firstRoad: (n) => (n === 1 ? 'Water road' : `Road ${n}`) },
+  { kind: 'fuel', name: 'Diesel fuelling point', plural: 'Diesel fuelling points', newName: 'Fuelling point', firstRoad: (n) => (n === 1 ? 'Fuel road' : `Road ${n}`) },
   { kind: 'fiddleYard', name: 'Fiddle yard', plural: 'Fiddle yards', newName: 'Fiddle yard', firstRoad: (n) => `Road ${n}` },
   { kind: 'other', name: 'Other place', plural: 'Other places', newName: 'New place', firstRoad: (n) => `Road ${n}` },
 ];
+/** Places where engines are serviced or turned (v0.3.36): light engines go there, not trains. */
+export const ENGINE_PLACES: ReadonlySet<PlaceKind> = new Set(['depot', 'turntable', 'coaling', 'water', 'fuel']);
+/** Places where coaching stock is stabled (v0.3.36): empty stock goes there between turns. */
+export const CARRIAGE_PLACES: ReadonlySet<PlaceKind> = new Set(['carriageSidings', 'carriageShed']);
 export const kindInfo = (k: PlaceKind) => PLACE_KINDS.find((x) => x.kind === k) ?? PLACE_KINDS[PLACE_KINDS.length - 1];
 
 /** `base`, or `base 2`, `base 3`… whichever is not already taken. */
@@ -152,7 +162,7 @@ export function addPlace(state: AppState, layoutId: string, kind: PlaceKind, opt
   const layout = state.layouts.find((l) => l.id === layoutId);
   if (!layout || layout.places.length >= MAX_PLACES) return null;
   const info = kindInfo(kind);
-  const roads = Math.max(0, Math.min(MAX_ROADS, opts.roads ?? (kind === 'fiddleYard' ? 4 : kind === 'other' ? 0 : 1)));
+  const roads = Math.max(0, Math.min(MAX_ROADS, opts.roads ?? (kind === 'fiddleYard' ? 4 : kind === 'carriageSidings' ? 2 : kind === 'other' ? 0 : 1)));
   const place: Place = {
     id: newId(kind === 'fiddleYard' ? 'fy' : 'place'),
     kind,
@@ -315,6 +325,7 @@ export function sanitisePlaces(state: AppState): void {
     layout.places ??= [];
     const circuits = new Set(layout.trackPlan.circuits.map((c) => c.id));
     for (const p of layout.places) {
+      if (!PLACE_KINDS.some((k) => k.kind === p.kind)) p.kind = 'other';
       p.roads ??= [];
       p.workedBy ??= [];
       p.notes ??= '';

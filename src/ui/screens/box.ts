@@ -1259,7 +1259,7 @@ function connectionUI(
           trainCard(inc.locoId, inc.trainTypeId),
           routeField(),
           sim && !thr && !inc.arrived ? destinationField(sv) : null,
-          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, sim && inc.departed && !inc.arrived && sv ? `${sv.status}${sv.where ? ` Track circuits: head at ${sv.where}.` : ''}` : status),
+          h('p', { class: `status ${inc.departed ? 'go' : inc.held ? 'held' : ''}` }, sim && inc.departed && !inc.arrived && sv ? `${sv.status}${sv.facing ? ` Engine ${sv.facing}.` : ''}${sv.where ? ` Track circuits: head at ${sv.where}.` : ''}` : status),
           inc.departed && !inc.arrived
             ? h(
                 'div',

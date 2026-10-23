@@ -1,7 +1,7 @@
 import { newId } from './store';
 import { MARKED, type OccupancyBoard } from './occupancy';
-import { arrivalChoices, roadsOfCircuit } from './places';
-import { DEFAULT_DIVERGING_SPEED, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoLength, locoMaxSpeed, needsEngineLeading, splitVehicles, trainLength, vehiclesText, workingVehicles } from './railway';
+import { arrivalChoices, CARRIAGE_PLACES, ENGINE_PLACES, roadsOfCircuit } from './places';
+import { DEFAULT_DIVERGING_SPEED, facingWords, hasFacing, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoLength, locoMaxSpeed, needsEngineLeading, splitVehicles, trainLength, vehiclesText, workingVehicles } from './railway';
 import { boxSignals, findPath, leavesScene, lineCircuits, lineEntries, nextSteps, type Dir, type Passing, type SignalDef, type Step } from './routing';
 import { Emitter, type Scheduler } from './scheduler';
 import type { SectionSession } from './session';
@@ -95,6 +95,8 @@ const CLEAR_OF_POINTS = 10;
 /** Uncoupling an engine from its train, and coupling one up (simulated ms). */
 const UNCOUPLE_MS = 30_000;
 const COUPLE_MS = 45_000;
+/** Turning an engine on a turntable (simulated ms). */
+const TURN_MS = 90_000;
 
 /** Two lists of vehicles together (counts of the same kind added up). */
 function mergeVehicles(a: StockVehicles[], b: StockVehicles[]): StockVehicles[] {
@@ -206,6 +208,10 @@ interface SimTrain {
   penalised: Set<string>;
   /** The engine is at the front of its train on the leg it is running (it changes with every reversal). */
   leads: boolean;
+  /** The engine runs smokebox (No. 1 end) first on this leg; null = not known (v0.3.36). Flips with every reversal. */
+  smoke: boolean | null;
+  /** Stopped on a turntable: when it will have been turned (scheduler time). */
+  turnAt: number | null;
 }
 
 /**
@@ -248,6 +254,8 @@ export interface SimIncomingView {
   /** Where it arrived (the road), for the arrival report. */
   at: PlaceRef | null;
   status: string;
+  /** How the engine is running: "smokebox first", "tender first"… ('' when not known or it does not matter). */
+  facing: string;
 }
 
 export interface SimEvents extends Record<string, unknown> {
@@ -452,6 +460,7 @@ export class RailwaySim {
     t.readyAt = this.now + DRIVER_MS / this.scale();
     // Setting back: the other end of the train leads now.
     t.leads = !t.leads;
+    if (t.smoke !== null) t.smoke = !t.smoke;
   }
 
   /**
@@ -549,6 +558,9 @@ export class RailwaySim {
     for (const p of t.parts) p.origin = true;
     t.head = this.partsTotal(t);
     t.leads = end === null || end === toward;
+    // Which way it faces (as far as is known): smokebox first if its smokebox points the way it sets off.
+    const f = l.working.facing;
+    t.smoke = f && f.circuitId === circuitId ? f.end === toward : null;
     return t;
   }
 
@@ -572,10 +584,26 @@ export class RailwaySim {
     if (!last?.circuitId) return;
     const end = (t.leads && !this.stockOn(layout, last.circuitId) ? last.toward : 1 - last.toward) as 0 | 1;
     const circuitId = last.circuitId;
+    // Which way the engine faces: its smokebox the way it ran, if it ran smokebox first.
+    const facing = t.smoke === null ? null : ((t.smoke ? last.toward : 1 - last.toward) as 0 | 1);
     this.o.update((s) => {
       const loco = s.roster.find((x) => x.id === t.locoId);
-      if (loco) loco.working.locoEnd = { circuitId, end };
+      if (!loco) return;
+      loco.working.locoEnd = { circuitId, end };
+      if (facing !== null) loco.working.facing = { circuitId, end: facing };
+      delete loco.working.offFacing;
     });
+  }
+
+  /** Does a train stopping on this circuit stop on a turntable (a road of a place that is a turntable)? */
+  private onTurntable(layout: Layout, circuitId: string | null): boolean {
+    return !!circuitId && roadsOfCircuit(layout, circuitId).some((x) => x.place.kind === 'turntable');
+  }
+
+  /** Words for how a loco is running ('' when it does not matter or is not known): "tender first", "smokebox first"… */
+  private facingNote(t: SimTrain): string {
+    const l = this.loco(t.locoId);
+    return l && t.smoke !== null && hasFacing(l) ? facingWords(l, t.smoke) : '';
   }
 
   private blank(l: Loco, purpose: Purpose, length: number): SimTrain {
@@ -601,6 +629,8 @@ export class RailwaySim {
       permWait: '',
       penalised: new Set(),
       leads: true,
+      smoke: null,
+      turnAt: null,
     };
   }
 
@@ -640,6 +670,12 @@ export class RailwaySim {
         }
         const t = this.blank(l, { kind: 'incoming', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
         t.fromLine = line;
+        // Which way it faces coming on (v0.3.36): back from a box with no turntable that it went off to, the
+        // other way round from how it went; otherwise (a box that turns its engines, or trains made up off the
+        // layout) smokebox first.
+        const off = l.working.offFacing;
+        const turns = !!this.boxDef(b.boxId)?.connections.find((c) => c.id === s.connection.id)?.turntable;
+        t.smoke = hasFacing(l) ? (off && off.connectionId === s.connection.id && !turns ? !off.smokeboxFirst : true) : null;
         if (!path) {
           t.status = 'Cannot find a way from the far end of the line to the home signal on the track plan.';
           this.trains.push(t);
@@ -707,10 +743,12 @@ export class RailwaySim {
       const c = this.roadCircuit(layout, r);
       const plat = c ? !!findCircuit(layout.trackPlan, c)?.platform : false;
       // Parcels and vans: a dock (a goods or other place's road on a platform, often the same track as a station road) first.
+      // Empty stock: to the carriage sidings or shed; light engines to the shed, turntable or servicing.
+      if (type === 'ecs') return CARRIAGE_PLACES.has(k) ? 0 : k === 'station' ? (plat ? 1 : 2) : k === 'sidings' ? 2 : 3;
       if (type === 'parcels') return (k === 'goods' || k === 'other') && plat ? 0 : k === 'station' ? (plat ? 1 : 2) : k === 'goods' || k === 'sidings' ? 2 : 3;
       if (PASSENGER.has(type)) return k === 'station' ? (plat ? 0 : 1) : 3;
       if (GOODS.has(type)) return k === 'goods' || k === 'sidings' ? 0 : k === 'station' ? (plat ? 2 : 1) : 3;
-      return k === 'depot' || k === 'sidings' ? 0 : k === 'goods' ? 1 : k === 'station' ? 2 : 3;
+      return ENGINE_PLACES.has(k) || k === 'sidings' ? 0 : k === 'goods' ? 1 : k === 'station' ? 2 : 3;
     };
     const fits = (r: PlaceRef) => {
       const c = this.roadCircuit(layout, r);
@@ -832,7 +870,8 @@ export class RailwaySim {
         t.dest = { kind: 'line', boxId: b.boxId, connId: s.connection.id };
         t.locked = true;
         t.readyAt = this.now + DRIVER_MS / this.scale();
-        t.status = `Section signal off: departing for ${s.connection.neighbourName}.`;
+        const fn = this.facingNote(t);
+        t.status = `Section signal off: departing for ${s.connection.neighbourName}${fn ? ` (${fn})` : ''}.`;
         this.outgoingStatus.delete(key);
         this.trains.push(t);
       }
@@ -1235,14 +1274,14 @@ export class RailwaySim {
       },
       // 2. It draws the stock off to a free road.
       () =>
-        this.jobMove(lay(), j, pilot.id, () => (stockAt ??= this.freeRoad(lay(), boxId, this.stockLength(pilot.id), new Set([c]), ['sidings', 'station', 'other', 'goods', 'depot'])), {
+        this.jobMove(lay(), j, pilot.id, () => (stockAt ??= this.freeRoad(lay(), boxId, this.stockLength(pilot.id), new Set([c]), ['carriageSidings', 'carriageShed', 'sidings', 'station', 'other', 'goods', 'depot'])), {
           length: this.stockLength(pilot.id),
           startToward: outer,
           text: `${pn} is drawing the stock off ${this.circuitName(layout, c)}, releasing ${who}.`,
         }),
       // 3. The engine, released, goes out of the way.
       () =>
-        this.jobMove(lay(), j, l.id, () => (engineAt ??= this.freeRoad(lay(), boxId, locoLength(l), new Set([c, stockAt?.circuitId ?? '']), ['depot', 'sidings', 'goods', 'station', 'other'])), {
+        this.jobMove(lay(), j, l.id, () => (engineAt ??= this.freeRoad(lay(), boxId, locoLength(l), new Set([c, stockAt?.circuitId ?? '']), ['depot', 'turntable', 'coaling', 'water', 'fuel', 'sidings', 'goods', 'station', 'other'])), {
           length: locoLength(l),
           startToward: outer,
           text: `${who} is released: out of the way while the pilot puts the stock back.`,
@@ -1265,7 +1304,7 @@ export class RailwaySim {
       () => {
         if (pilotEnd !== outer) return 'done';
         const back = homeCircuit && pilotHome && !this.o.board.occupants(homeCircuit).length ? { circuitId: homeCircuit, ref: pilotHome } : null;
-        return this.jobMove(lay(), j, pilot.id, () => back ?? this.freeRoad(lay(), boxId, locoLength(pilot), new Set([c]), ['depot', 'sidings', 'goods', 'station', 'other']), {
+        return this.jobMove(lay(), j, pilot.id, () => back ?? this.freeRoad(lay(), boxId, locoLength(pilot), new Set([c]), ['depot', 'turntable', 'coaling', 'water', 'fuel', 'sidings', 'goods', 'station', 'other']), {
           length: locoLength(pilot),
           startToward: outer,
           text: `${pn} is getting clear of the outer end.`,
@@ -1780,6 +1819,17 @@ export class RailwaySim {
     const d = t.dest;
     const lastCircuit = t.parts[t.parts.length - 1].circuitId;
     if (t.purpose.kind === 'shunt') {
+      // On a turntable: turned before it is done (it faces the other way now).
+      if (this.onTurntable(layout, lastCircuit) && t.length <= locoLength(this.loco(t.locoId) ?? ({ powerType: '' } as Loco)) + 1) {
+        if (t.turnAt === null) {
+          t.turnAt = this.now + TURN_MS / this.scale();
+          t.status = 'Being turned on the turntable.';
+          return;
+        }
+        if (this.now < t.turnAt) return;
+        if (t.smoke !== null) t.smoke = !t.smoke;
+        t.turnAt = Infinity;
+      }
       const done = t.purpose.onDone;
       this.trains = this.trains.filter((x) => x !== t);
       this.forgetTrain(t);
@@ -1810,6 +1860,17 @@ export class RailwaySim {
     this.trains = this.trains.filter((x) => x !== t);
     this.forgetTrain(t);
     const d = t.dest;
+    // How it went off (smokebox first or not), to know how it comes back.
+    if (d?.kind === 'line') {
+      const connectionId = d.connId;
+      const smokeboxFirst = t.smoke ?? true;
+      this.o.update((s) => {
+        const loco = s.roster.find((x) => x.id === t.locoId);
+        if (!loco) return;
+        delete loco.working.facing;
+        loco.working.offFacing = { connectionId, smokeboxFirst };
+      });
+    }
     if (d?.kind === 'line') this.reportFar(d.boxId, d.connId, t.locoId);
   }
 
@@ -2058,6 +2119,7 @@ export class RailwaySim {
       passedDetected,
       at: dest,
       status: t.permWait || t.status,
+      facing: this.facingNote(t),
     };
   }
 

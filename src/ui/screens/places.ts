@@ -445,7 +445,7 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
   const intro = h(
     'p',
     { class: 'shelf-help' },
-    `Everywhere on ${layout.name} that trains stand: stations, sidings, goods yards and sheds, loco depots and fiddle yards. `,
+    `Everywhere on ${layout.name} that trains stand: stations, carriage sidings and sheds, sidings, goods yards, loco depots, turntables, coaling stages, water columns, fuelling points and fiddle yards. `,
     'Say which signal boxes work each one and which lines run to it, and give it its roads (platforms, siding roads, yard roads). ',
     'Roads can be tied to track circuits on the track plan.',
   );

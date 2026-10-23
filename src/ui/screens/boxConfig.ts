@@ -276,6 +276,18 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
                 ? `Choose the fiddle yard, or the place on ${lay.name} that ${c.neighbourName} works. Places are set up in the layout configurator (Places).`
                 : `${lay.name} has no places yet. Add a fiddle yard or station in the layout configurator (Places).`,
         ),
+        h(
+          'div',
+          { class: 'field' },
+          h('span', { class: 'field-label' }, 'Turntable'),
+          h(
+            'label',
+            { class: 'check', for: `bc_tt_${c.id}` },
+            h('input', { id: `bc_tt_${c.id}`, type: 'checkbox', checked: !!c.turntable, on: { change: (e: Event) => updConn(c.id, (cc) => ((e.target as HTMLInputElement).checked ? (cc.turntable = true) : delete cc.turntable)) } }),
+            h('span', null, `${c.neighbourName} works a turntable (and engine shed) off the layout`),
+          ),
+          h('small', { class: 'help' }, c.turntable ? `Engines sent to ${c.neighbourName} come back turned, smokebox first. Timetables send engines there to be turned when the layout has no turntable of its own.` : `Without one, an engine that goes to ${c.neighbourName} and back comes back facing the other way.`),
+        ),
       ),
       h(
         'div',

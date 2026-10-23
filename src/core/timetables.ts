@@ -1,5 +1,5 @@
 import { canWork, migrateJob, newJob, runsLight } from './duties';
-import { findPlace, findRoad, roadTrackKey } from './places';
+import { CARRIAGE_PLACES, ENGINE_PLACES, findPlace, findRoad, roadTrackKey } from './places';
 import type { AppState, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableEntryKind, TimetableTiming, TimetableTrain } from './types';
 
 /*
@@ -284,7 +284,8 @@ export function thenEntry(state: AppState, layout: Layout, tt: Timetable, trainI
       e.kind === 'run'
         ? layout.places.find((p) => p.id !== end.placeId && p.kind === 'fiddleYard')
         : place?.kind === 'station'
-          ? local.find((p) => p.kind !== 'station') ?? local[0]
+          ? // A released engine: to the turntable if there is one, else the shed or servicing, else anywhere but stock sidings.
+            local.find((p) => p.kind === 'turntable') ?? local.find((p) => ENGINE_PLACES.has(p.kind)) ?? local.find((p) => p.kind !== 'station' && !CARRIAGE_PLACES.has(p.kind)) ?? local[0]
           : local.find((p) => p.kind === 'station') ?? local[0];
     e.to = e.kind === 'shunt' && !other ? { ...end } : { placeId: other?.id ?? '', roadId: '' };
   } else {

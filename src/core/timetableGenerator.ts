@@ -21,7 +21,8 @@
 import { canWork, dutyOf, jobCategory as dutyCategory, isRailcar, pickWorking, runsLight, type MixCategory } from './duties';
 import { engineRelease } from './runRound';
 import { HeadcodeAllocator, destinationOf, eraOf } from './headcodes';
-import { roadTrackKey } from './places';
+import { CARRIAGE_PLACES, ENGINE_PLACES, roadTrackKey } from './places';
+import { isSteam } from './railway';
 import { routeBetween, type RouteLeg, type TtPos } from './timetables';
 import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTrain } from './types';
 
@@ -600,13 +601,41 @@ export class TimetableGenerator {
       const rel = inb ? engineRelease(this.state, this.layout, inb.boxId, inb.connectionId, platform) : { known: false, canLeave: true, canRunRound: true };
       // Engine release: to a siding, goods yard or depot the same box works, or run round.
       const boxes = this.boxesOf(d);
-      const release = rel.canLeave
-        ? this.layout.places.filter((p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'))
-        : [];
+      const release = rel.canLeave ? this.localPlaces(d, boxes).filter((p) => !CARRIAGE_PLACES.has(p.kind)) : [];
       release.sort((a, b) => rank(a) - rank(b));
       let leaveAt = m1.arr + 12 + Math.floor(this.rng() * 6);
       let released = false;
-      for (const r of release) {
+      // A steam engine working back the way it came would run tender first: turn it if there is a turntable (v0.3.36).
+      const wantTurn = isSteam(u.loco) && this.returnsSameWay(o, d, back);
+      // Sometimes the empty stock goes to the carriage sidings while it waits, and comes back to a platform for its next working.
+      const cs = this.localPlaces(d, boxes).filter((p) => CARRIAGE_PLACES.has(p.kind));
+      if (cs.length && this.rng() < 0.45) {
+        const save = this.snap(draft);
+        if (this.viaCarriageSidings(u, draft, d, platform, cs, type, back, wantTurn, boxes)) return true;
+        this.restore(draft, save);
+      }
+      // Engine servicing on release: turned, coaled or watered (steam), fuelled (diesel), then back on.
+      if (rel.canLeave) {
+        const save = this.snap(draft);
+        const stops = this.serviceStops(u, d, boxes, wantTurn);
+        const backOn = stops.length ? this.visitAndBack(draft, u, d, platform, coaches, stops, m1.arr + 3, `Uncouple and leave the coaches in ${this.roadName(platform)}.`) : null;
+        if (backOn) {
+          leaveAt = Math.max(leaveAt, backOn.arr + 4);
+          released = true;
+          draft.notes = `Terminates at ${dName}. The engine goes to ${stops.map((x) => this.servicePhrase(x)).join(', then ')}, and works the coaches back to ${this.placeName(back)}.`;
+        } else this.restore(draft, save);
+        // No turntable on the layout: a box beyond that has one turns it (a light engine run there and back).
+        if (!released && wantTurn && !stops.some((x) => x.kind === 'turntable')) {
+          const save2 = this.snap(draft);
+          const back2 = this.remoteTurn(draft, u, d, platform, coaches, release, m1.arr + 3);
+          if (back2) {
+            leaveAt = Math.max(leaveAt, back2.arr + 4);
+            released = true;
+            draft.notes = `Terminates at ${dName}. The engine runs light to ${back2.notes.match(/turned at (.*?)[,.]/)?.[1] ?? 'the next box'} to be turned, and works the coaches back to ${this.placeName(back)}.`;
+          } else this.restore(draft, save2);
+        }
+      }
+      for (const r of released ? [] : release) {
         const save = this.snap(draft);
         const out = this.move(draft, u, 'shunt', 'light_engine', r.id, m1.arr + 3, m1.arr + 10, `Uncouple and leave the coaches in ${this.roadName(platform)}. Light engine to ${r.name}.`);
         if (!out) {
@@ -669,6 +698,7 @@ export class TimetableGenerator {
       if (!m4) return false;
       // The coaches' hold on the platform ends as the train leaves.
       coaches.to = Math.min(coaches.to, leaveAt);
+      if (wantTurn && !this.turned(draft)) this.tenderFirst(u, m4, draft);
       return true;
     }
     // Goods (or anything else) into a yard: it shunts the yard, then goes back. A train to the loco's
@@ -679,12 +709,158 @@ export class TimetableGenerator {
       draft.notes = `${oName} to ${dName}, where it stays.`;
       return true;
     }
-    const dwell = 10 + Math.floor(this.rng() * 8);
+    let dwell = 10 + Math.floor(this.rng() * 8);
     const goods = !COACHING.has(type);
+    // Turned while the yard is shunted, when there is a turntable to hand (v0.3.36).
+    const wantTurn = isSteam(u.loco) && this.returnsSameWay(o, d, back);
+    if (wantTurn) {
+      const tt = this.localPlaces(d, this.boxesOf(d)).filter((p) => p.kind === 'turntable');
+      if (tt.length) {
+        const save = this.snap(draft);
+        const yardHold = draft.endHold!;
+        const b2 = this.visitAndBack(draft, u, d, { ...m1.to }, yardHold, tt.slice(0, 1), m1.arr + 4, 'Leaves the wagons in the yard.');
+        if (b2) dwell = Math.max(dwell, b2.arr + 3 - m1.arr);
+        else this.restore(draft, save);
+      }
+    }
     const m2 = this.move(draft, u, 'run', type, back, m1.arr + dwell, INF, goods ? (type === 'mineral' ? 'Empties back.' : 'Takes the outgoing wagons back.') : '');
     if (!m2) return false;
+    if (wantTurn && !this.turned(draft)) this.tenderFirst(u, m2, draft);
     draft.notes = goods ? `To ${dName}, shunts the yard, and back to ${this.placeName(back)}${type === 'mineral' ? ' with the empties' : ''}.` : `To ${dName} and back to ${this.placeName(back)}.`;
     return true;
+  }
+
+  /** Places of the boxes given (other than `d`) reachable from `d` without block signalling. */
+  private localPlaces(d: string, boxes: string[]): Place[] {
+    return this.layout.places.filter(
+      (p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'),
+    );
+  }
+
+  /** Does the train go back out over the line it came in on (so its engine would face the wrong way unless turned)? */
+  private returnsSameWay(o: string, d: string, back: string): boolean {
+    const inb = this.inboundLine(o, d);
+    const legs = routeBetween(this.state, this.layout, d, back) ?? [];
+    const out = legs.find((l) => l.kind === 'line' && l.dir === 'out') as Extract<RouteLeg, { kind: 'line' }> | undefined;
+    return !!inb && !!out && inb.boxId === out.boxId && inb.connectionId === out.connectionId;
+  }
+
+  /** Where a released engine goes to be serviced: the turntable (if it wants turning), then coal and water (steam) or fuel (diesel). */
+  private serviceStops(u: Unit, d: string, boxes: string[], wantTurn: boolean): Place[] {
+    const near = this.localPlaces(d, boxes);
+    const first = (k: Place['kind']) => near.find((p) => p.kind === k);
+    const out: Place[] = [];
+    const tt = first('turntable');
+    if (tt && (wantTurn || (isSteam(u.loco) && this.rng() < 0.3))) out.push(tt);
+    if (isSteam(u.loco)) {
+      const coal = first('coaling');
+      const water = first('water');
+      if (coal && this.rng() < 0.5) out.push(coal);
+      if (water && this.rng() < 0.5) out.push(water);
+    } else if (!isRailcar(u.loco)) {
+      const fuel = first('fuel');
+      if (fuel && this.rng() < 0.6) out.push(fuel);
+    }
+    return out;
+  }
+
+  /** "the turntable at X", "the coaling stage"… for notes. */
+  private servicePhrase(p: Place): string {
+    return p.kind === 'turntable' ? `${p.name} to be turned` : p.kind === 'coaling' ? `${p.name} for coal` : p.kind === 'water' ? `${p.name} for water` : p.kind === 'fuel' ? `${p.name} for fuel` : p.name;
+  }
+
+  /** Minutes at a servicing stop. */
+  private serviceMin(p: Place): number {
+    return p.kind === 'turntable' ? 3 : p.kind === 'coaling' ? 6 : p.kind === 'water' ? 3 : p.kind === 'fuel' ? 5 : 4;
+  }
+
+  /**
+   * The engine leaves its train on `home` (keeping that road held for it), goes round the stops given
+   * (light engine shunts), and comes back on to its train. Returns the move back on, or null.
+   */
+  private visitAndBack(draft: Draft, u: Unit, d: string, home: PlaceRef, hold: Interval, stops: Place[], at: number, first: string): Move | null {
+    let t = at;
+    let firstMove = true;
+    for (const p of stops) {
+      const why = p.kind === 'turntable' ? 'Light engine to the turntable: turned to face the other way.' : p.kind === 'coaling' ? 'Light engine to the coaling stage.' : p.kind === 'water' ? 'Light engine to the water column for water.' : p.kind === 'fuel' ? 'Light engine to the fuelling point.' : `Light engine to ${p.name}.`;
+      const m = this.move(draft, u, 'shunt', 'light_engine', p.id, t, t + this.serviceMin(p) + 3, firstMove ? `${first} ${why}` : why);
+      if (!m) return null;
+      if (firstMove) hold.to = INF;
+      firstMove = false;
+      t = m.arr + this.serviceMin(p);
+    }
+    const backOn = this.move(draft, u, 'shunt', 'light_engine', home.placeId === d ? d : home.placeId, t, INF, `Back on to its train in ${this.roadName(home)}.`, home.roadId);
+    if (!backOn || backOn.to.roadId !== home.roadId) return null;
+    return backOn;
+  }
+
+  /**
+   * Turned by a box beyond (v0.3.36): no turntable here, but a line leads to a box that works one (its
+   * connection is marked as having a turntable). The engine runs light there and back, to a road out of
+   * the way, then back on to its train. Returns the move back on, or null.
+   */
+  private remoteTurn(draft: Draft, u: Unit, d: string, platform: PlaceRef, coaches: Interval, release: Place[], at: number): Move | null {
+    if (!release.length) return null;
+    for (const b of this.boxesOf(d)) {
+      const box = this.state.boxes.find((x) => x.id === b);
+      for (const c of box?.connections ?? []) {
+        if (!c.turntable || !c.placeId || !this.placeMap.has(c.placeId)) continue;
+        try {
+          const out = this.move(draft, u, 'run', 'light_engine', c.placeId, at, at + 20, `Uncouple and leave the coaches in ${this.roadName(platform)}. Light engine to ${c.neighbourName}, to be turned at ${c.neighbourName}.`);
+          if (!out) continue;
+          coaches.to = INF;
+          const ret = this.move(draft, u, 'run', 'light_engine', release[0].id, out.arr + 8, out.arr + 20, `Back from ${c.neighbourName}, turned.`);
+          if (!ret) continue;
+          const on = this.move(draft, u, 'shunt', 'light_engine', d, ret.arr + 2, INF, `Back on to the coaches in ${this.roadName(platform)}, smokebox first for the run back.`, platform.roadId);
+          if (!on || on.to.roadId !== platform.roadId) continue;
+          on.notes = `Back on to the coaches in ${this.roadName(platform)} (turned at ${c.neighbourName}).`;
+          return on;
+        } catch (e) {
+          if (!(e instanceof Conflict)) throw e;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The empty stock goes to the carriage sidings (or shed) while it waits (v0.3.36): the engine takes it
+   * there as empty stock, is released (and serviced) meanwhile, and brings it back into a platform for its
+   * next working. True when planned (the train's last move is the run back).
+   */
+  private viaCarriageSidings(u: Unit, draft: Draft, d: string, platform: PlaceRef, cs: Place[], type: string, back: string, wantTurn: boolean, boxes: string[]): boolean {
+    const m1 = draft.moves[draft.moves.length - 1];
+    const sid = this.pick(cs)!;
+    const e1 = this.move(draft, u, 'shunt', 'ecs', sid.id, m1.arr + 4, INF, `Empty stock from ${this.roadName(platform)} to ${sid.name}.`);
+    if (!e1) return false;
+    const stockAt: PlaceRef = { ...e1.to };
+    const hold = draft.endHold!;
+    let t = e1.arr + 6 + Math.floor(this.rng() * 8);
+    const stops = this.serviceStops(u, sid.id, boxes, wantTurn);
+    if (stops.length) {
+      const on = this.visitAndBack(draft, u, sid.id, stockAt, hold, stops, e1.arr + 2, `Uncouple from the empty stock in ${this.roadName(stockAt)}.`);
+      if (!on) return false;
+      t = Math.max(t, on.arr + 3);
+    }
+    const e2 = this.move(draft, u, 'shunt', 'ecs', d, t, INF, `Empty stock from ${sid.name} into the platform for its next working.`, platform.roadId);
+    if (!e2) return false;
+    const m4 = this.move(draft, u, 'run', type, back, e2.arr + 6 + Math.floor(this.rng() * 4), INF);
+    if (!m4) return false;
+    draft.notes = `Terminates at ${this.placeName(d)}. The empty stock goes to ${sid.name}${stops.length ? ` while the engine goes to ${stops.map((x) => this.servicePhrase(x)).join(', then ')}` : ''}, and comes back into the platform to form the train back to ${this.placeName(back)}.`;
+    if (wantTurn && !this.turned(draft)) this.tenderFirst(u, m4, draft);
+    return true;
+  }
+
+  /** Has the chain turned its engine (a turntable visit, or a run to a box that turns it)? */
+  private turned(draft: Draft): boolean {
+    return draft.moves.some((m) => /turned/i.test(m.notes) || this.placeMap.get(m.to.placeId)?.kind === 'turntable');
+  }
+
+  /** Note on a move run with the engine facing backwards (no turntable to turn it). */
+  private tenderFirst(u: Unit, m: Move, draft: Draft): void {
+    const w = /tank/i.test(u.loco.powerType) ? 'bunker first' : 'tender first';
+    m.notes = [m.notes, `Runs ${w} (no turntable to turn it).`].filter(Boolean).join(' ');
+    draft.notes = [draft.notes, `The engine runs ${w} on the way back.`].filter(Boolean).join(' ');
   }
 
   /** The line a train from `o` comes in on to `d`'s box (the last line in), if any. */
@@ -699,7 +875,7 @@ export class TimetableGenerator {
 
   /** A place an engine can go to out of the way, near `d` (a depot, sidings or goods yard the same box works). */
   private releaseFor(d: string, boxes: string[]): string | null {
-    const ps = this.layout.places.filter((p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'));
+    const ps = this.localPlaces(d, boxes).filter((p) => !CARRIAGE_PLACES.has(p.kind));
     ps.sort((a, b) => rank(a) - rank(b));
     return ps[0]?.id ?? null;
   }
@@ -966,7 +1142,7 @@ export class TimetableGenerator {
 
 /** Ranking of release places: an engine shed first, then sidings, then the goods yard. */
 function rank(p: Place): number {
-  return p.kind === 'depot' ? 0 : p.kind === 'sidings' ? 1 : p.kind === 'goods' ? 2 : 3;
+  return p.kind === 'depot' ? 0 : ENGINE_PLACES.has(p.kind) ? 1 : p.kind === 'sidings' ? 2 : p.kind === 'goods' ? 3 : 4;
 }
 
 function locoLabel(l: Loco): string {

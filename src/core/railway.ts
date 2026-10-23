@@ -352,7 +352,11 @@ export function sanitiseRailwayData(state: AppState): void {
   if (positive(st.simSpeed) === undefined) st.simSpeed = 30 * MPS_PER_MPH;
   st.timeScale = Number.isFinite(st.timeScale) ? Math.min(10, Math.max(1, Math.round(st.timeScale))) : 1;
   st.modelOccupancy = st.modelOccupancy === true;
-  for (const b of state.boxes) for (const c of b.connections) clean(c, 'sectionLength');
+  for (const b of state.boxes)
+    for (const c of b.connections) {
+      clean(c, 'sectionLength');
+      if (c.turntable !== undefined && c.turntable !== true) delete c.turntable;
+    }
   for (const l of state.layouts) {
     clean(l, 'lineSpeed');
     clean(l, 'clearingPoint');
@@ -381,6 +385,11 @@ export function sanitiseRailwayData(state: AppState): void {
     // Where the loco is in its train (v0.3.35): a circuit and one of its ends.
     const e = l.working?.locoEnd;
     if (e !== undefined && !(e && typeof e.circuitId === 'string' && e.circuitId && (e.end === 0 || e.end === 1))) delete l.working.locoEnd;
+    // Which way it faces (v0.3.36), and how it went off the layout.
+    const f = l.working?.facing;
+    if (f !== undefined && !(f && typeof f.circuitId === 'string' && f.circuitId && (f.end === 0 || f.end === 1))) delete l.working.facing;
+    const o = l.working?.offFacing;
+    if (o !== undefined && !(o && typeof o.connectionId === 'string' && typeof o.smokeboxFirst === 'boolean')) delete l.working.offFacing;
   }
 }
 
@@ -419,4 +428,21 @@ export function splitVehicles<T extends { kind: string; count: number; metres: n
     }
   }
   return { taken, left: left.filter((v) => v.count > 0) };
+}
+
+/** Does this loco face a particular way (a steam engine, or a diesel or electric with No. 1 and No. 2 ends)? Multiple units do not count. */
+export function hasFacing(l: Loco): boolean {
+  return !isUnit(l) && /steam|tender|tank|diesel|electric/i.test(l.powerType);
+}
+
+/** Is it a steam engine (which wants turning to run smokebox first)? */
+export function isSteam(l: Loco): boolean {
+  return /steam|tender|tank/i.test(l.powerType) && !isUnit(l);
+}
+
+/** Running smokebox (No. 1 end) first or not, in words: "smokebox first", "tender first", "bunker first", "No. 2 end leading". */
+export function facingWords(l: Loco, smokeboxFirst: boolean): string {
+  const p = l.powerType.toLowerCase();
+  if (/steam|tender|tank/.test(p)) return smokeboxFirst ? 'smokebox first' : /tank/.test(p) ? 'bunker first' : 'tender first';
+  return smokeboxFirst ? 'No. 1 end leading' : 'No. 2 end leading';
 }

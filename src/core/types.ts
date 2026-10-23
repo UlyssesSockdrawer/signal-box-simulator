@@ -64,6 +64,14 @@ export interface Working {
    * Absent, or for another circuit = not known: it is taken to be at the end it leaves by.
    */
   locoEnd?: { circuitId: string; end: 0 | 1 };
+  /**
+   * Which way the engine faces (signaller play mode, v0.3.36): the end of the circuit it stands on that
+   * its smokebox (a diesel's No. 1 end) points to. Running the other way it is tender (bunker) first.
+   * Only a turntable (or a triangle) turns it. Absent, or for another circuit = not known.
+   */
+  facing?: { circuitId: string; end: 0 | 1 };
+  /** How it faced when it last ran off the layout over a line (to know how it comes back). */
+  offFacing?: { connectionId: string; smokeboxFirst: boolean };
 }
 
 /*
@@ -251,7 +259,19 @@ export interface GeneratorOptions {
  * (a junction box). Each place has roads (platforms, siding roads, shed roads, yard roads),
  * which may be tied to a track circuit on the layout's track plan.
  */
-export type PlaceKind = 'station' | 'sidings' | 'goods' | 'depot' | 'fiddleYard' | 'other';
+export type PlaceKind =
+  | 'station'
+  | 'carriageSidings'
+  | 'carriageShed'
+  | 'sidings'
+  | 'goods'
+  | 'depot'
+  | 'turntable'
+  | 'coaling'
+  | 'water'
+  | 'fuel'
+  | 'fiddleYard'
+  | 'other';
 
 export interface PlaceRoad {
   id: string;
@@ -297,6 +317,12 @@ export interface ConnectionDef {
   shelfPosition: number;
   /** Length of the block section in metres; absent = the default (2 miles). Its line's track circuits share it. */
   sectionLength?: number;
+  /**
+   * The far (simulated) box works a turntable (and engine shed) off the layout (v0.3.36): an engine sent
+   * to it comes back turned (smokebox first). Timetables use it to turn engines when the layout has none.
+   * Without it, an engine that went off over this line comes back the other way round.
+   */
+  turntable?: boolean;
 }
 
 export interface BoxDef {

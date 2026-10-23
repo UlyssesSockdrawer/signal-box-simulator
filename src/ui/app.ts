@@ -20,7 +20,7 @@ import { generateScreen } from './screens/timetableGenerate';
 import { findTimetable } from '../core/timetables';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.35';
+export const APP_VERSION = '0.3.36';
 
 export interface Ctx {
   store: Store;
