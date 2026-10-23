@@ -62,6 +62,8 @@ On phones the shelf shows one instrument group at a time and the desk becomes ta
 * In the Device theme that means wood and brass throughout. The Big Four themes swap the shelf and
   button colours for the company's livery (`--shelf-bg`, `--btn-*` tokens in styles.css); the
   instrument cases on the block shelf stay wood and brass in every theme.
+* Every full screen (from v0.3.33) is centred and sits on the teak shelf (`.config-shelf`), its parts
+  in mahogany cases (`.config-case`) headed by a brass plate (`.plate`).
 
 ## Adding boxes and connections (v0.3.5)
 
@@ -225,6 +227,190 @@ joined by junctions. The plan starts empty: build your own.
   automatically, including any already in saved plans.
 * Saves from earlier versions become one layout (named from the old layout name) holding all the
   boxes, the fiddle yard and the track plan, and it is the active layout.
+
+## Fix: shunt signals and running trains (v0.3.34)
+
+* In play mode the automatic signaller no longer pulls off ground (shunt) signals on the route of a
+  running train that a stop signal (home or starter) has already signalled: they stay on and the
+  train passes them. Shunt moves, trains setting back, and trains starting from a siding with no stop
+  signal behind them still go under the shunt signals.
+
+## Style guide pass (v0.3.33)
+
+* **Settings**, **Bell code reference**, **Tutorial** and **Trains in places** now follow the style
+  guide like the configurators: centred on the page, on the teak shelf, with each part in a mahogany
+  case headed by a brass plate.
+* Settings flows its cases into columns, so short cases leave no gaps under them.
+* The bell code tables line up (same column widths in both), and on a phone each code becomes a
+  compact row (code, class, meaning, Play) instead of a table that scrolls sideways.
+* The tutorial is a centred reading column, one case per section.
+* Trains in places: road cards on teak inside the place cases; the move selector fills the row when
+  it wraps.
+* The box's side panel (Timetable, Bell codes, Trains in places) keeps its own layout.
+
+## Station limits, blocking back and shunting into the section (v0.3.32)
+
+* **Station limits** (core/stationLimits.ts): a box's own track, from its home signals out to its
+  section signals. **Sigsim Central** now has a **West inner** and an **East inner** circuit
+  (440 yd each) between the lines and the points, so its homes stand a quarter of a mile out; the
+  circuit codes are renumbered west to east (T1–T13; ids unchanged). Generating signals puts an
+  **advanced starter** at the end of each, as the box's track runs on 200 m or more past the points.
+* **Clearing point**: 440 yd inside each home signal, editable per layout on the Details tab
+  (`layout.clearingPoint`). Giving Line Clear while the line is obstructed that far in loses points.
+* **New bell codes**: **2-4** Blocking back inside home signal, **3-3** now Blocking back outside home
+  signal, **3-3-2** Shunt into forward section and **8** Shunt withdrawn (with **5-2** and **2-5** for
+  token lines). Saved code sets get them unless they already use the code. The simulated box answers
+  them: it gives 2-4 only after 2-1 for the last train with your instrument at Line Blocked, refuses
+  3-3 or 3-3-2 (no reply) while a train is signalled, holds its trains while the line is blocked,
+  shows Train On Line on your repeater for a shunt in the section, and takes 2-1 (Obstruction
+  removed), 8 or 2-5 as the line given back. Your line's view shows the permission given.
+* **In play mode trains need permission**: a shunt (or a train setting back) over the clearing point
+  waits for 2-4; a movement out past the section signal on to the line waits for 3-3-2 (a token on
+  a token line); out past the home signal from behind, for 3-3. A train's own run in, or out with
+  Line Clear, needs none. The Next step says what to ring, and when to give the line back.
+* **Setting back clear of the points**: a train sets back only where it fits clear of the points
+  behind it; one too long for the road draws forward beyond it first (over box track, and if need be
+  a little way into the section, as far as the limit of shunt or the clearing point), then sets back
+  from where it stands.
+* Scoring: permission asked for and given back (+5 each); asked while a train was signalled (−10);
+  Line Blocked while blocked back (−20); on the line without permission (−40); Line Clear with the
+  clearing point obstructed (−25).
+* Tutorial: **Station limits and shunting on the line**, on the Worked examples page.
+
+## Interlocking, and trains that obey the signals (v0.3.31)
+
+* **Interlocking** (core/interlocking.ts), worked out from the signals placed on the plan and the
+  routes they read, shown as a classic **locking table** per box on the Signalling tab (lever,
+  released by, locks, both ways). A signal comes off for one of its routes only when the points on
+  it lie the right way (the through road is normal, the turnout reverse; catch points closed) and
+  facing points are bolted by their FPL. Signals whose routes share any track lock each other at
+  danger, unless one stands on the other's route facing the same way. A distant needs the stop
+  signals ahead off for a clear run on to the line. Points can't move with their FPL in, or while a
+  signal off holds them.
+* **Your adjustments**: select a signal to set how each of its routes locks the points (normal,
+  reverse, not locked, or lock other points too), remove a lock or add one with another signal. The
+  table is generated again from that. Kept on the plan (`trackPlan.interlocking`).
+* **Trains obey the signals** in signaller play mode. A train stops at any signal at danger facing it
+  on its path (running trains the stop signals, shunts the shunt signals; distants are passed at
+  caution). When the automatic signaller has set a train's route, it sets the points and FPLs and
+  pulls each signal off through the box's lever frame, which allows only what the interlocking does;
+  the distant comes off once the stop signals it needs are off. Signals go back to danger as the
+  train passes, and points no route needs go back to normal. A train held by the locking says why
+  ("Waiting at signal 16: locked by 2").
+* **Aspects on the diagram**: arms drop, disc bands turn, lamps change (and junction indicators
+  light) as signals come off.
+* Layouts with no signals placed run on the implicit home and section signals as before.
+
+## Fixes and a tidier box (v0.3.30)
+
+* **Signals stay put.** Posts are placed the same whatever the diagram's labels show; with
+  Codes or Names, the circuit names slide along their track (or to its other side) to make room
+  instead. On curves and angled track a post steps back along the track itself (following the
+  curve), and a distant with no room left on its own circuit carries on back onto the line before.
+* **Zoom the box's diagram**: scroll wheel on a PC, pinch on a phone or tablet, or the − Fit +
+  buttons; once zoomed in, drag to move about. The zoom is kept while the box is open.
+* **Routes** button on the diagram (signaller play mode) turns the lit-up routes on or off.
+* **Change mode.** Opening a box that is already being worked asks whether to carry on, or switch
+  between model railway and signaller play (which ends that session, as closing the box would).
+  The mode chip on the box's top bar does the same.
+* **Endless on a session clock** can start the clock at the time now, so it keeps in step with the
+  device's clock (at ×1). Times in Next step and the timetable strip are given on the timetable's
+  clock ("due at about 09:08"), not the device's.
+* **Shorter Next step prompts**: plain instructions, so the bar takes less room on a phone.
+* **Headshunts get a yellow shunt signal.** Generating signals now puts a yellow shunt signal on the
+  yard side of points where a headshunt leaves the way to the running line: a move into the headshunt
+  may pass it at danger, a move towards the running line may not.
+* The box's side panel (Timetable, Bell codes, Trains in places) is a mahogany case on a teak
+  shelf like the desk, and follows the liveries.
+
+## Signals on the layout (v0.3.29)
+
+Each layout can now have its own signals. The Layout configurator has a new **Signalling** tab:
+
+* **Generate signals** puts a full set on the plan: a distant, a home and a section signal on each
+  line, starters on the station roads, and (if ticked) shunt signals out of sidings and for setting
+  back, and shunt-ahead signals with a limit of shunt in the section. Choose **Semaphore**,
+  **Colour light** or **Mixed** (each post at random). Generating again keeps any signal you placed
+  or changed, and fills in round it; **Remove generated signals** takes away only the app's.
+* **+ Place a signal**: choose the kind (home, starter, distant, shunt, yellow shunt for headshunts and
+  yards, shunt-ahead, limit of shunt) and style, then click the track. Click a signal to change its
+  name, lever number, distance from the end of the circuit, the way it faces, or the routes it reads.
+* **Routes are worked out from the track** every way the points can lie, to the next stop signal
+  (or, for shunt signals, the next signal or limit of shunt), and kept up to date as the plan
+  changes. An arm can be tied to particular routes for unusual arrangements; routes that no arm
+  reads, signals with no route, and duplicate lever numbers are listed as issues.
+* **Lever numbers.** Signals and points are numbered west to east along each box's track (distants,
+  homes, starters, shunt signals, facing point locks, points), and the points take the lever number
+  as their number. **Number the levers** renumbers after changes.
+* **Facing point locks** are worked out for points that running trains meet facing; the Points and
+  facing point locks table lets you set or remove one.
+* Signals are drawn on the diagram boards (the configurator and the box's Diagram) with their lever
+  numbers, in semaphore or colour-light form. Each post is drawn laid flat beside the line, its top
+  pointing the way trains run: a junction's arms make one bracket (a doll per route, the main
+  route's longest, the leftmost route's furthest out), distant and shunt-ahead arms ride below the
+  main arm, and ground signals lie behind the post. Colour-light junctions are one head with a
+  feather for each diverging route. Posts stand back along the line to keep clear of labels, track
+  and each other.
+
+Trains obey them in play mode from v0.3.31, with the interlocking.
+
+The **Tutorial** is now in tabs (Absolute block, Worked examples, Tapper & tokens, Try it,
+Timetables, Signals) instead of one long page, with a new **Signals** page explaining each kind of
+signal, semaphore and colour light, routes, lever numbers and facing point locks.
+
+## Simulated running and track occupancy (v0.3.28)
+
+When you open a box you now choose how to run it: **Model railway** (as before) or **Signaller
+play**. Signaller play needs the layout's plan to be complete enough (each line's track circuits
+drawn and leaving the plan over an exit, and the station roads tied to circuits). If it isn't,
+the choice says what is missing.
+
+In **signaller play mode**:
+
+* **Trains move by themselves.** They run circuit by circuit through the track plan at the speed set
+  in Settings → Simulated running (30 mph by default, never above line speed or the loco's maximum;
+  shunts at most 15 mph), with a "speed up time" setting for shows. Occupied circuits light up red
+  on the diagram board, and each train's number is shown where its head is.
+* **Signals clear automatically** (there are no levers yet), when a real signaller would clear them.
+  The section (starting) signal clears only once Line Clear has been given (in token working, once
+  the token is out). The home signal clears once the route is set and the train is close to it, or
+  as soon as it is on the line if it has a clear run through. Signals go back to danger as the train
+  passes, and routes are freed as its tail clears them. Set routes show green. (These implicit
+  signals are not drawn: placed signals came in v0.3.29.)
+* **Routes are worked out for you and kept up to date.** An arriving train goes to the road you
+  choose in the Next arrival panel ("Into road"). If you don't choose, it goes to the timetable's
+  road, or else the first suitable free one (platforms for passenger trains, the goods yard for
+  goods). It goes round anything in the way. With no clear road it waits at the home signal. Shunts
+  set back where they need to (e.g. out of the goods yard via the west end).
+* **"Train arrived complete" works only once the track circuits show it**: the train has stopped
+  in its road, clear of the line. "Passed complete" works once a through train's tail has cleared
+  the line in rear. The far end reports trains arriving there by itself.
+* **Rolling stock is tracked.** A loco that sets off as a light engine leaves its coaches or wagons
+  standing as a rake, which keeps the circuit occupied and is listed in Trains on layout. A train
+  setting off from that road takes the rake.
+* Timetabled shunt moves run by themselves.
+
+In **model railway mode**, Settings → Simulated running → "Show track occupancy" lights up the
+diagram board from what you report (trains in a section, trains on a road). You can also tap a
+circuit to mark it occupied or clear.
+
+## Groundwork for signaller play mode (v0.3.27)
+
+Nothing changes in how the app plays. Behind the scenes it is getting ready for a second way of
+running a box, **signaller play mode**, where any layout's plan is run as a real railway with
+simulated trains (today's way is **model railway mode**: real trains, and you report where they get to).
+
+* **Source of train events.** The signalling learns what trains physically did (arrived, passed
+  complete, arrived at the far end; later: entered or cleared a track circuit, stopped) through one
+  way in (`core/trainEvents.ts`). Your Arrived / passed complete buttons and the timetable's
+  simulated fiddle yard operator both report through it.
+* **Running mode** (`'model'` or `'play'`) belongs to the box's session, not to the layout: it is
+  chosen when a box is opened (for now every box opens in model railway mode, with no choice shown).
+* **Real-railway data** (all optional, with defaults): block section lengths (2 miles), track circuit
+  lengths (worked out: line circuits share their section; 220 yards in a station, 55 yards for short
+  circuits over points), line speed (60 mph), points' diverging speed (15 mph), loco maximum speed,
+  train length (from its consist, or stated), and a units setting (imperial or metric). No editing
+  screens yet. Saved data is version 5; nothing in older saves needs changing.
 
 ## Timetables, part 3: generated and Endless timetables, headcode eras (v0.3.26)
 
@@ -567,6 +753,14 @@ src/ui/boxRuntime.ts   Keeps a box's controllers and simulated neighbours runnin
   bellcodes.ts         Train types, regulation signals, built-in code sets
   tapDecoder.ts        Tapper rhythm → bell code
   link.ts              Messages between two boxes (the seam for future multiplayer)
+  trainEvents.ts       Source of train events (what trains did) and the running mode: the seam between a box and its railway
+  routing.ts           Routes over the track plan, implicit home and section signals, play-mode readiness
+  signals.ts           Signals placed on the plan: kinds, routes they read, generating, lever numbers, facing point locks
+  interlocking.ts      Locking table worked out from the signals' routes, overrides, and the lever frame engine
+  stationLimits.ts     Station limits: circuits within the clearing point, a box's lines (blocking back, shunting into the section)
+  occupancy.ts         Track occupancy board (fed by train events)
+  railwaySim.ts        The simulated railway: trains moving through the plan, automatic signaller, rakes of stock
+  railway.ts           Real-railway lengths and speeds: defaults, track circuit lengths, typing and showing units
   sectionController.ts Your end of a block section: instruments, tokens, log
   score.ts             Scoring rules (points) and the Scorecard for a box session
   places.ts            Places (stations, sidings, goods, depots, fiddle yards), their roads and workers
@@ -586,6 +780,9 @@ src/ui/                Screens (plain TypeScript + DOM, no framework)
   planDiagram.ts       Read-only track diagram (the box's diagram board)
   scoreSheet.ts        The score sheet dialog
   screens/places.ts    The layout configurator's Places tab
+  screens/signalling.ts  The layout configurator's Signalling tab
+  signalDrawing.ts     Signals on the diagram, post by post (brackets, feathers, ground signals)
+  diagramZoom.ts       Wheel, pinch and drag zoom for diagrams
   screens/timetables.ts  Timetable list and editor; screens/timetablePrint.ts the poster and train cards
   screens/timetableRun.ts  The box's timetable strip and Timetable panel; timetableRuntime.ts keeps one runner per layout
   screens/timetableGenerate.ts  Generate a timetable; lampDiagram.ts draws lamp headcodes
@@ -606,7 +803,7 @@ npm run typecheck
 ## Where it goes next
 
 * Replace buttons with graphics (instrument faces, a bell, a tapper) — the UI is separate from the logic.
-* Simulated running: light up occupied track circuits on the diagram board (`setOccupied` in ui/planDiagram.ts) so trains need not move on a real layout.
+* Signaller play mode, in stages: signals placed on the plan ✓, a lever frame with interlocking ✓, station limits and blocking back ✓, levers you pull yourself, train performance (braking, acceleration), then scoring on delays.
 * More boxes/connections (a `BoxDef` can have several connections; double line is modelled).
 * Multiplayer: implement `LinkEnd` over a WebSocket so another tablet plays the far box.
 * Android APK via Capacitor wrapping `dist/pwa/`.

@@ -69,9 +69,12 @@ export const REGULATION_SIGNALS: RegulationSignalDef[] = [
   { id: 'tail_lamp_to_rear', name: 'Train passed without tail lamp (to box in rear)', description: 'The train received from you arrived without a tail lamp.', needsCallAttention: true },
   { id: 'train_divided', name: 'Train divided', description: 'The train has become divided.', needsCallAttention: true },
   { id: 'long_time_in_section', name: 'Train an unusually long time in section', description: 'A train has not arrived in a reasonable time.', needsCallAttention: true },
-  { id: 'blocking_back', name: 'Blocking back', description: 'The line is blocked for shunting at the box sending it.', needsCallAttention: true },
+  { id: 'blocking_back_inside', name: 'Blocking back inside home signal', description: 'Sent to the box in rear to ask permission to obstruct the line inside the home signal (within the clearing point) for shunting, after "Train out of section" has been sent for the last train. If acknowledged, the box sending it puts its instrument at Train On Line. Acknowledged by repeating; "Obstruction removed" (2-1) when finished.', needsCallAttention: true },
+  { id: 'blocking_back', name: 'Blocking back outside home signal', description: 'Sent to the box in rear to ask permission to take a train or shunt out past the home signal on to the line in the rear (setting back). If the line is clear it is acknowledged by repeating and the instrument is put at Train On Line; "Obstruction removed" (2-1) when finished.', needsCallAttention: true },
+  { id: 'shunt_into_forward', name: 'Shunt into forward section', description: 'Sent to the box in advance to ask permission for a train to draw forward past the section signal into the section ahead to shunt (as far as the limit of shunt, or the clearing point of the box in advance). Acknowledged by repeating; the box in advance puts its instrument at Train On Line.', needsCallAttention: true },
+  { id: 'shunt_withdrawn', name: 'Shunt withdrawn', description: 'The train that went forward into the section to shunt is back inside the section signal, clear of the line. Acknowledged by repeating; the box in advance returns its instrument to Line Blocked.', needsCallAttention: true },
   { id: 'token_replaced', name: 'Train withdrawn / token replaced', description: 'On single lines: a shunting token has been replaced and the line is clear again.', needsCallAttention: true },
-  { id: 'release_token', name: 'Release token for shunting', description: 'Single line: request a token to allow a shunt into the section.', needsCallAttention: true },
+  { id: 'release_token', name: 'Release token for shunting', description: 'Single line: ask the other box to release a token so a train can shunt into the section (or set back out past the home signal). Acknowledged by repeating; the token is withdrawn, and replaced with "Train withdrawn / token replaced" (2-5) when finished.', needsCallAttention: true },
   { id: 'runaway_wrong', name: 'Vehicles running away (wrong direction / single line)', description: 'Emergency: vehicles running away towards you.', needsCallAttention: false },
   { id: 'runaway_right', name: 'Vehicles running away (right direction)', description: 'Emergency: vehicles running away in the proper direction.', needsCallAttention: false },
   { id: 'opening', name: 'Opening of signal box', description: 'The box is opening; acknowledged by repeating.', needsCallAttention: true },
@@ -80,7 +83,7 @@ export const REGULATION_SIGNALS: RegulationSignalDef[] = [
   { id: 'testing', name: 'Testing bells and instruments', description: 'Testing. Acknowledged by repeating.', needsCallAttention: true },
 ];
 
-const COMMON_SIGNALS: Record<string, BellCode> = {
+export const COMMON_SIGNALS: Record<string, BellCode> = {
   call_attention: '1',
   train_entering_section: '2',
   train_out_of_section: '2-1',
@@ -92,7 +95,10 @@ const COMMON_SIGNALS: Record<string, BellCode> = {
   tail_lamp_to_rear: '4-5',
   train_divided: '5-5',
   long_time_in_section: '6-2',
+  blocking_back_inside: '2-4',
   blocking_back: '3-3',
+  shunt_into_forward: '3-3-2',
+  shunt_withdrawn: '8',
   token_replaced: '2-5',
   release_token: '5-2',
   runaway_wrong: '2-5-5',

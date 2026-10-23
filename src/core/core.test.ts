@@ -482,7 +482,7 @@ describe('the starting data (Sigsim Central)', () => {
     const owned = (conn: string) => plan.circuits.filter((c) => c.owner.kind === 'line' && c.owner.connectionId === conn);
     expect(owned('sgc-west')).toHaveLength(2);
     expect(owned('sgc-east')).toHaveLength(2);
-    expect(lineRun(plan, owned('sgc-west')[0].id).map((c) => c.name)).toEqual(['West far', 'West near', 'West end', 'Platform 1', 'East near', 'East far']);
+    expect(lineRun(plan, owned('sgc-west')[0].id).map((c) => c.name)).toEqual(['West far', 'West near', 'West inner', 'West end', 'Platform 1', 'East inner', 'East near', 'East far']);
     const trap = plan.junctions.find((j) => j.kind === 'catchPoints')!;
     expect(trap.boxId).toBe(s.boxes[0].id);
     // The circuit on each side of the catch points: towards points 2 (the main line) and towards the yard.

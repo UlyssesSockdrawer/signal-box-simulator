@@ -6,7 +6,10 @@ import { disposeAllBoxRuntimes } from '../boxRuntime';
 import { resetPlacesUi } from './places';
 import { resetRosterUi } from './roster';
 import { resetTimetablesUi } from './timetables';
+import { resetSignallingUi } from './signalling';
 import { disposeAllRunners } from '../timetableRuntime';
+import { disposeAllRailways } from '../railwayRuntime';
+import { MPS_PER_KMH, MPS_PER_MPH, UNIT_SYSTEMS } from '../../core/railway';
 import { resetTrackPlanUi } from './trackPlan';
 
 export function settingsScreen(ctx: Ctx): Screen {
@@ -39,8 +42,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   // ---------------------------------------------------------------- signalling
   const signalling = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Signalling'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Signalling'),
     field(
       'Mode',
       h('select', { id: 'set_strict', on: { change: (e: Event) => set((x) => (x.strictness = (e.target as HTMLSelectElement).value as Settings['strictness'])) } },
@@ -58,8 +61,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   // ---------------------------------------------------------------- appearance
   const appearance = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Appearance'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Appearance'),
     field(
       'Theme',
       h('select', { id: 'set_theme', on: { change: (e: Event) => set((x) => (x.theme = (e.target as HTMLSelectElement).value as ThemeId)) } },
@@ -90,8 +93,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   });
   const sound = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Bells and sound'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Bells and sound'),
     field('Volume', h('input', { id: 'set_vol', type: 'range', min: 0, max: 1, step: 0.05, value: s.volume, on: { change: (e: Event) => set((x) => (x.volume = Number((e.target as HTMLInputElement).value))) } })),
     h('div', { class: 'row' },
       h('button', { class: 'btn', type: 'button', on: { click: () => { ctx.bell.unlock(); ctx.bell.ring('3-1'); } } }, 'Test bell (3-1)'),
@@ -111,8 +114,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   // ---------------------------------------------------------------- tapper timing
   const tapper = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Tapper timing'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Tapper timing'),
     h('p', { class: 'muted small' }, 'Adjust if the tapper misreads your rhythm.'),
     num('set_gg', 'New group after a pause longer than (ms)', s.tap.groupGapMs, (v) => (s.tap.groupGapMs = v), { min: 200, max: 1500, step: 25 }),
     num('set_ce', 'Code ends after silence of (ms)', s.tap.codeEndMs, (v) => (s.tap.codeEndMs = v), { min: 600, max: 4000, step: 50 }),
@@ -122,8 +125,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   // ---------------------------------------------------------------- simulated signaller
   const sim = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Simulated signaller'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Simulated signaller'),
     num('set_rmin', 'Reaction time, shortest (ms)', s.responseDelayMs[0], (v) => (s.responseDelayMs = [v, Math.max(v, s.responseDelayMs[1])]), { min: 200, step: 100 }),
     num('set_rmax', 'Reaction time, longest (ms)', s.responseDelayMs[1], (v) => (s.responseDelayMs = [Math.min(v, s.responseDelayMs[0]), v]), { min: 200, step: 100 }),
     num('set_dmin', 'Despatch after line clear, shortest (s)', s.despatchDelayMs[0] / 1000, (v) => (s.despatchDelayMs = [v * 1000, Math.max(v * 1000, s.despatchDelayMs[1])]), { min: 1 }),
@@ -137,15 +140,52 @@ export function settingsScreen(ctx: Ctx): Screen {
     ),
   );
 
+  // ---------------------------------------------------------------- simulated running
+  const imperial = s.units !== 'metric';
+  const speedUnit = imperial ? 'mph' : 'km/h';
+  const running = h(
+    'section',
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Simulated running'),
+    field(
+      'Units',
+      h('select', { id: 'set_units', on: { change: (e: Event) => set((x) => (x.units = (e.target as HTMLSelectElement).value as Settings['units'])) } }, ...UNIT_SYSTEMS.map((u) => option(u.id, u.name, u.id === s.units))),
+      'How lengths and speeds are shown.',
+    ),
+    h('h3', null, 'Signaller play mode'),
+    num(
+      'set_simspeed',
+      `Train speed (${speedUnit})`,
+      Math.round(s.simSpeed / (imperial ? MPS_PER_MPH : MPS_PER_KMH)),
+      (v) => (s.simSpeed = Math.max(1, Math.min(imperial ? 125 : 200, v)) * (imperial ? MPS_PER_MPH : MPS_PER_KMH)),
+      { min: 1, max: imperial ? 125 : 200, help: 'Every simulated train runs at this speed (shunts at most 15 mph), never above the line speed or the loco\'s maximum. Braking and acceleration come later.' },
+    ),
+    field(
+      'Speed up time',
+      h(
+        'select',
+        { id: 'set_timescale', on: { change: (e: Event) => set((x) => (x.timeScale = Number((e.target as HTMLSelectElement).value))) } },
+        ...[1, 2, 3, 4, 5, 6, 8, 10].map((n) => option(String(n), n === 1 ? 'Real time (×1)' : `×${n}`, n === s.timeScale)),
+      ),
+      'Simulated trains run this many times faster than real time: a two-mile section takes about 4 minutes at 30 mph in real time. Bells and the far signallers are not sped up.',
+    ),
+    h('h3', null, 'Model railway mode'),
+    h('div', { class: 'checks' },
+      check('set_modelocc', 'Show track occupancy on the diagram board: track circuits light up from what you report (trains in a section, trains on a road), and you can tap a circuit to mark it occupied or clear', s.modelOccupancy, (v) => (s.modelOccupancy = v)),
+    ),
+  );
+
   // ---------------------------------------------------------------- data
   /** Before all the app's data is replaced (reset or import): close running boxes and forget screen state belonging to the old data. */
   const freshStart = () => {
     disposeAllRunners();
     disposeAllBoxRuntimes();
+    disposeAllRailways();
     resetTrackPlanUi();
     resetPlacesUi();
     resetRosterUi();
     resetTimetablesUi();
+    resetSignallingUi();
   };
   const importText = (text: string, ok: string, bad: string) => {
     try {
@@ -179,8 +219,8 @@ export function settingsScreen(ctx: Ctx): Screen {
   });
   const data = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Your data'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Your data'),
     h('p', { class: 'muted small' }, 'Everything is saved in this browser on this device. Export it to back it up or move it between your PC and phone.'),
     h(
       'div',
@@ -250,14 +290,14 @@ export function settingsScreen(ctx: Ctx): Screen {
   };
   const resetPanel = h(
     'section',
-    { class: 'panel' },
-    h('h2', null, 'Reset to defaults'),
+    { class: 'config-case set-case' },
+    h('h2', { class: 'plate' }, 'Reset to defaults'),
     h('p', { class: 'muted small' }, 'Erase all your layouts, signal boxes, places, track plans, locomotives and settings saved in this browser, and start again with the data the app first came with. You will be asked to confirm.'),
     h('div', { class: 'row' }, h('button', { class: 'btn danger', type: 'button', id: 'reset_app', on: { click: confirmReset } }, 'Reset to defaults…')),
   );
 
   return {
     title: 'Settings',
-    el: h('main', { class: 'page' }, topBar(ctx, 'Settings'), h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, data, resetPanel)),
+    el: h('main', { class: 'page config-page' }, topBar(ctx, 'Settings'), h('div', { class: 'config-shelf' }, h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, running, data, resetPanel))),
   };
 }

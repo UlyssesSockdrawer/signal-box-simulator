@@ -5,16 +5,26 @@ import { placesWorkedBy } from '../../core/places';
 import { incomingCandidates, stationLocos } from '../../core/selection';
 import { eraInfo, eraOf, usesLamps } from '../../core/headcodes';
 import { timetablesOf } from '../../core/timetables';
-import type { Loco } from '../../core/types';
+import type { Loco, SignalKind } from '../../core/types';
+import { SIGNAL_KIND_ORDER, SIGNAL_KINDS, signalsOf } from '../../core/signals';
+import { drawDiagram } from '../planDiagram';
+import { signalSample } from '../signalDrawing';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
+import { formatLength, layoutClearingPoint } from '../../core/railway';
 
 /*
- * The tutorial: absolute block and bell codes explained, then a hands-on session at a real box.
+ * The tutorial, in tabs: absolute block and bell codes explained, worked examples, the tapper and tokens,
+ * a hands-on session at a real box, timetables and signals.
  * Everything is named from the data (the starting data ships Sigsim Central between Fiddle Yard
  * West and Fiddle Yard East), so it still reads correctly after the user has changed things.
  */
-export function tutorialScreen(ctx: Ctx): Screen {
+export const TUTORIAL_TABS = ['basics', 'examples', 'tapper', 'try', 'timetables', 'signals'] as const;
+export type TutorialTab = (typeof TUTORIAL_TABS)[number];
+/** The page last shown, so coming back to the tutorial opens where you were. */
+let lastTab: TutorialTab = 'basics';
+
+export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
   const st = ctx.store.state;
   const cs = activeCodeSet(st);
   // The box to practise on: the first box on the active layout that can be opened, else any.
@@ -34,6 +44,13 @@ export function tutorialScreen(ctx: Ctx): Screen {
   const MISDESC = signalCode(cs, 'incorrectly_described');
   const ord = trainCode(cs, 'ordinary_passenger') || '3-1';
   const le = trainCode(cs, 'light_engine') || '2-3';
+  const BB_IN = signalCode(cs, 'blocking_back_inside');
+  const BB_OUT = signalCode(cs, 'blocking_back');
+  const SH_FWD = signalCode(cs, 'shunt_into_forward');
+  const SH_WD = signalCode(cs, 'shunt_withdrawn');
+  const TOKEN_REL = signalCode(cs, 'release_token');
+  const TOKEN_BACK = signalCode(cs, 'token_replaced');
+  const cpText = formatLength(layoutClearingPoint(layout ?? undefined), st.settings.units);
 
   // Trains named in the exercises, from where they stand now.
   const describe = (l: Loco | undefined) => {
@@ -83,7 +100,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
     const both = lineB ? `${lineA.neighbourName} and ${lineB.neighbourName}` : lineA.neighbourName;
     const where = roads.length ? ` (${roads.join(', ')})` : '';
     session.push(
-      h('h2', null, `8. Try it yourself at ${boxName}`),
+      h('h2', null, `Try it yourself at ${boxName}`),
       h(
         'p',
         null,
@@ -105,12 +122,12 @@ export function tutorialScreen(ctx: Ctx): Screen {
           : null,
         exercise(
           `Receive a train from ${lineA.neighbourName}.`,
-          `Under Next arrival choose ${lineA.neighbourName}, pick a train${fromA ? ` (try ${describe(fromA)})` : ''} and press Offer next incoming train. Answer the ${CA}, repeat the Is line clear code and turn your instrument to Line Clear. When ${TES} comes, repeat it and show Train On Line. Drive the train in, press Train arrived complete and choose where it stands${where}, then send ${CA} and ${TOOS} and put the instrument back to Line Blocked (section 4 above).`,
+          `Under Next arrival choose ${lineA.neighbourName}, pick a train${fromA ? ` (try ${describe(fromA)})` : ''} and press Offer next incoming train. Answer the ${CA}, repeat the Is line clear code and turn your instrument to Line Clear. When ${TES} comes, repeat it and show Train On Line. Drive the train in, press Train arrived complete and choose where it stands${where}, then send ${CA} and ${TOOS} and put the instrument back to Line Blocked (as in the first worked example).`,
         ),
         lineB
           ? exercise(
               `Send a train to ${lineB.neighbourName}.`,
-              `Under Departure choose ${lineB.neighbourName} and the departing train${departing ? ` (try ${describe(departing)})` : ''}. Send ${CA}, then its Is line clear code. When the repeater shows Line Clear, clear your signal, send ${TES} as it leaves, drive it to ${placeAtEnd(lineB.placeId, lineB.neighbourName)} and press the Arrived button. ${lineB.neighbourName} clears back with ${TOOS} (section 5 above).`,
+              `Under Departure choose ${lineB.neighbourName} and the departing train${departing ? ` (try ${describe(departing)})` : ''}. Send ${CA}, then its Is line clear code. When the repeater shows Line Clear, clear your signal, send ${TES} as it leaves, drive it to ${placeAtEnd(lineB.placeId, lineB.neighbourName)} and press the Arrived button. ${lineB.neighbourName} clears back with ${TOOS} (as in the second worked example).`,
             )
           : null,
         exercise(
@@ -140,7 +157,7 @@ export function tutorialScreen(ctx: Ctx): Screen {
   const era = eraOf(layout);
   const sample = tts[0];
   const ttSection: HTMLElement[] = [
-    h('h2', null, '9. Timetables'),
+    h('h2', null, 'Timetables'),
     h(
       'p',
       null,
@@ -190,98 +207,307 @@ export function tutorialScreen(ctx: Ctx): Screen {
       h('strong', null, 'Keep this as a timetable'),
       ' saves what it has made to run again or print.',
     ),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.goFrom('timetables', { route: 'tutorial', label: 'tutorial' }) } }, 'Timetables'), h('button', { class: 'btn', type: 'button', on: { click: () => ctx.goFrom('ttgen', { route: 'tutorial', label: 'tutorial' }) } }, 'Generate a timetable')),
+    h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: () => ctx.goFrom('timetables', { route: 'tutorial/timetables', label: 'tutorial' }) } }, 'Timetables'), h('button', { class: 'btn', type: 'button', on: { click: () => ctx.goFrom('ttgen', { route: 'tutorial/timetables', label: 'tutorial' }) } }, 'Generate a timetable')),
   ];
+
+  // ---------------------------------------------------------------- signals
+  const signalled = layout ? signalsOf(layout).length > 0 : false;
+  const SIGNAL_TEXT: Record<SignalKind, string> = {
+    distant:
+      'A yellow fishtail arm, or a yellow light. It stands well before the home (about 1,000 yards out on the real railway). At caution it tells the driver to be ready to stop at the home; it may be cleared only when every stop signal ahead of it, up to the section signal, is off. A driver may pass it at caution.',
+    home: 'The first stop signal at the station, protecting the points and platforms behind it. Where the routes divide there is one arm for each (a bracket or junction signal), so the driver can see which way the points are set. Cleared once the route is set and the train is close, or for a clear run through.',
+    starter:
+      'A stop signal at the end of a platform or road. The last stop signal before the next block section is the section signal (often an advanced starter, out beyond the points): it may be cleared only when the box ahead has given Line Clear.',
+    shunt: 'A ground disc, white with a red band, or a position light (one red and one white lamp). It controls shunting moves: into and out of sidings, across to the other line, back on to a train. Off is the band turned to 45°, or two white lights at 45°. Never passed at danger.',
+    shuntYellow:
+      'A disc with a yellow band, or a yellow and white position light: the signal at a headshunt or yard exit. At danger a driver may pass it for a move it does not apply to (into the headshunt, along the siding), but not for the route it works, usually out on to a running line.',
+    shuntAhead:
+      'A small arm marked S, or a position light, below the section signal. With the box ahead’s permission, it lets a train pass the section signal at danger to shunt out into the section, but no further than the limit of shunt. Generated only when you ask for it.',
+    limitOfShunt: 'A white board with a red cross, or two red lights, out in the section. Shunting moves under the shunt-ahead signal stop here. It has no lever.',
+  };
+  const kindRow = (k: SignalKind) =>
+    h(
+      'tr',
+      null,
+      h('td', { class: 'sig-sample-cell' }, signalSample(k, 'semaphore', `${SIGNAL_KINDS[k].name}, semaphore`)),
+      h('td', { class: 'sig-sample-cell' }, signalSample(k, 'colourLight', `${SIGNAL_KINDS[k].name}, colour light`)),
+      h('td', null, h('strong', null, SIGNAL_KINDS[k].name), h('br'), SIGNAL_TEXT[k]),
+    );
+  const openSignalling = () => layout && ctx.goFrom(`plan/${layout.id}/signals`, { route: 'tutorial/signals', label: 'tutorial' });
+  const signalsSection: Array<HTMLElement | null> = [
+    h('h2', null, 'Signals'),
+    h(
+      'p',
+      null,
+      'Bells and block instruments say whether a train may go; signals tell the driver. Each layout can have its own signals, drawn on the track diagram with the number of the lever that works each one. Plan them on the ',
+      h('strong', null, 'Signalling'),
+      ' tab of the Layout configurator: let the app generate a set, place your own, or both.',
+    ),
+    h('p', { class: 'muted' }, 'In signaller play mode, trains obey the signals: they stop at any signal at danger, and the app’s automatic signaller clears them through the interlocking when a real signaller would. You will see the arms drop and the lights change on the box’s diagram. (A lever frame to work them yourself comes later.)'),
+    h('h3', null, 'The kinds of signal'),
+    h(
+      'div',
+      { class: 'table-wrap' },
+      h(
+        'table',
+        { class: 'sig-kinds' },
+        h('thead', null, h('tr', null, h('th', null, 'Semaphore'), h('th', null, 'Colour light'), h('th', null, 'What it does'))),
+        h('tbody', null, ...SIGNAL_KIND_ORDER.map(kindRow)),
+      ),
+    ),
+    h('p', { class: 'muted small' }, 'Drawn as on the diagram, for trains running left to right: the post lies beside the line on the driver’s left, its top pointing the way trains run. All at danger.'),
+    h('h3', null, 'Semaphore or colour light'),
+    h(
+      'p',
+      null,
+      'Semaphores are lower-quadrant arms on posts, with discs on the ground for shunting. Colour lights here are two-aspect: red and green for stop signals, yellow and green for distants, and position lights for shunting. One layout can have both: choose Mixed when generating to give each post a style at random, or change any signal yourself.',
+    ),
+    h('h3', null, 'Reading the diagram'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'Each signal is drawn as its post laid flat beside the line, on the left of the trains it applies to, with its top pointing the way they run and its arm reaching away from the line.'),
+      h('li', null, 'A bracket (junction) signal has a doll for each route on one cross-beam: the main route’s doll is the longest, and the leftmost route’s is furthest from the line. Distant and shunt-ahead arms ride below the main arm; ground signals lie behind the post.'),
+      h('li', null, 'A colour-light junction signal is one head with a junction indicator (a “feather” of three white lights) for each diverging route, leaning the way that route goes. Each feather carries its route’s lever number.'),
+      h('li', null, 'Signals stand a little further back along the line where they would crowd a label or another signal.'),
+      h('li', null, 'The figure beside each arm is its lever number. Levers are numbered west to east along each box’s track. Points are numbered in the same run, so the box can be worked from one frame: a facing point lock usually takes the number just below its points.'),
+      h('li', null, 'On a box’s diagram, other boxes’ signals are drawn faint.'),
+    ),
+    h('h3', null, 'Routes'),
+    h(
+      'p',
+      null,
+      'A stop signal reads as far as the next stop signal; a shunt signal as far as the next signal of any kind or a limit of shunt. The app follows the track every way the points can lie to find these routes (to P1, to Goods shed, to Fiddle Yard East) and works them out again whenever the plan changes. For an unusual arrangement, select the signal, untick ',
+      h('strong', null, 'Every route here not read by another signal'),
+      ' and tick the routes that arm should read. A route that no arm reads is listed under Issues.',
+    ),
+    h('h3', null, 'Interlocking'),
+    h(
+      'p',
+      null,
+      'The levers are interlocked so that conflicting moves can’t be signalled. The app works out the locking table from the signals and their routes: a signal can only come off once the points on its route lie the right way and are bolted by their facing point locks; signals whose routes share any track lock each other at danger (unless one stands on the other’s route, facing the same way, like a home and the starter beyond it); and a distant needs the stop signals ahead off for a clear run. Points can’t be moved with their FPL in, or while a signal off holds them.',
+    ),
+    h(
+      'p',
+      null,
+      'The table is on the Signalling tab, below the signals. Select a signal to change how each of its routes locks the points (normal, reverse or not locked, or lock other points too) and which signals it locks; the table follows.',
+    ),
+    h('h3', null, 'Facing point locks'),
+    h(
+      'p',
+      null,
+      'Points that trains on a running line meet facing (from the toe, where the line divides) need a facing point lock: a bolt, worked by its own lever, that holds the blades so they cannot move under a train. The app works out which points need one. The Points and facing point locks table on the Signalling tab lets you say otherwise for any of them.',
+    ),
+    h('h3', null, 'Generating and placing your own'),
+    h(
+      'ul',
+      null,
+      h('li', null, h('strong', null, 'Generate signals. '), 'Choose semaphore, colour light or mixed, and whether to include shunt signals and shunt-ahead signals. The app puts a distant, a home and a section signal on each line, starters on the station roads and shunt signals where sidings and crossovers join, then numbers the levers.'),
+      h('li', null, h('strong', null, 'Place a signal. '), 'Choose its kind and style, press + Place a signal and click the track where it should stand. Click any signal to change its name, lever number, distance from the end of the circuit, the way it faces, or its routes.'),
+      h('li', null, h('strong', null, 'Yours and the app’s. '), 'Signals you place, or change, are yours. Generating again keeps them and fills in round them; Remove generated signals takes away only the app’s.'),
+      h('li', null, h('strong', null, 'Number the levers '), 'renumbers every signal and set of points from west to east, after you have added or moved things.'),
+    ),
+    layout ? h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: openSignalling } }, `Signalling for ${layout.name}`)) : null,
+  ];
+  if (layout && signalled) {
+    const svgEl = drawDiagram(st, layout, { labels: 'codes', signals: true });
+    if (svgEl) signalsSection.push(h('h3', null, `${layout.name} as signalled`), h('div', { class: 'tut-diagram' }, svgEl));
+  }
+
+  // ---------------------------------------------------------------- the pages
+  const basics = [
+    box && lineA
+      ? h('p', { class: 'lead' }, `These pages explain absolute block signalling and the bell codes, take you through a session at ${boxName} step by step, and explain timetables and signals. You can open the box and try it at any point.`)
+      : null,
+    tryButton(),
+    h('h2', null, 'Absolute block'),
+    h('p', null, 'The line between two signal boxes is divided into a ', h('em', null, 'block section'), ', and only one train is allowed in a section at a time. The signaller at the far end (the box ', h('em', null, 'in advance'), ') must agree before a train may enter, and must confirm when it has left.'),
+    h('p', null, `Here, you are the signaller at ${boxName}. The app plays the signaller${lineB ? 's' : ''} at ${lineB ? `${lineA!.neighbourName} and ${lineB.neighbourName}` : fy}. You also drive the trains on your DCC controller, and you work the real signals and points on the layout.`),
+
+    h('h2', null, 'The block instrument'),
+    h('p', null, 'Each box has an instrument with three positions, worked by the box the train is travelling ', h('em', null, 'towards'), ':'),
+    h(
+      'ul',
+      null,
+      h('li', null, h('strong', null, 'Line Blocked'), ': the normal position. No train may be sent.'),
+      h('li', null, h('strong', null, 'Line Clear'), ': a train has been accepted. The box in rear may clear its section signal.'),
+      h('li', null, h('strong', null, 'Train On Line'), ': a train is in the section.'),
+    ),
+    h('p', null, `So for trains coming to ${boxName} you work your own instrument. For trains leaving ${boxName}, the box at the other end works theirs, and you see a repeater of it.`),
+
+    h('h2', null, 'Bell codes: call and response'),
+    h('p', null, 'Signallers talk with a single-stroke bell. Every message is acknowledged by ', h('strong', null, 'repeating it back exactly'), '. If it is repeated wrongly, the sender rings it again. If a signaller cannot accept a train, they simply do not answer its Is line clear: that is a refusal, and the train is offered again later.'),
+    h('p', null, 'Most messages begin with ', h('strong', null, `${CA} beat (call attention)`), ', which must be answered before the real message is sent. The main exception is ', h('strong', null, `${TES} (train entering section)`), ', which is sent straight away.'),
+    h('div', { class: 'row' }, play(CA, `${CA}  Call attention`), play(ord, `${ord}  Is line clear for ordinary passenger`), play(TES, `${TES}  Train entering section`), play(TOOS, `${TOOS}  Train out of section`)),
+    h('p', null, 'A code like ', h('strong', null, ord), ' means beats in groups: ', h('em', null, ord.split('-').join(', pause, ')), '.'),
+    h('h3', null, 'Opening the box'),
+    h('p', null, `When you open a box, it starts closed. Before any train can be signalled you open it with each neighbouring box: call attention (${CA}), and when they answer, send `, h('strong', null, `${OPEN} (Opening of signal box)`), '. They repeat it back and the box is open.'),
+    h('p', null, 'At the end of a session, close the box the same way with ', h('strong', null, `${CLOSE} (Closing of signal box)`), '. The other boxes stop working with you, and your box goes back to its cold, unopened state, ready to be opened again.'),
+    h('div', { class: 'row' }, play(OPEN, `${OPEN}  Opening of signal box`), play(CLOSE, `${CLOSE}  Closing of signal box`)),
+  ];
+
+  const examples = [
+    h('h2', null, `Receiving a train from ${fy}`),
+    steps([
+      [fy, CA, 'Call attention. Answer with 1 beat.'],
+      ['You', CA, 'You are listening.'],
+      [fy, ord, 'Is line clear for an ordinary passenger train? Check your station can take it. If it cannot yet, do not reply.'],
+      ['You', ord, `Repeat ${ord} to accept, then turn your instrument to LINE CLEAR.`],
+      [fy, TES, 'Train entering section: the train has left. Drive it in on your controller.'],
+      ['You', TES, 'Acknowledge, and turn your instrument to TRAIN ON LINE.'],
+      ['You', '', 'Watch the train arrive complete, with its tail lamp. Press "Train arrived" and choose where it stands.'],
+      ['You', CA, 'Call attention.'],
+      [fy, CA, 'They are listening.'],
+      ['You', TOOS, 'Train out of section. Turn your instrument back to LINE BLOCKED.'],
+      [fy, TOOS, 'Acknowledged. The section is clear for the next train.'],
+    ]),
+
+    h('h2', null, `Sending a light engine to ${lineB?.neighbourName ?? fy}`),
+    steps([
+      ['You', '', 'Choose the departing loco under "Departure" on the desk. Its working sets the code.'],
+      ['You', CA, 'Call attention.'],
+      [lineB?.neighbourName ?? fy, CA, 'They are listening.'],
+      ['You', le, 'Is line clear for a light engine?'],
+      [lineB?.neighbourName ?? fy, le, 'Accepted. Their instrument (your repeater) shows LINE CLEAR.'],
+      ['You', '', 'Clear your starting signal on the layout and drive the loco away.'],
+      ['You', TES, 'Train entering section, as it leaves.'],
+      [lineB?.neighbourName ?? fy, TES, 'Acknowledged. Repeater shows TRAIN ON LINE.'],
+      ['You', '', 'Drive it into the fiddle yard. Press the "Arrived" button and pick the road.'],
+      [lineB?.neighbourName ?? fy, CA, `They call attention. Answer ${CA}.`],
+      [lineB?.neighbourName ?? fy, TOOS, `Train out of section. Repeat ${TOOS}. Repeater returns to LINE BLOCKED.`],
+    ]),
+  ];
+
+  const limits = [
+    h('h2', null, 'Station limits and shunting on the line'),
+    h('p', null, `${boxName}’s own track runs from its home signals out to its section signals (the advanced starters): its `, h('em', null, 'station limits'), '. The block sections are the lines between the boxes. Inside each home signal the line must be clear as far as the ', h('em', null, 'clearing point'), ` (${cpText} in) before you may accept a train: you must not give Line Clear while anything stands there.`),
+    h('p', null, 'So a train that has to shunt over the clearing point (to set back clear of points, say), or go out past your signals on to the line, needs the line protected first, by asking the box at the other end:'),
+    h(
+      'ul',
+      null,
+      h('li', null, h('strong', null, `${BB_IN} Blocking back inside home signal`), `: to the box in rear, before shunting over the clearing point. Only once you have sent ${TOOS} for the last train and your instrument is at LINE BLOCKED. Turn it to TRAIN ON LINE when they repeat it; when the line is clear again, send ${TOOS} (Obstruction removed) and put it back.`),
+      h('li', null, h('strong', null, `${BB_OUT} Blocking back outside home signal`), `: to the box in rear, before a movement goes out past your home signal on to the line behind it. Given only when the line is clear; ${TOOS} when finished.`),
+      h('li', null, h('strong', null, `${SH_FWD} Shunt into forward section`), `: to the box in advance, before a train draws forward past your section signal (no further than the limit of shunt). Their instrument shows TRAIN ON LINE; send ${SH_WD} (Shunt withdrawn) once it is back inside.`),
+      h('li', null, h('strong', null, `${TOKEN_REL} Release token for shunting`), `: on a token line, instead: they hold the plunger, you withdraw a token for the driver, and when it is back in your instrument you send ${TOKEN_BACK}.`),
+    ),
+    h('p', null, 'In play mode the trains wait at the clearing point or the signal until the permission is given, and the Next step says what to ring. Giving the line back while the shunt is still on it, or giving Line Clear with the clearing point obstructed, loses points.'),
+    h('div', { class: 'row' }, play(BB_IN, `${BB_IN}  Blocking back inside home`), play(BB_OUT, `${BB_OUT}  Blocking back outside home`), play(SH_FWD, `${SH_FWD}  Shunt into forward section`), play(SH_WD, `${SH_WD}  Shunt withdrawn`)),
+    h('h3', null, 'A goods train too long to set back inside'),
+    steps([
+      ['You', '', 'A long goods train leaving the yard must draw forward over the clearing point to set back clear of the points. It waits there.'],
+      ['You', CA, `Call attention to ${fy}.`],
+      [fy, CA, 'They are listening.'],
+      ['You', BB_IN, 'Blocking back inside home signal.'],
+      [fy, BB_IN, 'Repeated: the line is blocked back. Turn your instrument to TRAIN ON LINE. The train draws forward and sets back.'],
+      ['You', CA, 'Once it is clear of the clearing point, call attention.'],
+      [fy, CA, 'They are listening.'],
+      ['You', TOOS, 'Obstruction removed. Turn your instrument back to LINE BLOCKED.'],
+      [fy, TOOS, 'Repeated: the line is clear for their next train.'],
+    ]),
+  ];
+
+  const tokenAndTapper = [
+    h('h2', null, 'Using the tapper'),
+    h('p', null, 'Press the TAPPER button (or the space bar) in rhythm. Beats close together are one group; a longer pause starts the next group. Stop tapping and the code is sent after a moment. The chips beside the tapper send the everyday codes, and the Code card lists them all. Timing can be adjusted in Settings.'),
+    h('p', null, 'In Learner mode the box shows the next step and explains mistakes. Strict mode removes the prompts and logs irregularities instead. Either way the score plate counts points for working by the book.'),
+    h('h2', null, 'Token working (optional)'),
+    h('p', null, 'On a real single line, the driver must carry a token: a key that only one instrument at a time will release. Choose Electric key token as the Working of a connected box in the Box configurator. The differences are:'),
+    h(
+      'ul',
+      null,
+      h('li', null, 'When you accept a train, repeat the Is line clear code and ', h('strong', null, 'hold the last beat down'), '. That releases a token at the far end.'),
+      h('li', null, 'When you send a train, wait for the needle to deflect after your offer is repeated, then press ', h('strong', null, 'Withdraw token'), ' and hand it to the driver.'),
+      h('li', null, 'When a train arrives, take the token from the driver and press ', h('strong', null, 'Replace token'), ' before sending Train out of section.'),
+    ),
+  ];
+
+  const pages: Record<TutorialTab, Array<HTMLElement | null>> = {
+    basics,
+    examples: [...examples, ...limits],
+    tapper: tokenAndTapper,
+    try: session.length ? session : [h('p', null, 'Set up a signal box with at least one connected box in the Box configurator, then come back here.'), tryButton()],
+    timetables: ttSection,
+    signals: signalsSection,
+  };
+  const TAB_LABELS: Record<TutorialTab, string> = { basics: 'Absolute block', examples: 'Worked examples', tapper: 'Tapper & tokens', try: 'Try it', timetables: 'Timetables', signals: 'Signals' };
+
+  let current: TutorialTab = TUTORIAL_TABS.includes(tab as TutorialTab) ? (tab as TutorialTab) : lastTab;
+  const tabsEl = h('nav', { class: 'config-tabs tut-tabs', 'aria-label': 'Tutorial pages' });
+  const article = h('article', { class: 'tut-cases' });
+  /** A page's content as mahogany cases: one per section, each headed by its title on a brass plate. */
+  const asCases = (els: HTMLElement[]): HTMLElement[] => {
+    const out: HTMLElement[] = [];
+    let cur: HTMLElement | null = null;
+    for (const el of els) {
+      if (el.tagName === 'H2' || !cur) {
+        cur = h('section', { class: 'config-case prose tut-case' });
+        out.push(cur);
+      }
+      if (el.tagName === 'H2') el.classList.add('plate');
+      cur.append(el);
+    }
+    return out;
+  };
+  const show = () => {
+    lastTab = current;
+    tabsEl.replaceChildren(
+      ...TUTORIAL_TABS.map((id) =>
+        h(
+          'button',
+          {
+            class: 'btn small side-tab',
+            type: 'button',
+            'aria-selected': String(current === id),
+            'aria-current': current === id ? 'page' : undefined,
+            on: {
+              click: () => {
+                if (current === id) return;
+                current = id;
+                history.replaceState(null, '', `#tutorial/${id}`);
+                show();
+                window.scrollTo(0, 0);
+              },
+            },
+          },
+          TAB_LABELS[id],
+        ),
+      ),
+    );
+    const nextIdx = TUTORIAL_TABS.indexOf(current) + 1;
+    const next = TUTORIAL_TABS[nextIdx];
+    const cases = asCases(pages[current].filter((x): x is HTMLElement => !!x));
+    article.replaceChildren(...cases);
+    cases[cases.length - 1]?.append(
+      ...(next
+        ? [
+            h(
+              'div',
+              { class: 'row tut-next' },
+              h(
+                'button',
+                {
+                  class: 'btn',
+                  type: 'button',
+                  on: {
+                    click: () => {
+                      current = next;
+                      history.replaceState(null, '', `#tutorial/${next}`);
+                      show();
+                      window.scrollTo(0, 0);
+                    },
+                  },
+                },
+                `Next: ${TAB_LABELS[next]} →`,
+              ),
+            ),
+          ]
+        : []),
+    );
+  };
+  show();
 
   return {
     title: 'Tutorial',
-    el: h(
-      'main',
-      { class: 'page prose-page' },
-      topBar(ctx, 'Tutorial'),
-      h(
-        'article',
-        { class: 'prose' },
-        box && lineA
-          ? h(
-              'p',
-              { class: 'lead' },
-              `This page explains absolute block signalling and the bell codes, then takes you through a session at ${boxName} step by step (section 8) and explains timetables (section 9). You can open the box and try it at any point.`,
-            )
-          : null,
-        tryButton(),
-        h('h2', null, '1. Absolute block'),
-        h('p', null, 'The line between two signal boxes is divided into a ', h('em', null, 'block section'), ', and only one train is allowed in a section at a time. The signaller at the far end (the box ', h('em', null, 'in advance'), ') must agree before a train may enter, and must confirm when it has left.'),
-        h('p', null, `Here, you are the signaller at ${boxName}. The app plays the signaller${lineB ? 's' : ''} at ${lineB ? `${lineA!.neighbourName} and ${lineB.neighbourName}` : fy}. You also drive the trains on your DCC controller, and you work the real signals and points on the layout.`),
-
-        h('h2', null, '2. The block instrument'),
-        h('p', null, 'Each box has an instrument with three positions, worked by the box the train is travelling ', h('em', null, 'towards'), ':'),
-        h(
-          'ul',
-          null,
-          h('li', null, h('strong', null, 'Line Blocked'), ': the normal position. No train may be sent.'),
-          h('li', null, h('strong', null, 'Line Clear'), ': a train has been accepted. The box in rear may clear its section signal.'),
-          h('li', null, h('strong', null, 'Train On Line'), ': a train is in the section.'),
-        ),
-        h('p', null, `So for trains coming to ${boxName} you work your own instrument. For trains leaving ${boxName}, the box at the other end works theirs, and you see a repeater of it.`),
-
-        h('h2', null, '3. Bell codes: call and response'),
-        h('p', null, 'Signallers talk with a single-stroke bell. Every message is acknowledged by ', h('strong', null, 'repeating it back exactly'), '. If it is repeated wrongly, the sender rings it again. If a signaller cannot accept a train, they simply do not answer its Is line clear: that is a refusal, and the train is offered again later.'),
-        h('p', null, 'Most messages begin with ', h('strong', null, `${CA} beat (call attention)`), ', which must be answered before the real message is sent. The main exception is ', h('strong', null, `${TES} (train entering section)`), ', which is sent straight away.'),
-        h('div', { class: 'row' }, play(CA, `${CA}  Call attention`), play(ord, `${ord}  Is line clear for ordinary passenger`), play(TES, `${TES}  Train entering section`), play(TOOS, `${TOOS}  Train out of section`)),
-        h('p', null, 'A code like ', h('strong', null, ord), ' means beats in groups: ', h('em', null, ord.split('-').join(', pause, ')), '.'),
-        h('h3', null, 'Opening the box'),
-        h('p', null, `When you open a box, it starts closed. Before any train can be signalled you open it with each neighbouring box: call attention (${CA}), and when they answer, send `, h('strong', null, `${OPEN} (Opening of signal box)`), '. They repeat it back and the box is open.'),
-        h('p', null, 'At the end of a session, close the box the same way with ', h('strong', null, `${CLOSE} (Closing of signal box)`), '. The other boxes stop working with you, and your box goes back to its cold, unopened state, ready to be opened again.'),
-        h('div', { class: 'row' }, play(OPEN, `${OPEN}  Opening of signal box`), play(CLOSE, `${CLOSE}  Closing of signal box`)),
-
-        h('h2', null, `4. Example: receiving a train from ${fy}`),
-        steps([
-          [fy, CA, 'Call attention. Answer with 1 beat.'],
-          ['You', CA, 'You are listening.'],
-          [fy, ord, 'Is line clear for an ordinary passenger train? Check your station can take it. If it cannot yet, do not reply.'],
-          ['You', ord, `Repeat ${ord} to accept, then turn your instrument to LINE CLEAR.`],
-          [fy, TES, 'Train entering section: the train has left. Drive it in on your controller.'],
-          ['You', TES, 'Acknowledge, and turn your instrument to TRAIN ON LINE.'],
-          ['You', '', 'Watch the train arrive complete, with its tail lamp. Press "Train arrived" and choose where it stands.'],
-          ['You', CA, 'Call attention.'],
-          [fy, CA, 'They are listening.'],
-          ['You', TOOS, 'Train out of section. Turn your instrument back to LINE BLOCKED.'],
-          [fy, TOOS, 'Acknowledged. The section is clear for the next train.'],
-        ]),
-
-        h('h2', null, `5. Example: sending a light engine to ${lineB?.neighbourName ?? fy}`),
-        steps([
-          ['You', '', 'Choose the departing loco under "Departure" on the desk. Its working sets the code.'],
-          ['You', CA, 'Call attention.'],
-          [lineB?.neighbourName ?? fy, CA, 'They are listening.'],
-          ['You', le, 'Is line clear for a light engine?'],
-          [lineB?.neighbourName ?? fy, le, 'Accepted. Their instrument (your repeater) shows LINE CLEAR.'],
-          ['You', '', 'Clear your starting signal on the layout and drive the loco away.'],
-          ['You', TES, 'Train entering section, as it leaves.'],
-          [lineB?.neighbourName ?? fy, TES, 'Acknowledged. Repeater shows TRAIN ON LINE.'],
-          ['You', '', 'Drive it into the fiddle yard. Press the "Arrived" button and pick the road.'],
-          [lineB?.neighbourName ?? fy, CA, `They call attention. Answer ${CA}.`],
-          [lineB?.neighbourName ?? fy, TOOS, `Train out of section. Repeat ${TOOS}. Repeater returns to LINE BLOCKED.`],
-        ]),
-
-        h('h2', null, '6. Token working (optional)'),
-        h('p', null, 'On a real single line, the driver must carry a token: a key that only one instrument at a time will release. Choose Electric key token as the Working of a connected box in the Box configurator. The differences are:'),
-        h(
-          'ul',
-          null,
-          h('li', null, 'When you accept a train, repeat the Is line clear code and ', h('strong', null, 'hold the last beat down'), '. That releases a token at the far end.'),
-          h('li', null, 'When you send a train, wait for the needle to deflect after your offer is repeated, then press ', h('strong', null, 'Withdraw token'), ' and hand it to the driver.'),
-          h('li', null, 'When a train arrives, take the token from the driver and press ', h('strong', null, 'Replace token'), ' before sending Train out of section.'),
-        ),
-
-        h('h2', null, '7. Using the tapper'),
-        h('p', null, 'Press the TAPPER button (or the space bar) in rhythm. Beats close together are one group; a longer pause starts the next group. Stop tapping and the code is sent after a moment. The chips beside the tapper send the everyday codes, and the Code card lists them all. Timing can be adjusted in Settings.'),
-        h('p', null, 'In Learner mode the box shows the next step and explains mistakes. Strict mode removes the prompts and logs irregularities instead. Either way the score plate counts points for working by the book.'),
-        ...session,
-        session.length ? null : tryButton(),
-        ...ttSection,
-      ),
-    ),
+    el: h('main', { class: 'page config-page tut-page' }, topBar(ctx, 'Tutorial'), h('div', { class: 'config-shelf' }, tabsEl, article)),
   };
 }

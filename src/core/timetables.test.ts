@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultState as shippedState } from './defaults';
+import { createDefaultState as shippedState, SCHEMA_VERSION } from './defaults';
 import { migrate } from './store';
 import {
   addTimetable,
@@ -158,7 +158,7 @@ describe('timetables', () => {
     for (const l of old.layouts) delete l.timetables;
     for (const l of old.roster) delete l.jobs;
     const s = migrate(JSON.parse(JSON.stringify(old)));
-    expect(s.schemaVersion).toBe(4);
+    expect(s.schemaVersion).toBe(SCHEMA_VERSION); // the current schema (4 when this test was written)
     expect(s.layouts[0].timetables).toEqual([]);
     expect(s.roster).toHaveLength(8);
   });

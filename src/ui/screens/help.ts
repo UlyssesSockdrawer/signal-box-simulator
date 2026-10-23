@@ -30,12 +30,29 @@ export function codeReference(ctx: Ctx, compact = false): HTMLElement {
       'tr',
       null,
       h('td', { class: 'code-cell' }, h('strong', null, code), h('div', { class: 'dots', 'aria-hidden': 'true' }, beatDots(code))),
-      h('td', null, r.needsCallAttention ? 'Yes' : h('strong', null, 'No')),
+      h('td', { class: 'ca-cell' }, r.needsCallAttention ? 'Yes' : h('strong', null, 'No')),
       h('td', null, h('strong', null, r.name), h('div', { class: 'muted small' }, r.description)),
       h('td', null, play(code)),
     );
   });
 
+  const trainTable = h('div', { class: 'table-wrap' }, h('table', { class: 'codes' }, h('thead', null, h('tr', null, h('th', null, 'Code'), h('th', null, 'Class'), h('th', null, 'Train'), h('th', null, ''))), h('tbody', null, ...trainRows)));
+  const sigTable = h('div', { class: 'table-wrap' }, h('table', { class: 'codes' }, h('thead', null, h('tr', null, h('th', null, 'Code'), h('th', null, 'Call attention first?'), h('th', null, 'Meaning'), h('th', null, ''))), h('tbody', null, ...sigRows)));
+  const intro = [
+    h('p', null, h('strong', null, cs.name), '. ', cs.notes),
+    h('p', null, 'A code such as ', h('strong', null, '3-1'), ' means three beats, a pause, then one beat. Every code you receive is acknowledged by repeating it exactly. If a signaller cannot agree to what is asked (for example the line is not clear), they simply do not reply.'),
+  ];
+  const sources = 'Sources: BR Regulations for Train Signalling (1960) as summarised by signalbox.org and Wikipedia; later codes from the Rule Book list at davros.org. Codes varied by region and railway; check against your own.';
+  // The reference page: mahogany cases with brass plates on the teak shelf (the box's side panel keeps its own, plainer layout).
+  if (!compact)
+    return h(
+      'div',
+      { class: 'code-ref' },
+      h('section', { class: 'config-case' }, h('h2', { class: 'plate' }, 'The code set'), ...intro, h('p', null, 'Choose the code set in ', h('a', { href: '#settings' }, 'Settings'), '.')),
+      h('section', { class: 'config-case' }, h('h2', { class: 'plate' }, 'Is line clear (train descriptions)'), h('p', { class: 'muted' }, 'Sent after call attention has been acknowledged, to offer a train. Repeating it back accepts the train.'), trainTable),
+      h('section', { class: 'config-case' }, h('h2', { class: 'plate' }, 'Other bell signals'), sigTable),
+      h('p', { class: 'small ref-sources' }, sources),
+    );
   return h(
       'div',
       { class: `code-ref${compact ? ' compact' : ''}` },
@@ -58,6 +75,6 @@ export function codeReference(ctx: Ctx, compact = false): HTMLElement {
 export function helpScreen(ctx: Ctx): Screen {
   return {
     title: 'Bell codes',
-    el: h('main', { class: 'page' }, topBar(ctx, 'Bell code reference'), codeReference(ctx)),
+    el: h('main', { class: 'page config-page' }, topBar(ctx, 'Bell code reference'), h('div', { class: 'config-shelf' }, codeReference(ctx))),
   };
 }

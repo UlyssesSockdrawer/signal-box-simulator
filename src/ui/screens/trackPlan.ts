@@ -1,3 +1,4 @@
+import { pruneInterlocking } from '../../core/interlocking';
 import {
   addJunctionInTrack,
   addTrack,
@@ -28,6 +29,7 @@ import {
   checkPlatformNumber,
   platformPath,
   pruneJoints,
+  pruneSignals,
   setPlatform,
   PLATFORM_MAX,
   crossoverFrom,
@@ -81,6 +83,7 @@ import {
   type PlanIssue,
   type Pt,
 } from '../../core/trackPlan';
+import { layoutSignalling } from './signalling';
 import { findLayout } from '../../core/layouts';
 import { addRoad, kindInfo, roadOfCircuit, tieRoad } from '../../core/places';
 import type { AppState, BoxDef, BoxMarker, ExitTarget, Junction, JunctionKind, Layout, MarkerBox, TrackCircuit, TrackOwner, TrackPlan } from '../../core/types';
@@ -111,7 +114,7 @@ const LINE_GREY = '#5f6368';
 /** Box colours on the enamel diagram (all dark enough for white text and to stand out on cream). */
 const BOX_COLOURS = ['#1f4e8c', '#b5541b', '#2e6b3a', '#6a3d8c', '#8a5a00', '#0f6b6b', '#a3271f', '#455a64'];
 
-type Tab = 'plan' | 'areas' | 'places' | 'details';
+type Tab = 'plan' | 'areas' | 'places' | 'signals' | 'details';
 type Sel = { kind: 'circuit'; id: string } | { kind: 'junction'; id: string } | { kind: 'marker'; id: string } | null;
 type Pick =
   | { kind: 'join'; from: OpenEndRef }
@@ -218,6 +221,9 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         out = fn(layoutIn(a).trackPlan, a);
         // Never leave a joint with nothing joined to it: it could not be selected to delete.
         pruneJoints(layoutIn(a).trackPlan);
+        // Signals on track that has gone go with it.
+        pruneSignals(layoutIn(a).trackPlan);
+        pruneInterlocking(layoutIn(a));
       });
     } finally {
       quiet = false;
@@ -333,7 +339,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         },
         label,
       );
-    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('details', 'Details'));
+    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('signals', 'Signalling'), tab('details', 'Details'));
   };
 
   /** The plan's bounds widened so the names of level exits ("To Fiddle Yard West") fit on the board too. */
@@ -2539,8 +2545,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   const renderSide = safeRerender(() => sideEl, renderSideNow);
 
   // ---------------------------------------------------------------- everything
-  const pageTab = () => ui.tab === 'details' || ui.tab === 'places';
-  const pageContent = () => (ui.tab === 'places' ? layoutPlaces(ctx, layoutId) : layoutDetails(ctx, layoutId));
+  const pageTab = () => ui.tab === 'details' || ui.tab === 'places' || ui.tab === 'signals';
+  const pageContent = () => (ui.tab === 'places' ? layoutPlaces(ctx, layoutId) : ui.tab === 'signals' ? layoutSignalling(ctx, layoutId) : layoutDetails(ctx, layoutId));
   const renderDetails = safeRerender(() => detailsEl, () => detailsEl.replaceChildren(pageContent()));
   const renderAll = () => {
     // The layout may just have been deleted (the screen is about to be left).
@@ -2549,7 +2555,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     if (title) title.textContent = layout().name;
     const details = pageTab();
     // The Places tab can use the whole width of a big screen.
-    document.body.classList.toggle('wide-page', ui.tab === 'places');
+    document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals');
     shelfEl.hidden = details;
     detailsEl.hidden = !details;
     if (details) {
@@ -2583,7 +2589,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   });
 
   renderTabs();
-  document.body.classList.toggle('wide-page', ui.tab === 'places');
+  document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals');
   if (pageTab()) {
     shelfEl.hidden = true;
     detailsEl.hidden = false;

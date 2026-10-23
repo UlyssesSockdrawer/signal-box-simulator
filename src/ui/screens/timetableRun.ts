@@ -24,6 +24,12 @@ const panelOpen = { log: true, closed: false };
 /** Endless (v0.3.26): chosen in the timetable list as this id. Its options are kept for the app session. */
 const ENDLESS = '__endless';
 const endlessOpts: GeneratorOptions = { ...defaultGeneratorOptions('sequence'), timing: 'session' };
+/** Endless on a session clock: start the clock at the time now, in step with this device's clock. */
+let endlessFromNow = false;
+const minutesNow = () => {
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes();
+};
 
 /** A new, empty Endless timetable and its generator, starting from where the locos are (or will be). */
 function makeEndless(ctx: Ctx, layout: Layout, start?: Map<string, TtPos>, startAt?: number): { tt: Timetable; gen: TimetableGenerator } {
@@ -32,6 +38,7 @@ function makeEndless(ctx: Ctx, layout: Layout, start?: Map<string, TtPos>, start
     const d = new Date();
     o.startAt = d.getHours() * 60 + d.getMinutes() + 1;
   }
+  if (o.timing === 'session' && endlessFromNow) o.startAt = minutesNow();
   if (startAt !== undefined && o.timing !== 'sequence') o.startAt = startAt;
   const t0 = o.timing === 'sequence' ? 0 : o.startAt;
   const gen = new TimetableGenerator(ctx.store.state, layout, o, start ? new Map([...start].map(([id, pos]) => [id, { pos, freeAt: t0 + 10 }])) : undefined);
@@ -66,9 +73,17 @@ function endlessFields(redraw: () => void): HTMLElement {
     ),
     o.timing === 'session'
       ? h(
+          'label',
+          { class: 'check', for: 'ttp_e_now' },
+          h('input', { id: 'ttp_e_now', type: 'checkbox', checked: endlessFromNow, on: { change: (e: Event) => ((endlessFromNow = (e.target as HTMLInputElement).checked), redraw()) } }),
+          'Start the clock at the time now (it keeps in step with this device’s clock at ×1)',
+        )
+      : null,
+    o.timing === 'session'
+      ? h(
           'div',
           { class: 'row ttp-e-clock' },
-          h('div', { class: 'field' }, h('label', { for: 'ttp_e_start' }, 'Clock starts at'), h('input', { id: 'ttp_e_start', type: 'text', maxlength: 5, value: fmtTime(o.startAt, { timing: 'clock', elapsed: false }), on: { change: (e: Event) => { const v = parseTime((e.target as HTMLInputElement).value); if (v !== null && !Number.isNaN(v)) o.startAt = v; else toast('A time such as 09:00.'); redraw(); } } })),
+          h('div', { class: 'field' }, h('label', { for: 'ttp_e_start' }, 'Clock starts at'), h('input', { id: 'ttp_e_start', type: 'text', maxlength: 5, disabled: endlessFromNow, value: endlessFromNow ? 'Now' : fmtTime(o.startAt, { timing: 'clock', elapsed: false }), on: { change: (e: Event) => { const v = parseTime((e.target as HTMLInputElement).value); if (v !== null && !Number.isNaN(v)) o.startAt = v; else toast('A time such as 09:00.'); redraw(); } } })),
           h('div', { class: 'field' }, h('label', { for: 'ttp_e_speed' }, 'Speed'), h('select', { id: 'ttp_e_speed', on: { change: (e: Event) => (o.speed = Number((e.target as HTMLSelectElement).value)) } }, ...Array.from({ length: MAX_SPEED }, (_, i) => i + 1).map((n) => option(String(n), n === 1 ? '×1' : `×${n}`, n === o.speed)))),
         )
       : null,
@@ -436,7 +451,7 @@ function startEndless(ctx: Ctx, layout: Layout, r: TimetableRunner): void {
     return;
   }
   r.loadEndless(tt, gen);
-  r.start({ operator: choice.operator });
+  r.start({ operator: choice.operator, clockFromNow: tt.timing === 'session' && endlessFromNow });
   toast(`Endless started${gen.notes.length ? `. ${gen.notes.join(' ')}` : '.'}`);
 }
 

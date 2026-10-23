@@ -1,7 +1,9 @@
 import { createDefaultState, DEFAULT_SETTINGS, FALLBACK_LAYOUT_NAME, SCHEMA_VERSION } from './defaults';
+import { COMMON_SIGNALS } from './bellcodes';
 import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
 import { sanitiseTimetables } from './timetables';
+import { sanitiseRailwayData } from './railway';
 import type { AppState, BoxDef, ConnectionDef, Layout, Place, PlaceRoad, TrackPlan } from './types';
 
 /** Shapes saved by earlier versions (before places, v0.3.13 and earlier). */
@@ -92,6 +94,18 @@ export function migrate(raw: unknown): AppState {
       if (e && typeof e.rank !== 'number' && typeof r === 'number') e.rank = r;
     }
   }
+  // Signals added in later versions (v0.3.32: blocking back inside the home, shunting into the forward
+  // section and shunt withdrawn) join every saved code set, unless that set already uses the code.
+  for (const cs of state.codeSets) {
+    if (!cs.signals || typeof cs.signals !== 'object') continue;
+    const used = new Set<string>([...Object.values(cs.signals), ...Object.values(cs.trainCodes ?? {}).map((e) => e?.code)]);
+    for (const id of ['blocking_back_inside', 'shunt_into_forward', 'shunt_withdrawn']) {
+      const code = COMMON_SIGNALS[id];
+      if (id in cs.signals || used.has(code)) continue;
+      cs.signals[id] = code;
+      used.add(code);
+    }
+  }
   if (!state.codeSets.some((c) => c.id === state.settings.codeSetId)) state.settings.codeSetId = state.codeSets[0].id;
   // Before places (v0.3.13 and earlier) every box had an implied station with free-text notes, and a
   // line with no fiddle yard ran to "the location its far box serves". Both become places.
@@ -154,6 +168,8 @@ export function migrate(raw: unknown): AppState {
   sanitisePlaces(state);
   // Timetables and loco jobs (v0.3.24): older saves have none.
   sanitiseTimetables(state);
+  // Real-railway lengths and speeds (v0.3.27): all optional; unusable values are dropped so the defaults apply.
+  sanitiseRailwayData(state);
   return state;
 }
 

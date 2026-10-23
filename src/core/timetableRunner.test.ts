@@ -5,12 +5,13 @@ import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
 import { ThroughWorkings } from './throughTrains';
 import { TimetableRunner } from './timetableRunner';
+import { connectTrainEvents, type RunningMode } from './trainEvents';
 import { addTimetable, addTrain, findTimetable, walkTimetable } from './timetables';
 import { defaultGeneratorOptions, TimetableGenerator } from './timetableGenerator';
 import type { AppState, Location, Timetable } from './types';
 
 /** Sigsim Central with its box being worked (both lines opened), and a runner for its layout. */
-function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated' | 'me'; open?: boolean } = {}) {
+function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated' | 'me'; open?: boolean; mode?: RunningMode } = {}) {
   const state: AppState = shippedState();
   state.settings.responseDelayMs = [1000, 1000];
   state.settings.despatchDelayMs = [5000, 5000];
@@ -30,6 +31,8 @@ function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated
     trainTypes: () => state.trainTypes,
     locoLabel: (id) => id,
   });
+  // The box session's train events, in its running mode (model railway unless a test says otherwise).
+  const trains = connectTrainEvents(opts.mode ?? 'model', sessions, workings);
   const tick = (ms = 4000) => sched.advance(ms);
   const openLine = (s: (typeof sessions)[number]) => {
     s.controller.sendBell('1');
@@ -42,7 +45,7 @@ function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated
     getState: () => state,
     scheduler: sched,
     layoutId: 'layout1',
-    box: (id) => (opts.worked === false || id !== box.id ? null : { sessions, workings }),
+    box: (id) => (opts.worked === false || id !== box.id ? null : { sessions, workings, mode: trains.mode, trains: trains.source }),
     moveLoco: (id, loc: Location) => {
       const l = state.roster.find((x) => x.id === id);
       if (l) l.location = loc;
@@ -57,7 +60,7 @@ function setup(opts: { worked?: boolean; minutes?: number; operator?: 'simulated
   const [west, east] = sessions.map((s) => s.controller);
   const item = (id: string) => runner.items.find((x) => x.id === id)!;
   const loco = (id: string) => state.roster.find((l) => l.id === id)!;
-  return { state, sched, tick, runner, west, east, workings, item, loco, sessions, openLine, tt: (id: string) => findTimetable(state, id)!.tt };
+  return { state, sched, tick, runner, west, east, workings, trains, item, loco, sessions, openLine, tt: (id: string) => findTimetable(state, id)!.tt };
 }
 
 /** Receive the train being offered on a line into a road, all the way to Train out of section. */
@@ -78,6 +81,24 @@ function receive(t: ReturnType<typeof setup>, c: typeof t.west, code: string, at
   t.tick();
   c.setInstrument('LB');
   t.tick();
+}
+
+/** A pick-up goods from the goods siding to Fiddle Yard East, offered and sent: on its way to the far end. */
+function sendPickupToEast(t: ReturnType<typeof setup>) {
+  const l = t.state.layouts[0];
+  const tt = addTimetable(t.state, l.id, 'sequence')!;
+  const { entry } = addTrain(t.state, l, tt, { locoId: 'lms7298' })!;
+  entry.trainTypeId = 'pickup_goods';
+  entry.to = { placeId: 'fy-east', roadId: 'fye-road3' };
+  t.runner.load(tt);
+  t.runner.start();
+  t.east.sendBell('1');
+  t.tick();
+  t.east.sendBell('3');
+  t.tick();
+  t.east.sendBell('2');
+  t.tick();
+  expect(t.east.view.outgoing?.departed).toBe(true);
 }
 
 describe('timetable runner', () => {
@@ -149,7 +170,7 @@ describe('timetable runner', () => {
     t.tick();
     // It has left Fiddle Yard West: when it should pass the box.
     expect(t.runner.dueAtBox('sigsim-central', 'sgc-west')?.through).toBe(true);
-    expect(t.item('seq-ex1').status).toMatch(/due to pass Sigsim Central at about/);
+    expect(t.item('seq-ex1').status).toMatch(/due to pass Sigsim Central (at about|in )/);
     t.east.sendBell('2');
     t.tick();
     t.west.confirmIncomingArrived(null, { moveLoco: false });
@@ -178,6 +199,15 @@ describe('timetable runner', () => {
     expect(log).toMatch(/Done: 1E01 The Express/);
     expect(t.workings.route('sgc-west')).toBe('');
     expect(t.east.view.incoming).toMatchObject({ locoId: 'lms5025' });
+  });
+
+  it('can start a session clock at the time now, in step with the device clock', () => {
+    const t = setup({ minutes: 12 * 60 + 43 });
+    t.runner.load(t.tt('tt-sgc-morning'));
+    t.runner.start({ clockFromNow: true });
+    expect(t.runner.clockNow()).toBe(12 * 60 + 43);
+    t.tick(5 * 60_000);
+    expect(Math.round(t.runner.clockNow()!)).toBe(12 * 60 + 48);
   });
 
   it('runs a session clock: moves are released at their times, any loco is found by its job', () => {
@@ -346,6 +376,37 @@ describe('timetable runner', () => {
     t.tick();
     expect(t.runner.items[0].state).toBe('done');
     expect(t.loco('lms7298').location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road3' });
+  });
+
+  it("the simulated operator's arrival report goes through the box's source of train events", () => {
+    const t = setup();
+    const seen: string[] = [];
+    t.trains.router.onApplied((e, outcome) => seen.push(`${e.type}:${'by' in e ? e.by : ''}:${outcome}`));
+    sendPickupToEast(t);
+    t.tick(9000);
+    expect(t.east.view.outgoing?.arrived).toBe(true);
+    expect(seen).toEqual(['arrivedFar:fiddleYardOperator:applied']);
+    // A second report (the person pressing Arrived as well) counts for nothing.
+    expect(t.trains.source.report({ type: 'arrivedFar', connectionId: 'sgc-east', locoId: 'lms7298', roadId: 'fye-road4', by: 'person' })).toBe('ignored');
+    t.tick(5000);
+    t.east.sendBell('1');
+    t.tick();
+    t.east.sendBell('2-1');
+    t.tick();
+    expect(t.loco('lms7298').location).toEqual({ kind: 'place', placeId: 'fy-east', roadId: 'fye-road3' });
+  });
+
+  it("takes the box's running mode from its running state: the simulated operator works only in model railway mode", () => {
+    const t = setup({ mode: 'play' });
+    expect(t.trains.mode).toBe('play');
+    sendPickupToEast(t);
+    expect(t.runner.autoArrivalAt('sigsim-central', 'sgc-east')).toBeNull();
+    expect(t.runner.items[0].status).toMatch(/the railway reports it/);
+    t.tick(30_000);
+    expect(t.east.view.outgoing?.arrived).toBeFalsy();
+    // With no simulated railway attached (this test wires none), a movement can still be reported.
+    expect(t.trains.source.report({ type: 'arrivedFar', connectionId: 'sgc-east', locoId: 'lms7298', roadId: 'fye-road3', by: 'person' })).toBe('applied');
+    expect(t.east.view.outgoing?.arrived).toBe(true);
   });
 
   it('runs Endless: keeps six moves waiting in a sequence, and never finishes', () => {

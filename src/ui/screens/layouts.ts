@@ -9,6 +9,7 @@ import { plusIcon } from './boxConfig';
 import { timetablesOf } from '../../core/timetables';
 import { eraInfo, eraOf, HEADCODE_ERAS } from '../../core/headcodes';
 import type { HeadcodeEra } from '../../core/types';
+import { DEFAULT_CLEARING_POINT, formatLength, layoutClearingPoint, parseLength } from '../../core/railway';
 
 /*
  * Layouts: the layout configurator opens on a list of the layouts set up in the
@@ -94,7 +95,7 @@ export function confirmTrainsOff(trains: Loco[], title: string, what: string, co
 }
 
 /** Route for a layout in the editor. `tab` opens its Details or Places tab first. */
-export const layoutRoute = (id: string, tab?: 'details' | 'places') => `plan/${id}${tab ? `/${tab}` : ''}`;
+export const layoutRoute = (id: string, tab?: 'details' | 'places' | 'signals') => `plan/${id}${tab ? `/${tab}` : ''}`;
 
 export function layoutListScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;
@@ -181,6 +182,7 @@ export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
   const st = ctx.store.state;
   const layout = findLayout(st, layoutId)!;
   const isActive = activeLayout(st)?.id === layout.id;
+  const units = ctx.store.state.settings.units;
   const upd = (fn: (l: Layout, a: AppState) => void) =>
     ctx.store.update((a) => {
       const l = findLayout(a, layout.id);
@@ -236,6 +238,32 @@ export function layoutDetails(ctx: Ctx, layoutId: string): HTMLElement {
           }),
         ),
         h('small', { class: 'help' }, 'Used by Double line on a track circuit to set which way the up and down lines run. Lines already set are not changed.'),
+      ),
+      h(
+        'div',
+        { class: 'field' },
+        h('label', { for: 'ld_cp' }, 'Clearing point'),
+        h('input', {
+          id: 'ld_cp',
+          type: 'text',
+          value: formatLength(layoutClearingPoint(layout), units),
+          on: {
+            change: (e: Event) => {
+              const el = e.target as HTMLInputElement;
+              const t = el.value.trim();
+              const v = t === '' ? DEFAULT_CLEARING_POINT : parseLength(t, units === 'metric' ? 'm' : 'yd');
+              if (v === null) {
+                el.value = formatLength(layoutClearingPoint(layout), units);
+                return toast('Type a distance, e.g. 440 yd, 20 ch or 400 m.');
+              }
+              upd((l) => {
+                if (Math.abs(v - DEFAULT_CLEARING_POINT) < 0.5) delete l.clearingPoint;
+                else l.clearingPoint = v;
+              });
+            },
+          },
+        }),
+        h('small', { class: 'help' }, `How far inside each home signal the line must be clear before a train may be accepted (Line Clear given): ${formatLength(DEFAULT_CLEARING_POINT, units)} as standard. In play mode, shunting over it needs the line blocked back first (2-4).`),
       ),
     ),
     isActive

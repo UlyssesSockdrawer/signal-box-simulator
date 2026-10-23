@@ -168,29 +168,29 @@ export class ThroughWorkings {
       const what = code ? `${code} (${describeCode(code, set, this.o.trainTypes())})` : 'the Is line clear code';
       const fv = from.controller.view;
       if (t.blocked && t.stage !== 'passed') {
-        return { connId: t.toConnId, text: `${who} is routed on to ${toName}, but another train is chosen to depart to ${toName}. Clear that departure, or change the route of ${who} to stop here.` };
+        return { connId: t.toConnId, text: `${who} is routed on to ${toName}, but another train is chosen to depart there. Clear that departure, or set ${who} to stop here.` };
       }
       if (t.stage === 'standing') {
         const twoOne = `${signalCode(set, 'call_attention')} then ${signalCode(set, 'train_out_of_section')} (Train out of section) to ${fromName}`;
         return {
           connId: t.toConnId,
           text: t.acceptedOn
-            ? `${who} is standing at your box and ${toName} has accepted it. Send ${twoOne}; as it departs, send ${signalCode(set, 'train_entering_section')} to ${toName}.`
-            : `${who} is standing at your box. Send ${twoOne}, and offer it on to ${toName}: call attention, then ${what}.`,
+            ? `${who} is standing at your box, accepted by ${toName}. Send ${twoOne}; send ${signalCode(set, 'train_entering_section')} to ${toName} as it leaves.`
+            : `${who} is standing at your box. Send ${twoOne}, and offer it on to ${toName} (call attention, then ${what}).`,
         };
       }
       if (t.stage === 'offerOn') {
-        return { connId: t.toConnId, text: `Offer ${who} on to ${toName}: on the ${toName} instruments call attention (tap ${signalCode(set, 'call_attention')}), then send ${what}.` };
+        return { connId: t.toConnId, text: `Offer ${who} on to ${toName}: call attention (${signalCode(set, 'call_attention')}), then send ${what}.` };
       }
       if (t.stage === 'acceptedOn' && fv.incoming?.departed && fv.mode === 'ab' && fv.myInstrument !== 'TOL') return null; // let the box in rear's guidance say Train On Line first
       if (t.stage === 'acceptedOn' && fv.incoming?.departed) {
         return {
           connId: t.toConnId,
-          text: `${who} is on its way from ${fromName} and ${toName} has accepted it. As it passes your box, send ${signalCode(set, 'train_entering_section')} (Train entering section) to ${toName}${to.controller.view.mode === 'token' ? ' (give the driver the token first)' : ''}.`,
+          text: `${toName} has accepted ${who}. As it passes your box, send ${signalCode(set, 'train_entering_section')} to ${toName}${to.controller.view.mode === 'token' ? ' (token to the driver first)' : ''}.`,
         };
       }
       if (t.stage === 'sentOn') {
-        return { connId: t.fromConnId, text: `${who} has gone on towards ${toName}. When its tail lamp has passed, press "Train passed complete" (in the Next arrival panel, ${fromName}), then call attention (${signalCode(set, 'call_attention')}) and send ${signalCode(set, 'train_out_of_section')} (Train out of section) to ${fromName}.` };
+        return { connId: t.fromConnId, text: `When ${who}'s tail lamp has passed, press "Train passed complete", then send ${signalCode(set, 'call_attention')} and ${signalCode(set, 'train_out_of_section')} to ${fromName}.` };
       }
     }
     return null;

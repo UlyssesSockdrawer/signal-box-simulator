@@ -1,8 +1,14 @@
 import { DEFAULT_CODE_SETS, DEFAULT_TRAIN_TYPES } from './bellcodes';
+import { DEFAULT_CLEARING_POINT } from './railway';
 import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCircuit, TrackPlan } from './types';
 
-/** 3: places (stations, sidings, goods, depots, fiddle yards) on layouts (v0.3.14). 4: timetables and loco jobs (v0.3.24). */
-export const SCHEMA_VERSION = 4;
+/**
+ * 3: places (stations, sidings, goods, depots, fiddle yards) on layouts (v0.3.14). 4: timetables and loco jobs (v0.3.24).
+ * 5: optional real-railway lengths and speeds, and the units setting (v0.3.27; nothing needs filling in).
+ * 6: simulated running settings and rakes of stock left standing on a layout (v0.3.28; nothing needs filling in).
+ * 7: signals on track plans, facing point locks and lever numbers (v0.3.29; nothing needs filling in).
+ */
+export const SCHEMA_VERSION = 7;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';
@@ -32,6 +38,11 @@ export const DEFAULT_SETTINGS: Settings = {
   scoring: true,
   boxDiagram: false,
   diagramLabels: 'codes',
+  showRoutes: true,
+  units: 'imperial',
+  simSpeed: 13.4112, // 30 mph
+  timeScale: 1,
+  modelOccupancy: false,
 };
 
 /*
@@ -267,6 +278,9 @@ export function createDefaultState(): AppState {
  * catch points (5) protecting the main line from anything running away out of the yard, then
  * points 3 to the goods siding and the goods shed road.
  */
+/** Sigsim Central's station limits at each end: a quarter of a mile (440 yd) inside the home signals. */
+const STATION_LIMIT = DEFAULT_CLEARING_POINT;
+
 function sigsimCentralPlan(): TrackPlan {
   const box = { kind: 'box', boxId: BOX } as const;
   const west = { kind: 'line', boxId: BOX, connectionId: WEST } as const;
@@ -278,7 +292,8 @@ function sigsimCentralPlan(): TrackPlan {
   const c = (id: string, code: string, name: string, owner: TrackCircuit['owner'], ends: TrackCircuit['ends'], extra: Partial<TrackCircuit> = {}): TrackCircuit => ({ id, code, name, owner, ends, ...extra });
   return {
     junctions: [
-      joint('sgc-jw', 6, 0), // between the west line's two track circuits
+      joint('sgc-jw', 1, 0), // between the west line's two track circuits
+      joint('sgc-jwi', 6, 0), // the west line ends: station limits begin (the home signal stands here)
       j('sgc-j1', '1', 'pointsRight', 12, 0), // into the loop
       j('sgc-j2', '2', 'pointsLeft', 18, 0), // to the goods yard
       // Trap points, turned round so the blade faces west: anything running out of the yard towards points 2
@@ -286,20 +301,25 @@ function sigsimCentralPlan(): TrackPlan {
       j('sgc-j5', '5', 'catchPoints', 24, -3, { rotate: true }),
       j('sgc-j3', '3', 'pointsLeft', 27, -3), // goods siding / goods shed
       j('sgc-j4', '4', 'pointsLeft', 38, 0, { rotate: true }), // loop rejoins the main line
-      joint('sgc-je', 44, 0), // between the east line's two track circuits
+      joint('sgc-jei', 44, 0), // station limits end: the east line begins (the home signal from the east stands here)
+      joint('sgc-je', 49, 0), // between the east line's two track circuits
     ],
     circuits: [
-      c('sgc-t1', 'T1', 'West far', west, [{ kind: 'exit', x: 0, y: 0, to: { kind: 'place', placeId: 'fy-west' } }, at('sgc-jw', 'a')]),
-      c('sgc-t2', 'T2', 'West near', west, [at('sgc-jw', 'b'), at('sgc-j1', 'toe')]),
-      c('sgc-t3', 'T3', 'West end', box, [at('sgc-j1', 'normal'), at('sgc-j2', 'toe')]),
-      c('sgc-t4', 'T4', 'Platform 1', box, [at('sgc-j2', 'normal'), at('sgc-j4', 'normal')], { platform: { number: '1', side: -1 } }),
-      c('sgc-t5', 'T5', 'Platform 2 loop', box, [at('sgc-j1', 'reverse'), at('sgc-j4', 'reverse')], { via: [{ x: 15, y: 3 }, { x: 35, y: 3 }], platform: { number: '2', side: 1 } }),
-      c('sgc-t6', 'T6', 'Goods neck', box, [at('sgc-j2', 'reverse'), at('sgc-j5', 'b')], { via: [{ x: 21, y: -3 }] }),
-      c('sgc-t7', 'T7', 'Yard throat', box, [at('sgc-j5', 'a'), at('sgc-j3', 'toe')]),
-      c('sgc-t8', 'T8', 'Goods siding', box, [at('sgc-j3', 'normal'), { kind: 'bufferStops', x: 38, y: -3 }]),
-      c('sgc-t9', 'T9', 'Goods shed', box, [at('sgc-j3', 'reverse'), { kind: 'bufferStops', x: 38, y: -6 }], { via: [{ x: 30, y: -6 }] }),
-      c('sgc-t10', 'T10', 'East near', east, [at('sgc-j4', 'toe'), at('sgc-je', 'a')]),
-      c('sgc-t11', 'T11', 'East far', east, [at('sgc-je', 'b'), { kind: 'exit', x: 50, y: 0, to: { kind: 'place', placeId: 'fy-east' } }]),
+      c('sgc-t1', 'T1', 'West far', west, [{ kind: 'exit', x: -3, y: 0, to: { kind: 'place', placeId: 'fy-west' } }, at('sgc-jw', 'a')]),
+      c('sgc-t2', 'T2', 'West near', west, [at('sgc-jw', 'b'), at('sgc-jwi', 'a')]),
+      // Station limits: from the home signal at the end of the line to the points, a quarter of a mile
+      // (the clearing point), where trains can draw forward and set back without going into the section.
+      c('sgc-twi', 'T3', 'West inner', box, [at('sgc-jwi', 'b'), at('sgc-j1', 'toe')], { length: STATION_LIMIT }),
+      c('sgc-t3', 'T4', 'West end', box, [at('sgc-j1', 'normal'), at('sgc-j2', 'toe')]),
+      c('sgc-t4', 'T5', 'Platform 1', box, [at('sgc-j2', 'normal'), at('sgc-j4', 'normal')], { platform: { number: '1', side: -1 } }),
+      c('sgc-t5', 'T6', 'Platform 2 loop', box, [at('sgc-j1', 'reverse'), at('sgc-j4', 'reverse')], { via: [{ x: 15, y: 3 }, { x: 35, y: 3 }], platform: { number: '2', side: 1 } }),
+      c('sgc-t6', 'T7', 'Goods neck', box, [at('sgc-j2', 'reverse'), at('sgc-j5', 'b')], { via: [{ x: 21, y: -3 }] }),
+      c('sgc-t7', 'T8', 'Yard throat', box, [at('sgc-j5', 'a'), at('sgc-j3', 'toe')]),
+      c('sgc-t8', 'T9', 'Goods siding', box, [at('sgc-j3', 'normal'), { kind: 'bufferStops', x: 38, y: -3 }]),
+      c('sgc-t9', 'T10', 'Goods shed', box, [at('sgc-j3', 'reverse'), { kind: 'bufferStops', x: 38, y: -6 }], { via: [{ x: 30, y: -6 }] }),
+      c('sgc-tei', 'T11', 'East inner', box, [at('sgc-j4', 'toe'), at('sgc-jei', 'a')], { length: STATION_LIMIT }),
+      c('sgc-t10', 'T12', 'East near', east, [at('sgc-jei', 'b'), at('sgc-je', 'a')]),
+      c('sgc-t11', 'T13', 'East far', east, [at('sgc-je', 'b'), { kind: 'exit', x: 53, y: 0, to: { kind: 'place', placeId: 'fy-east' } }]),
     ],
     markers: [
       { id: 'sgc-m1', box: { kind: 'box', boxId: BOX }, x: 0, y: 0, circuitId: 'sgc-t5', dx: 0, dy: 3 },

@@ -1,5 +1,6 @@
 import {
   circuitLabel,
+  circuitMiddle,
   circuitPath,
   endHeading,
   JUNCTIONS,
@@ -16,6 +17,7 @@ import {
   TURNTABLE_RADIUS,
   type Pt,
 } from '../core/trackPlan';
+import { drawSignals, obbHit, obbOfBox, type Box, type Obb } from './signalDrawing';
 import type { AppState, ExitTarget, Junction, Layout, MarkerBox, TrackCircuit } from '../core/types';
 
 /*
@@ -33,6 +35,8 @@ import type { AppState, ExitTarget, Junction, Layout, MarkerBox, TrackCircuit } 
 
 const NS = 'http://www.w3.org/2000/svg';
 const U = 24;
+/** Pixels per grid unit in the drawing (for turning a tap into a place on the plan). */
+export const DIAGRAM_UNIT = U;
 const INK = '#1d2124';
 const FAINT = '#a39a85';
 const FONT = 12;
@@ -43,6 +47,10 @@ export interface DiagramOptions {
   /** The box whose diagram this is: its track is drawn in ink. Omit to draw the whole plan in ink. */
   boxId?: string;
   labels: DiagramLabels;
+  /** Draw the layout's signals (v0.3.29) with their lever numbers. */
+  signals?: boolean;
+  /** The selected signal (layout configurator), drawn highlighted. */
+  selectedSignal?: string;
 }
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number | undefined> = {}, ...children: Array<SVGElement | string | null>): SVGElementTagNameMap[K] {
@@ -129,7 +137,11 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
   const platforms = svg('g', { class: 'dg-platforms' });
   const tracks = svg('g', { class: 'dg-tracks' });
   const labels = svg('g', { class: 'dg-labels' });
-  s.append(platforms, tracks, labels);
+  const overlay = svg('g', { class: 'dg-overlay' });
+  s.append(platforms, tracks, labels, overlay);
+  // Kept so trains' labels can be put on the drawing later (setTrainLabels).
+  s.dataset.ox = String(ox);
+  s.dataset.oy = String(oy);
 
   // Track circuits
   for (const c of p.circuits) {
@@ -139,6 +151,8 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
     const pd = curvedD(path);
     const g = svg('g', { class: `dg-circuit${isMine(c) ? ' mine' : ''}`, 'data-circuit': c.id });
     g.append(svg('path', { d: pd, class: 'dg-line', fill: 'none', stroke: col, 'stroke-width': 5, 'stroke-linejoin': 'round', 'stroke-dasharray': c.owner.kind === 'line' ? '14 5' : undefined }));
+    // A wide invisible stroke, so a circuit is easy to tap (model railway mode: mark it occupied or clear).
+    g.append(svg('path', { d: pd, class: 'dg-hit', fill: 'none', stroke: 'transparent', 'stroke-width': 18 }));
     let platformUp = false;
     if (c.platform) {
       const pp = platformPath(p, c);
@@ -215,7 +229,14 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
       const level = a.y === z.y;
       const text = opts.labels === 'names' ? circuitLabel(c) : c.code;
       const ly = platformUp ? my + FONT + 8 : my - 9;
-      labels.append(svg('text', { x: level ? mx : mx + 9, y: level ? ly : my, 'text-anchor': level ? 'middle' : 'start', class: 'dg-label', fill: col }, text));
+      // Tagged with its stretch of line, so it can slide along to make room for signals.
+      labels.append(
+        svg(
+          'text',
+          { x: level ? mx : mx + 9, y: level ? ly : my, 'text-anchor': level ? 'middle' : 'start', class: 'dg-label dg-clabel', fill: col, 'data-seg': [X(a.x), Y(a.y), X(z.x), Y(z.y)].map((v) => v.toFixed(1)).join(','), 'data-below': platformUp ? '1' : undefined },
+          text,
+        ),
+      );
     }
   }
 
@@ -281,7 +302,112 @@ export function drawDiagram(state: AppState, layout: Layout, opts: DiagramOption
     g.append(svg('text', { x: cx, y: cy + 23, 'text-anchor': 'middle', class: 'dg-tag', fill: '#ffffff' }, label));
     labels.append(g);
   }
+  // Signals, post by post (signalDrawing.ts), kept clear of the labels drawn above.
+  if (opts.signals) {
+    const sigLayer = svg('g', { class: 'dg-signals-wrap' });
+    overlay.append(sigLayer);
+    // The track itself, sampled into small boxes, so a post does not stand on another line.
+    const lines: Box[] = [];
+    for (const c of p.circuits) {
+      const pts = circuitPath(p, c);
+      for (let i = 1; i < pts.length; i++) {
+        const ax = X(pts[i - 1].x);
+        const ay = Y(pts[i - 1].y);
+        const bx = X(pts[i].x);
+        const by = Y(pts[i].y);
+        const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 6));
+        for (let k = 0; k <= steps; k++) {
+          const x = ax + ((bx - ax) * k) / steps;
+          const y = ay + ((by - ay) * k) / steps;
+          lines.push({ x0: x - 2.5, y0: y - 2.5, x1: x + 2.5, y1: y + 2.5 });
+        }
+      }
+    }
+    // Signals are placed the same whatever labels are showing; circuit names then make room for them.
+    const drawn = drawSignals(state, layout, X, Y, { selected: opts.selectedSignal, boxId: box?.id }, labelBoxes(labels), lines);
+    sigLayer.append(drawn.layer);
+    makeRoom(labels, drawn.posts);
+  }
   return s;
+}
+
+/** Where the labels, tags and box markers are (for keeping signals clear of them). */
+function labelBoxes(labels: SVGGElement): Box[] {
+  const out: Box[] = [];
+  const n = (el: Element, a: string) => Number(el.getAttribute(a) ?? NaN);
+  for (const el of labels.querySelectorAll('rect, text, path')) {
+    if (el.tagName === 'rect') {
+      const x = n(el, 'x');
+      const y = n(el, 'y');
+      if (Number.isFinite(x) && Number.isFinite(y)) out.push({ x0: x, y0: y, x1: x + n(el, 'width'), y1: y + n(el, 'height') });
+      continue;
+    }
+    if (el.tagName === 'path') {
+      // Box markers' roofs and leads.
+      const nums = (el.getAttribute('d') ?? '').match(/-?\d*\.?\d+/g)?.map(Number) ?? [];
+      if (nums.length < 4) continue;
+      const xs = nums.filter((_, i) => i % 2 === 0);
+      const ys = nums.filter((_, i) => i % 2 === 1);
+      out.push({ x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+      continue;
+    }
+    if (el.classList.contains('dg-clabel')) continue; // circuit names move for the signals instead
+    const tb = textBox(el);
+    if (tb) out.push(tb);
+  }
+  return out;
+}
+
+/** Roughly where a label's text lies (no layout needed). */
+function textBox(el: Element, x = Number(el.getAttribute('x')), y = Number(el.getAttribute('y')), anchor = el.getAttribute('text-anchor')): Box | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const w = (el.textContent ?? '').length * FONT * 0.62;
+  const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+  if (el.getAttribute('transform')?.includes('rotate')) return { x0: x - FONT * 0.7, y0: y - w, x1: x + FONT * 0.7, y1: y + w };
+  return { x0, y0: y - FONT + 2, x1: x0 + w, y1: y + 2 };
+}
+
+/**
+ * Slide each circuit name along its stretch of line (or to the other side of it) until it is clear
+ * of the signals, so the signals never move when labels are switched on, off or to names.
+ */
+function makeRoom(labels: SVGGElement, posts: Obb[]): void {
+  if (!posts.length) return;
+  const others: Obb[] = [];
+  for (const el of labels.querySelectorAll('rect')) {
+    const x = Number(el.getAttribute('x'));
+    const y = Number(el.getAttribute('y'));
+    if (Number.isFinite(x) && Number.isFinite(y)) others.push(obbOfBox({ x0: x, y0: y, x1: x + Number(el.getAttribute('width')), y1: y + Number(el.getAttribute('height')) }));
+  }
+  const names = [...labels.querySelectorAll('.dg-clabel')];
+  for (const el of names) {
+    // Other circuit names count too, where they stand now.
+    const near = names.filter((x) => x !== el).map((x) => textBox(x)).filter((x): x is Box => !!x).map(obbOfBox);
+    const clashes = (b: Box | null) => (!b ? 99 : posts.filter((p) => obbHit(obbOfBox(b), p, 3)).length * 2 + [...others, ...near].filter((o) => obbHit(obbOfBox(b), o, 2)).length);
+    if (!clashes(textBox(el))) continue;
+    const [ax, ay, zx, zy] = (el.getAttribute('data-seg') ?? '').split(',').map(Number);
+    if (![ax, ay, zx, zy].every(Number.isFinite)) continue;
+    const level = Math.abs(ay - zy) < 0.5;
+    const below = el.getAttribute('data-below') === '1';
+    let best: { x: number; y: number; anchor: string; n: number } | null = null;
+    for (const side of below ? [1, -1] : [-1, 1]) {
+      for (const t of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9, 0]) {
+        const mx = ax + (zx - ax) * t;
+        const my = ay + (zy - ay) * t;
+        const x = level ? mx : side < 0 ? mx + 9 : mx - 9;
+        const y = level ? (side < 0 ? my - 9 : my + FONT + 8) : my;
+        const anchor = level ? 'middle' : side < 0 ? 'start' : 'end';
+        const n = clashes(textBox(el, x, y, anchor));
+        if (!best || n < best.n) best = { x, y, anchor, n };
+        if (!n) break;
+      }
+      if (best && !best.n) break;
+    }
+    if (!best) continue;
+    el.setAttribute('x', best.x.toFixed(1));
+    el.setAttribute('y', best.y.toFixed(1));
+    el.setAttribute('text-anchor', best.anchor);
+  }
 }
 
 /** Light up occupied track circuits (for simulated running). Circuits not listed are shown clear. */
@@ -289,3 +415,40 @@ export function setOccupied(diagram: SVGSVGElement, circuitIds: Iterable<string>
   const on = new Set(circuitIds);
   for (const g of diagram.querySelectorAll<SVGGElement>('.dg-circuit')) g.classList.toggle('occupied', on.has(g.dataset.circuit ?? ''));
 }
+
+/** Show set routes: circuits locked for a train (white lights), and the points set in them. */
+export function setRoutes(diagram: SVGSVGElement, circuitIds: Iterable<string>, junctionIds: Iterable<string>): void {
+  const on = new Set(circuitIds);
+  const js = new Set(junctionIds);
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-circuit')) g.classList.toggle('routed', on.has(g.dataset.circuit ?? ''));
+  for (const g of diagram.querySelectorAll<SVGGElement>('.dg-junction')) g.classList.toggle('routed', js.has(g.dataset.junction ?? ''));
+}
+
+/** Put a train's description (e.g. its number) on the circuit its head is in. */
+export function setTrainLabels(state: AppState, layout: Layout, diagram: SVGSVGElement, labels: Array<{ circuitId: string; text: string }>): void {
+  const ox = Number(diagram.dataset.ox);
+  const oy = Number(diagram.dataset.oy);
+  const overlay = diagram.querySelector('.dg-overlay');
+  if (!overlay || !Number.isFinite(ox)) return;
+  for (const el of overlay.querySelectorAll('.dg-train')) el.remove();
+  void state;
+  for (const l of labels) {
+    const c = layout.trackPlan.circuits.find((x) => x.id === l.circuitId);
+    const m = c ? circuitMiddle(layout.trackPlan, c) : null;
+    if (!m) continue;
+    const x = (m.x - ox) * U;
+    const y = (m.y - oy) * U + 16;
+    const w = Math.max(30, l.text.length * 7.5 + 10);
+    overlay.append(
+      svg('g', { class: 'dg-train' }, svg('rect', { x: x - w / 2, y: y - 8, width: w, height: 16, rx: 2 }), svg('text', { x, y: y + 4, 'text-anchor': 'middle', class: 'dg-tag' }, l.text)),
+    );
+  }
+}
+
+/**
+ * A signal's head in its own frame: x points the way trains run, the post stands at (0, 0).
+ * Semaphore: red arm with a white stripe (home, starter), yellow fishtail arm (distant), white disc
+ * with a red (or yellow) band (shunt), small arm (shunt-ahead), white board (limit of shunt). Colour
+ * light: red/green or yellow/green lamps, position lights (two lamps) for shunting, two red lamps for a
+ * limit of shunt. Lamps are drawn dim: the diagram shows the signals as planned.
+ */

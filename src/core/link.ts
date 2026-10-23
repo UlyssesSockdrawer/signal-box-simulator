@@ -1,6 +1,11 @@
 import type { ScoreRuleId } from './score';
 import type { BellCode, InstrumentState } from './types';
 
+/** Blocking back: 'inside' the home signal (2-4) or 'outside' it on to the line (3-3). */
+export type RearBlock = 'inside' | 'outside';
+/** A shunt into the forward section (3-3-2), or a token released for shunting (5-2). */
+export type ForwardBlock = 'shunt' | 'token';
+
 /**
  * Messages exchanged between two signal boxes along one section.
  *
@@ -34,6 +39,13 @@ export type LinkMessage =
    * or the train has been accepted. reoffers = how many times it has been offered again.
    */
   | { type: 'offer'; state: 'offered' | 'held' | 'accepted'; reoffers: number; nextAt?: number }
+  /**
+   * Permissions the far box has given the user's box to obstruct the line between them (v0.3.32):
+   * rear = the line from the far box is blocked back (2-4, inside the home signal within the clearing
+   * point; 3-3, outside the home signal); forward = a shunt has been let into the section towards the
+   * far box (3-3-2), or a token released for shunting (5-2). null when not given (or given up again).
+   */
+  | { type: 'permission'; rear: RearBlock | null; forward: ForwardBlock | null }
   // ---- Bookkeeping / coaching ----
   | { type: 'movementComplete'; direction: 'incoming' | 'outgoing'; locoId: string | null; roadId?: string }
   | { type: 'trainDeparted'; direction: 'incoming' | 'outgoing'; locoId: string | null }

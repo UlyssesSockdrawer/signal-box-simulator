@@ -55,7 +55,18 @@ export interface Working {
   trainTypeId: string;
   consist: string; // free text, e.g. "4 coaches", "auto-coach"
   headcode: string; // optional reporting number / lamp code
+  /** Length of the whole train in metres, when stated; absent = worked out from the loco and its consist (core/railway.ts). */
+  length?: number;
 }
+
+/*
+ * REAL-RAILWAY DATA (v0.3.27, for signaller play mode): optional lengths and speeds, all with
+ * defaults (core/railway.ts), so no save needs them. Stored in SI units: lengths in METRES,
+ * speeds in METRES PER SECOND. Shown in the units chosen in Settings (imperial or metric).
+ */
+
+/** How lengths and speeds are shown: imperial (miles and chains, yards, mph) or metric (km, m, km/h). */
+export type UnitSystem = 'imperial' | 'metric';
 
 /** Where a train stands. */
 export type Location =
@@ -80,6 +91,8 @@ export interface Loco {
   jobs?: LocoJob[];
   /** Where it stables between jobs ('' or absent = wherever it is). */
   homePlaceId?: string;
+  /** Its maximum permitted speed in metres per second; absent = no limit of its own (the line speed rules). */
+  maxSpeed?: number;
 }
 
 /** The kinds of work a loco is given in timetables (v0.3.26). See core/duties.ts. */
@@ -263,6 +276,8 @@ export interface ConnectionDef {
   defaultWorking: WorkingMode;
   /** Where this connection's instrument group sits on the block shelf (0 = leftmost). */
   shelfPosition: number;
+  /** Length of the block section in metres; absent = the default (2 miles). Its line's track circuits share it. */
+  sectionLength?: number;
 }
 
 export interface BoxDef {
@@ -322,8 +337,18 @@ export interface Settings {
   scoring: boolean;
   /** Show the layout's track plan as a diagram board above the block shelf. */
   boxDiagram: boolean;
+  /** How lengths and speeds are shown (they are stored in metres and metres per second). */
+  units: UnitSystem;
+  /** Signaller play mode: the speed every simulated train runs at (metres per second), never above line speed or the loco's maximum. */
+  simSpeed: number;
+  /** Signaller play mode: simulated time runs this many times faster than real time (1–10), for shows. */
+  timeScale: number;
+  /** Model railway mode: show track occupancy on the diagram board (from what you report, and circuits you tap). */
+  modelOccupancy: boolean;
   /** What the diagram board labels its track circuits with. */
   diagramLabels: 'none' | 'codes' | 'names';
+  /** Show set routes (lit up along the track) on the box's diagram board, in signaller play mode. */
+  showRoutes: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +436,10 @@ export interface TrackCircuit {
    * (towards end 0 or end 1). Absent = both ways (single lines, sidings, loops worked both ways).
    */
   traffic?: { line: RunningLine; toward: 0 | 1 };
+  /** Its length in metres, when stated; absent = worked out (core/railway.ts circuitLength). */
+  length?: number;
+  /** Its line speed in metres per second, when it differs from the layout's. */
+  lineSpeed?: number;
 }
 
 export interface Junction {
@@ -434,6 +463,78 @@ export interface Junction {
   roads?: string[];
   /** v0.3.6 saves only: a left-right mirror. Converted to rotate + mirror when loaded. */
   flip?: boolean;
+  /** Points: speed over the diverging road in metres per second; absent = the default (15 mph). */
+  divergingSpeed?: number;
+  /**
+   * Points: whether they have a facing point lock (FPL). Absent = worked out (points that are facing
+   * for a running move between running roads); 'fpl' / 'none' = set by hand.
+   */
+  lock?: 'fpl' | 'none';
+  /** The lever number of its facing point lock, once the levers have been numbered ('' or absent = none). */
+  fplNumber?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Signals (v0.3.29)
+// ---------------------------------------------------------------------------
+
+/**
+ * home / starter: stop signals for running moves (a starter at the line is the section signal);
+ * distant: caution signal, repeats the stop signals ahead; shunt: ground signal (disc or position
+ * light) for shunting; shuntYellow: yellow ground signal, which may be passed at danger for a move it
+ * does not apply to (e.g. into a headshunt); shuntAhead: a shunt-ahead arm or light on a starter's post,
+ * to shunt past it into the section; limitOfShunt: a board or two red lights where shunting must stop.
+ */
+export type SignalKind = 'home' | 'starter' | 'distant' | 'shunt' | 'shuntYellow' | 'shuntAhead' | 'limitOfShunt';
+/** Semaphore (arms and discs, boards) or electric colour light (lamps and position lights). */
+export type SignalStyle = 'semaphore' | 'colourLight';
+
+/**
+ * A signal on the track plan. It stands beside a track circuit, `back` metres before the circuit's
+ * end `end`, and applies to trains running towards that end. Its routes are worked out from the plan
+ * (core/signals.ts); several signals at one place (arms on a bracket) share the routes between them.
+ */
+export interface PlanSignal {
+  id: string;
+  kind: SignalKind;
+  style: SignalStyle;
+  /** Lever number in its box's frame, e.g. "2" ('' = not numbered; limits of shunt have no lever). */
+  number: string;
+  /** e.g. "Down Home to P1". */
+  name: string;
+  /** The box whose frame works it. */
+  boxId: string;
+  circuitId: string;
+  end: 0 | 1;
+  /** Metres before the end of the circuit (0 = at the end). */
+  back: number;
+  /**
+   * The routes it reads to (route keys, see core/signals.ts). Absent = every route from its place not
+   * read by another signal there, so new track is picked up by itself.
+   */
+  reads?: string[];
+  /** Placed or changed by hand: kept when signals are generated again. */
+  manual: boolean;
+}
+
+/** How signals are generated for a layout (remembered for the next time). */
+/**
+ * Adjustments to the generated interlocking (v0.3.31). Keys of `routes` are "<signal id>|<route
+ * key>" (the route's key from core/signals.ts), each mapping a junction to the way it must lie, or
+ * 'free' (not locked by that route). Locks are pairs of signal ids.
+ */
+export interface InterlockingOverrides {
+  routes?: Record<string, Record<string, 'normal' | 'reverse' | 'free'>>;
+  extraLocks?: Array<[string, string]>;
+  removedLocks?: Array<[string, string]>;
+}
+
+export interface SignallingOptions {
+  style: SignalStyle | 'mixed';
+  /** Ground signals for shunting moves (exits from sidings and goods yards, setting back). */
+  shunt: boolean;
+  /** Shunt-ahead arms on section signals, with a limit of shunt on the line beyond. */
+  shuntAhead: boolean;
 }
 
 export interface TrackPlan {
@@ -441,6 +542,11 @@ export interface TrackPlan {
   junctions: Junction[];
   /** Signal boxes placed on the plan. */
   markers?: BoxMarker[];
+  /** Signals (v0.3.29). */
+  signals?: PlanSignal[];
+  /** How signals were last generated. */
+  signalling?: SignallingOptions;
+  interlocking?: InterlockingOverrides;
 }
 
 /** A running line on double track: the up line or the down line. */
@@ -463,6 +569,39 @@ export interface Layout {
   timetables?: Timetable[];
   /** How its trains show what they are (v0.3.26): lamp headcodes and reporting numbers, or 1960 headcodes. Absent = 'br1960'. */
   headcodeEra?: HeadcodeEra;
+  /** Line speed in metres per second for its track (circuits may differ); absent = the default (60 mph). */
+  lineSpeed?: number;
+  /**
+   * How far inside each home signal the clearing point is, in metres (v0.3.32); absent = the default
+   * (440 yards). The line may not be accepted (Line Clear) while it is obstructed this far in.
+   */
+  clearingPoint?: number;
+  /** Rolling stock standing on its own (uncoupled from a loco): rakes left in roads (signaller play mode, v0.3.28). */
+  stock?: StockRake[];
+}
+
+/** One kind of vehicle in a rake: e.g. 4 × coach (20 m each). Kept as a list so numbered stock can be added later. */
+export interface StockVehicles {
+  kind: string;
+  count: number;
+  /** Length of each vehicle over buffers, in metres. */
+  metres: number;
+}
+
+/**
+ * An anonymous rake of rolling stock (coaches, wagons, vans) standing without a loco, e.g. the
+ * coaches of a terminating train left in the platform while its engine runs round. It keeps the
+ * track circuit it stands on occupied until a loco takes it away.
+ */
+export interface StockRake {
+  id: string;
+  /** What it is, as written in the consist it came from, e.g. "4 coaches". */
+  description: string;
+  vehicles: StockVehicles[];
+  /** Where it stands: a road of a place (and the track circuit the road is on). */
+  placeId: string;
+  roadId: string;
+  circuitId: string;
 }
 
 /** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */
