@@ -18,12 +18,22 @@ export const PLACE_SHORT_MAX = 6;
 
 export const PLACE_KINDS: Array<{ kind: PlaceKind; name: string; plural: string; newName: string; firstRoad: (n: number) => string }> = [
   { kind: 'station', name: 'Station', plural: 'Stations', newName: 'New station', firstRoad: (n) => `P${n}` },
+  { kind: 'carriageSidings', name: 'Carriage sidings', plural: 'Carriage sidings', newName: 'Carriage sidings', firstRoad: (n) => `Road ${n}` },
+  { kind: 'carriageShed', name: 'Carriage shed', plural: 'Carriage sheds', newName: 'Carriage shed', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
   { kind: 'sidings', name: 'Sidings', plural: 'Sidings', newName: 'New sidings', firstRoad: (n) => `Road ${n}` },
   { kind: 'goods', name: 'Goods yard or shed', plural: 'Goods yards and sheds', newName: 'Goods yard', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
   { kind: 'depot', name: 'Loco shed or depot', plural: 'Loco sheds and depots', newName: 'Loco shed', firstRoad: (n) => (n === 1 ? 'Shed road' : `Road ${n}`) },
+  { kind: 'turntable', name: 'Turntable', plural: 'Turntables', newName: 'Turntable', firstRoad: (n) => (n === 1 ? 'Turntable road' : `Road ${n}`) },
+  { kind: 'coaling', name: 'Coaling stage', plural: 'Coaling stages', newName: 'Coaling stage', firstRoad: (n) => (n === 1 ? 'Coal road' : `Road ${n}`) },
+  { kind: 'water', name: 'Water column or tank', plural: 'Water columns and tanks', newName: 'Water column', firstRoad: (n) => (n === 1 ? 'Water road' : `Road ${n}`) },
+  { kind: 'fuel', name: 'Diesel fuelling point', plural: 'Diesel fuelling points', newName: 'Fuelling point', firstRoad: (n) => (n === 1 ? 'Fuel road' : `Road ${n}`) },
   { kind: 'fiddleYard', name: 'Fiddle yard', plural: 'Fiddle yards', newName: 'Fiddle yard', firstRoad: (n) => `Road ${n}` },
   { kind: 'other', name: 'Other place', plural: 'Other places', newName: 'New place', firstRoad: (n) => `Road ${n}` },
 ];
+/** Places where engines are serviced or turned (v0.3.36): light engines go there, not trains. */
+export const ENGINE_PLACES: ReadonlySet<PlaceKind> = new Set(['depot', 'turntable', 'coaling', 'water', 'fuel']);
+/** Places where coaching stock is stabled (v0.3.36): empty stock goes there between turns. */
+export const CARRIAGE_PLACES: ReadonlySet<PlaceKind> = new Set(['carriageSidings', 'carriageShed']);
 export const kindInfo = (k: PlaceKind) => PLACE_KINDS.find((x) => x.kind === k) ?? PLACE_KINDS[PLACE_KINDS.length - 1];
 
 /** `base`, or `base 2`, `base 3`… whichever is not already taken. */
@@ -152,7 +162,7 @@ export function addPlace(state: AppState, layoutId: string, kind: PlaceKind, opt
   const layout = state.layouts.find((l) => l.id === layoutId);
   if (!layout || layout.places.length >= MAX_PLACES) return null;
   const info = kindInfo(kind);
-  const roads = Math.max(0, Math.min(MAX_ROADS, opts.roads ?? (kind === 'fiddleYard' ? 4 : kind === 'other' ? 0 : 1)));
+  const roads = Math.max(0, Math.min(MAX_ROADS, opts.roads ?? (kind === 'fiddleYard' ? 4 : kind === 'carriageSidings' ? 2 : kind === 'other' ? 0 : 1)));
   const place: Place = {
     id: newId(kind === 'fiddleYard' ? 'fy' : 'place'),
     kind,
@@ -257,18 +267,52 @@ export function setConnectionPlace(state: AppState, box: BoxDef, conn: Connectio
 }
 
 /** Tie a road to a track circuit ('' to untie). A circuit is one road at most: it is untied from any other road on the layout. */
+/**
+ * Tie a road of a place to a track circuit ('' unties it). One track circuit can be a road of SEVERAL
+ * places (v0.3.35): e.g. a platform that is also the parcels or milk dock of the goods depot, or a bay
+ * platform that is also a carriage siding. Within one place it is one road only: tying another road of
+ * the same place to it unties the first.
+ */
 export function tieRoad(layout: Layout, placeId: string, roadId: string, circuitId: string): void {
-  if (circuitId) for (const p of layout.places) for (const r of p.roads) if (r.circuitId === circuitId) delete r.circuitId;
-  const road = layout.places.find((p) => p.id === placeId)?.roads.find((r) => r.id === roadId);
-  if (!road) return;
+  const place = layout.places.find((p) => p.id === placeId);
+  const road = place?.roads.find((r) => r.id === roadId);
+  if (!place || !road) return;
+  if (circuitId) for (const r of place.roads) if (r !== road && r.circuitId === circuitId) delete r.circuitId;
   if (circuitId) road.circuitId = circuitId;
   else delete road.circuitId;
 }
 
-/** The place road a track circuit is tied to, if any. */
+/** The first place road a track circuit is tied to, if any (see roadsOfCircuit: there may be several). */
 export function roadOfCircuit(layout: Layout, circuitId: string): { place: Place; road: PlaceRoad } | null {
-  for (const place of layout.places) for (const road of place.roads) if (road.circuitId === circuitId) return { place, road };
-  return null;
+  return roadsOfCircuit(layout, circuitId)[0] ?? null;
+}
+
+/** Every place road a track circuit is tied to (one per place at most), in the order of the places. */
+export function roadsOfCircuit(layout: Layout, circuitId: string): Array<{ place: Place; road: PlaceRoad }> {
+  const out: Array<{ place: Place; road: PlaceRoad }> = [];
+  if (!circuitId) return out;
+  for (const place of layout.places) for (const road of place.roads) if (road.circuitId === circuitId) out.push({ place, road });
+  return out;
+}
+
+/** Roads of OTHER places on the same track circuit as this road (it shares the track with them). */
+export function sharedRoads(layout: Layout, placeId: string, roadId: string): Array<{ place: Place; road: PlaceRoad }> {
+  const c = layout.places.find((p) => p.id === placeId)?.roads.find((r) => r.id === roadId)?.circuitId;
+  return c ? roadsOfCircuit(layout, c).filter((x) => x.place.id !== placeId) : [];
+}
+
+/** Locos standing on the same track as a road from one of the other places that share it (they occupy it too). */
+export function sharedOccupants(state: AppState, layout: Layout, placeId: string, roadId: string): Array<{ loco: Loco; place: Place; road: PlaceRoad }> {
+  const out: Array<{ loco: Loco; place: Place; road: PlaceRoad }> = [];
+  for (const x of sharedRoads(layout, placeId, roadId))
+    for (const loco of placeOccupants(state, x.place.id, x.road.id)) out.push({ loco, place: x.place, road: x.road });
+  return out;
+}
+
+/** The key two place roads share when they are the same track (their circuit), else the road's own. */
+export function roadTrackKey(layout: Layout | undefined, ref: { placeId: string; roadId: string }): string {
+  const c = ref.roadId ? layout?.places.find((p) => p.id === ref.placeId)?.roads.find((r) => r.id === ref.roadId)?.circuitId : undefined;
+  return c ? `c:${c}` : `${ref.placeId}|${ref.roadId}`;
 }
 
 /**
@@ -281,6 +325,7 @@ export function sanitisePlaces(state: AppState): void {
     layout.places ??= [];
     const circuits = new Set(layout.trackPlan.circuits.map((c) => c.id));
     for (const p of layout.places) {
+      if (!PLACE_KINDS.some((k) => k.kind === p.kind)) p.kind = 'other';
       p.roads ??= [];
       p.workedBy ??= [];
       p.notes ??= '';

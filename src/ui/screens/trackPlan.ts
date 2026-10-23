@@ -1,4 +1,5 @@
 import { pruneInterlocking } from '../../core/interlocking';
+import { circuitLength, formatLength, parseLength } from '../../core/railway';
 import {
   addJunctionInTrack,
   addTrack,
@@ -85,7 +86,7 @@ import {
 } from '../../core/trackPlan';
 import { layoutSignalling } from './signalling';
 import { findLayout } from '../../core/layouts';
-import { addRoad, kindInfo, roadOfCircuit, tieRoad } from '../../core/places';
+import { addRoad, kindInfo, roadsOfCircuit, tieRoad } from '../../core/places';
 import type { AppState, BoxDef, BoxMarker, ExitTarget, Junction, JunctionKind, Layout, MarkerBox, TrackCircuit, TrackOwner, TrackPlan } from '../../core/types';
 import { topBar, type Ctx, type Screen } from '../app';
 import { confirmButton, h, option, safeRerender, toast } from '../dom';
@@ -1758,11 +1759,12 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
    */
   const placeRoadSection = (c: TrackCircuit) => {
     const lay = layout();
-    const tied = roadOfCircuit(lay, c.id);
+    // One track can be a road of several places (v0.3.35): a platform that is also a parcels dock.
+    const tied = roadsOfCircuit(lay, c.id);
     const id = 'tp_placeroad';
-    const val = tied ? `r|${tied.place.id}|${tied.road.id}` : '';
     /** A name for a new road made from this track: its platform number at a station, else its name. */
     const suggest = (pl: { kind: string }) => (pl.kind === 'station' && c.platform ? `P${c.platform.number}` : c.name || '');
+    const others = lay.places.filter((pl) => !tied.some((t) => t.place.id === pl.id));
     const sel = h(
       'select',
       {
@@ -1770,6 +1772,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         on: {
           change: (ev: Event) => {
             const [k, pid, rid] = (ev.target as HTMLSelectElement).value.split('|');
+            if (!k) return;
             store.update((a) => {
               const l = layoutIn(a);
               if (k === 'r') tieRoad(l, pid, rid, c.id);
@@ -1780,38 +1783,102 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
                 const road = place ? addRoad(place, free) : null;
                 if (road) tieRoad(l, pid, road.id, c.id);
                 else if (place) toast(`${place.name} already has the most roads allowed.`);
-              } else if (tied) tieRoad(l, tied.place.id, tied.road.id, '');
+              }
             });
           },
         },
       },
-      option('', 'Not a road of any place', !tied),
-      ...lay.places.map((pl) =>
+      option('', tied.length ? 'Also a road of…' : 'Make it a road of…', true),
+      ...others.map((pl) =>
         h(
           'optgroup',
           { label: `${pl.name} (${kindInfo(pl.kind).name.toLowerCase()})` },
           ...pl.roads.map((r) => {
             const other = r.circuitId && r.circuitId !== c.id ? findCircuit(plan(), r.circuitId) : undefined;
-            return option(`r|${pl.id}|${r.id}`, `${pl.name} · ${r.name}${other ? ` (now ${other.code})` : ''}`, val === `r|${pl.id}|${r.id}`);
+            return option(`r|${pl.id}|${r.id}`, `${pl.name} · ${r.name}${other ? ` (now ${other.code})` : ''}`);
           }),
           option(`new|${pl.id}`, `+ New road in ${pl.name}${suggest(pl) ? ` (${suggest(pl)})` : ''}`),
+        ),
+      ),
+    );
+    const rows = tied.map((t) =>
+      h(
+        'li',
+        { class: 'tp-tie' },
+        h('span', { class: 'tp-tie-name' }, `${t.place.name} · ${t.road.name}`, h('small', { class: 'help' }, kindInfo(t.place.kind).name)),
+        h(
+          'button',
+          {
+            class: 'btn small danger',
+            type: 'button',
+            'aria-label': `No longer ${t.road.name} at ${t.place.name}`,
+            title: `No longer ${t.road.name} at ${t.place.name}`,
+            on: { click: () => store.update((a) => tieRoad(layoutIn(a), t.place.id, t.road.id, '')) },
+          },
+          '✕',
         ),
       ),
     );
     return h(
       'div',
       { class: 'tp-placeroad' },
-      h('div', { class: 'field' }, h('label', { for: id }, 'Road of a place'), sel),
+      h('span', { class: 'field-label' }, 'Road of a place'),
+      rows.length ? h('ul', { class: 'tp-ties' }, ...rows) : null,
+      others.length ? h('div', { class: 'field' }, h('label', { for: id, class: 'sr-only' }, tied.length ? 'Also a road of another place' : 'Make it a road of a place'), sel) : null,
       h(
         'small',
         { class: 'help' },
         lay.places.length
-          ? tied
-            ? `This track is ${tied.road.name} at ${tied.place.name}. Trains put on that road stand here.`
-            : 'Make this track a platform, siding or yard road of a station or other place. Set up places in the Places tab.'
+          ? tied.length
+            ? `Trains put on ${tied.length > 1 ? 'these roads' : 'that road'} stand here.${tied.length > 1 ? ' It is the same track in each place, so a train on one of them occupies them all.' : ' The same track can also be a road of another place, e.g. a platform that is also a parcels dock.'}`
+            : 'Make this track a platform, siding or yard road of a station or other place (or of several: a platform that is also a goods dock). Set up places in the Places tab.'
           : 'No places yet: add stations, sidings and fiddle yards in the Places tab, then tie their roads to the track here.',
       ),
     );
+  };
+
+  /**
+   * The track circuit's length (v0.3.35): typed in by hand, or left blank to have it worked out (a line
+   * circuit shares its block section's length; box track is 220 yd, short pieces between points 55 yd).
+   * Simulated running uses it for running times and for what fits where.
+   */
+  const lengthSection = (c: TrackCircuit) => {
+    const st = store.state;
+    const units = st.settings.units ?? 'imperial';
+    const line = c.owner.kind === 'line';
+    const scale = line ? 'section' : 'station';
+    const bare = units === 'metric' ? 'm' : line ? 'ch' : 'yd';
+    const now = circuitLength(st, layout(), c);
+    const worked = circuitLength(st, layout(), { ...c, length: undefined });
+    const basis =
+      worked.basis === 'section'
+        ? `a share of the block section's length (${formatLength(worked.metres, units, scale)})`
+        : worked.basis === 'short'
+          ? `${formatLength(worked.metres, units, scale)}, a short piece of track between points`
+          : `${formatLength(worked.metres, units, scale)}, ordinary station track`;
+    const id = 'tp_length';
+    const value = now.basis === 'stated' ? formatLength(now.metres, units, scale) : '';
+    const field = checked(
+        id,
+        'Length',
+        value,
+        24,
+        (v) => (!v.trim() || parseLength(v, bare) !== null ? null : units === 'metric' ? 'Type a length, e.g. 180 m or 1.2 km.' : 'Type a length, e.g. 180 yd, 9 ch or 1 mi 20 ch.'),
+        (v) => {
+          const m = v.trim() ? parseLength(v, bare) : null;
+          edit((pl) => {
+            const x = findCircuit(pl, c.id);
+            if (!x) return;
+            if (m) x.length = Math.round(m * 100) / 100;
+            else delete x.length;
+          });
+          renderAll();
+        },
+        now.basis === 'stated' ? `Typed in. Clear it to have it worked out again (${basis}).` : `Worked out: ${basis}. Type a length to set it yourself (a number alone is in ${bare === 'm' ? 'metres' : bare === 'ch' ? 'chains' : 'yards'}).`,
+    );
+    const input = field.querySelector('input');
+    if (input) input.placeholder = formatLength(worked.metres, units, scale);
+    return h('div', { class: 'tp-length' }, field);
   };
 
   const circuitCase = (c: TrackCircuit) => {
@@ -1840,6 +1907,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         ),
       );
     }
+    if (ui.tab === 'plan') els.push(lengthSection(c));
     if (ui.tab === 'plan') els.push(trafficSection(c));
     if (ui.tab === 'plan') {
       const pid = 'tp_isplat';

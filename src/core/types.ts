@@ -57,6 +57,25 @@ export interface Working {
   headcode: string; // optional reporting number / lamp code
   /** Length of the whole train in metres, when stated; absent = worked out from the loco and its consist (core/railway.ts). */
   length?: number;
+  /**
+   * Where the loco is in its train (signaller play mode, v0.3.35): the end of the track circuit it stands
+   * on (its road's circuit) that it is at. A train runs on to a line with its engine leading, so one
+   * standing with its engine at the wrong end runs round (or is released by the station pilot) first.
+   * Absent, or for another circuit = not known: it is taken to be at the end it leaves by.
+   */
+  locoEnd?: { circuitId: string; end: 0 | 1 };
+  /**
+   * Which way the engine faces (signaller play mode, v0.3.36): the end of the circuit it stands on that
+   * its smokebox (a diesel's No. 1 end) points to. Running the other way it is tender (bunker) first.
+   * Only a turntable (or a triangle) turns it. Absent, or for another circuit = not known.
+   */
+  facing?: { circuitId: string; end: 0 | 1 };
+  /**
+   * Turned "as needed" (v0.3.37): it has been on a turntable, or come on to the layout as a light engine
+   * (operators off the layout turn engines as they would), and is to face whichever way its next train
+   * wants: the railway settles it when it next sets off on a line, so that it leads smokebox first.
+   */
+  facingFree?: boolean;
 }
 
 /*
@@ -173,6 +192,18 @@ export interface TimetableEntry {
   /** Places it calls at or passes on the way (runs only). */
   calls: TimetableCall[];
   notes: string;
+  /**
+   * Shunts (v0.3.35): the engine runs round its train where it stands (uncouples, runs round it by a
+   * loop or release crossover and couples up at the other end), ready to work it back.
+   */
+  runRound?: boolean;
+  /**
+   * Shunts (v0.3.35): what the engine moves with, e.g. "2 vans" or "4 coaches": it takes those from its
+   * own train and any stock standing on the road it starts from, and leaves the rest there. Blank = as
+   * its working says (a light engine leaves everything; any other working takes all the stock there).
+   * Lets shunt orders break a train up into several roads (and a pilot draw stock off to free an engine).
+   */
+  vehicles?: string;
 }
 
 export interface TimetableTrain {
@@ -232,7 +263,19 @@ export interface GeneratorOptions {
  * (a junction box). Each place has roads (platforms, siding roads, shed roads, yard roads),
  * which may be tied to a track circuit on the layout's track plan.
  */
-export type PlaceKind = 'station' | 'sidings' | 'goods' | 'depot' | 'fiddleYard' | 'other';
+export type PlaceKind =
+  | 'station'
+  | 'carriageSidings'
+  | 'carriageShed'
+  | 'sidings'
+  | 'goods'
+  | 'depot'
+  | 'turntable'
+  | 'coaling'
+  | 'water'
+  | 'fuel'
+  | 'fiddleYard'
+  | 'other';
 
 export interface PlaceRoad {
   id: string;
@@ -278,6 +321,12 @@ export interface ConnectionDef {
   shelfPosition: number;
   /** Length of the block section in metres; absent = the default (2 miles). Its line's track circuits share it. */
   sectionLength?: number;
+  /**
+   * The far (simulated) box works a turntable (and engine shed) off the layout (v0.3.36): timetables send
+   * engines there light to be turned when the layout has no turntable of its own. (Off the layout every
+   * engine and train is turned as an operator would, ready for its next journey, v0.3.37.)
+   */
+  turntable?: boolean;
 }
 
 export interface BoxDef {

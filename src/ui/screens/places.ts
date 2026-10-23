@@ -16,6 +16,8 @@ import {
   setConnectionPlace,
   setRoadCount,
   setWorker,
+  sharedOccupants,
+  sharedRoads,
   tieRoad,
   trainsBeyondRoad,
   worksPlace,
@@ -89,14 +91,15 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
 
   // ---------------------------------------------------------------- one road
   const circuitOptions = (r: PlaceRoad) => {
-    const tiedTo = new Map<string, string>();
-    for (const p of layout.places) for (const x of p.roads) if (x.circuitId && x.id !== r.id) tiedTo.set(x.circuitId, `${p.name} · ${x.name}`);
+    // A circuit can be a road of several places (a platform that is also a goods dock): say which.
+    const tiedTo = new Map<string, string[]>();
+    for (const p of layout.places) for (const x of p.roads) if (x.circuitId && x.id !== r.id) tiedTo.set(x.circuitId, [...(tiedTo.get(x.circuitId) ?? []), `${p.name} · ${x.name}`]);
     return [
       option('', layout.trackPlan.circuits.length ? 'Not tied to the track plan' : 'No track plan yet', !r.circuitId),
       ...layout.trackPlan.circuits.map((c) => {
         const other = tiedTo.get(c.id);
         const plat = c.platform ? ` · platform ${c.platform.number}` : '';
-        return option(c.id, `${circuitLabel(c)}${plat}${other ? ` (now ${other})` : ''}`, r.circuitId === c.id);
+        return option(c.id, `${circuitLabel(c)}${plat}${other ? ` (also ${other.join(', ')})` : ''}`, r.circuitId === c.id);
       }),
     ];
   };
@@ -123,6 +126,9 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
   /** One road: a single compact row (it wraps on narrow cases). */
   const roadRow = (p: Place, r: PlaceRoad) => {
     const trains = placeOccupants(st, p.id, r.id);
+    // The same track as roads of other places: their trains stand here too.
+    const shared = sharedRoads(layout, p.id, r.id);
+    const sharedTrains = sharedOccupants(st, layout, p.id, r.id);
     return h(
       'li',
       { class: 'pl-road' },
@@ -142,7 +148,14 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
       h(
         'div',
         { class: 'pl-road-end' },
-        h('small', { class: `pl-road-trains${trains.length ? ' occ' : ''}`, title: trains.length ? `${plural(trains.length, 'train')} standing here` : 'Empty' }, trains.length ? plural(trains.length, 'train') : 'empty'),
+        h(
+          'small',
+          {
+            class: `pl-road-trains${trains.length || sharedTrains.length ? ' occ' : ''}`,
+            title: [trains.length ? `${plural(trains.length, 'train')} standing here` : sharedTrains.length ? '' : 'Empty', ...sharedTrains.map((x) => `${x.loco.number || 'A loco'} on this track as ${x.place.name} · ${x.road.name}`)].filter(Boolean).join('. '),
+          },
+          trains.length ? plural(trains.length, 'train') : sharedTrains.length ? `in use (${sharedTrains.length})` : 'empty',
+        ),
         p.kind === 'fiddleYard' && p.roads.length <= 1
           ? null
           : (() => {
@@ -152,6 +165,7 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
               return x;
             })(),
       ),
+      shared.length ? h('small', { class: 'help pl-road-shared' }, `Same track as ${shared.map((x) => `${x.place.name} · ${x.road.name}`).join(', ')}.`) : null,
     );
   };
 
@@ -431,7 +445,7 @@ export function layoutPlaces(ctx: Ctx, layoutId: string): HTMLElement {
   const intro = h(
     'p',
     { class: 'shelf-help' },
-    `Everywhere on ${layout.name} that trains stand: stations, sidings, goods yards and sheds, loco depots and fiddle yards. `,
+    `Everywhere on ${layout.name} that trains stand: stations, carriage sidings and sheds, sidings, goods yards, loco depots, turntables, coaling stages, water columns, fuelling points and fiddle yards. `,
     'Say which signal boxes work each one and which lines run to it, and give it its roads (platforms, siding roads, yard roads). ',
     'Roads can be tied to track circuits on the track plan.',
   );

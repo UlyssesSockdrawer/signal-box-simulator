@@ -869,6 +869,9 @@ export function mergeAtJoint(plan: TrackPlan, jointId: string, keep?: string): {
     k.circuit.traffic = { line: o.circuit.traffic.line, toward: (away ? k.end : 1 - k.end) as 0 | 1 };
   }
   if (k.circuit.owner.kind === 'none') k.circuit.owner = structuredClone(o.circuit.owner);
+  // Lengths typed in for both add up; with only one typed in, the merged circuit's length is worked out again.
+  if (k.circuit.length && o.circuit.length) k.circuit.length += o.circuit.length;
+  else delete k.circuit.length;
   releaseMarkers(plan, o.circuit.id, k.circuit.id);
   plan.circuits = plan.circuits.filter((c) => c.id !== o.circuit.id);
   plan.junctions = plan.junctions.filter((x) => x.id !== j.id);
@@ -1439,6 +1442,15 @@ export function insertJunction(plan: TrackPlan, circuitId: string, kind: Junctio
   const oldRight = c.ends[rightEnd];
   c.ends[rightEnd] = { kind: 'joined', junctionId: j.id, port: leftPort };
   const n = makeCircuit(plan, { kind: 'joined', junctionId: j.id, port: rightPort }, oldRight, c.owner);
+  // A length typed in for the whole circuit is shared between the two parts, by how far each runs on the plan.
+  if (c.length) {
+    const len = (x: TrackCircuit) => circuitPath(plan, x).reduce((m, p, i, a) => (i ? m + Math.hypot(p.x - a[i - 1].x, p.y - a[i - 1].y) : 0), 0);
+    const a = len(c);
+    const b = len(n);
+    const total = c.length;
+    c.length = Math.round(((total * a) / Math.max(0.01, a + b)) * 100) / 100;
+    n.length = Math.round((total - c.length) * 100) / 100;
+  }
   return { junction: j, newCircuit: n };
 }
 

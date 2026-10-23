@@ -352,7 +352,11 @@ export function sanitiseRailwayData(state: AppState): void {
   if (positive(st.simSpeed) === undefined) st.simSpeed = 30 * MPS_PER_MPH;
   st.timeScale = Number.isFinite(st.timeScale) ? Math.min(10, Math.max(1, Math.round(st.timeScale))) : 1;
   st.modelOccupancy = st.modelOccupancy === true;
-  for (const b of state.boxes) for (const c of b.connections) clean(c, 'sectionLength');
+  for (const b of state.boxes)
+    for (const c of b.connections) {
+      clean(c, 'sectionLength');
+      if (c.turntable !== undefined && c.turntable !== true) delete c.turntable;
+    }
   for (const l of state.layouts) {
     clean(l, 'lineSpeed');
     clean(l, 'clearingPoint');
@@ -378,5 +382,67 @@ export function sanitiseRailwayData(state: AppState): void {
   for (const l of state.roster) {
     clean(l, 'maxSpeed');
     if (l.working) clean(l.working, 'length');
+    // Where the loco is in its train (v0.3.35): a circuit and one of its ends.
+    const e = l.working?.locoEnd;
+    if (e !== undefined && !(e && typeof e.circuitId === 'string' && e.circuitId && (e.end === 0 || e.end === 1))) delete l.working.locoEnd;
+    // Which way it faces (v0.3.36), and how it went off the layout.
+    const f = l.working?.facing;
+    if (f !== undefined && !(f && typeof f.circuitId === 'string' && f.circuitId && (f.end === 0 || f.end === 1))) delete l.working.facing;
+    if (l.working && 'offFacing' in l.working) delete (l.working as { offFacing?: unknown }).offFacing;
+    if (l.working?.facingFree !== undefined && l.working.facingFree !== true) delete l.working.facingFree;
   }
+}
+
+/**
+ * Must this loco's train run with the engine leading (v0.3.35)? Every loco hauled train with vehicles,
+ * except a light engine (or engine and brake van), a railcar or multiple unit (a cab at each end) and a
+ * push-pull train (an auto-coach or auto-trailer: driven from the coach when propelled).
+ */
+export function needsEngineLeading(l: Loco, vehicles: Array<{ kind: string }> = workingVehicles(l.working)): boolean {
+  if (isUnit(l)) return false;
+  if (l.working.trainTypeId === 'light_engine' || l.working.trainTypeId === 'engine_brake_van' || l.working.trainTypeId === 'railcar') return false;
+  if (!vehicles.length) return false;
+  if (vehicles.some((v) => v.kind === 'auto-coach') || /\b(auto|push-?pull)\b/i.test(l.working.consist ?? '')) return false;
+  return true;
+}
+
+/**
+ * Take some vehicles out of a list (v0.3.35): `want` names kinds and counts ("2 vans", "4 coaches + a
+ * brake van"; a kind named with no number = all of that kind). Returns what is taken and what is left.
+ */
+export function splitVehicles<T extends { kind: string; count: number; metres: number }>(have: T[], want: string): { taken: T[]; left: T[] } {
+  const wanted = consistVehicles(want);
+  const plural = new Set(want.toLowerCase().split(/,|\+|&|\band\b|;/).map((x) => x.trim()).filter((x) => x && !/^(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/.test(x)).flatMap((x) => consistVehicles(x).map((v) => v.kind)));
+  const left = have.map((v) => ({ ...v }));
+  const taken: T[] = [];
+  for (const w of wanted) {
+    let need = plural.has(w.kind) ? Infinity : w.count;
+    for (const v of left) {
+      if (v.kind !== w.kind || need <= 0 || v.count <= 0) continue;
+      const n = Math.min(v.count, need);
+      v.count -= n;
+      need -= n;
+      const t = taken.find((x) => x.kind === v.kind);
+      if (t) t.count += n;
+      else taken.push({ ...v, count: n });
+    }
+  }
+  return { taken, left: left.filter((v) => v.count > 0) };
+}
+
+/** Does this loco face a particular way (a steam engine, or a diesel or electric with No. 1 and No. 2 ends)? Multiple units do not count. */
+export function hasFacing(l: Loco): boolean {
+  return !isUnit(l) && /steam|tender|tank|diesel|electric/i.test(l.powerType);
+}
+
+/** Is it a steam engine (which wants turning to run smokebox first)? */
+export function isSteam(l: Loco): boolean {
+  return /steam|tender|tank/i.test(l.powerType) && !isUnit(l);
+}
+
+/** Running smokebox (No. 1 end) first or not, in words: "smokebox first", "tender first", "bunker first", "No. 2 end leading". */
+export function facingWords(l: Loco, smokeboxFirst: boolean): string {
+  const p = l.powerType.toLowerCase();
+  if (/steam|tender|tank/.test(p)) return smokeboxFirst ? 'smokebox first' : /tank/.test(p) ? 'bunker first' : 'tender first';
+  return smokeboxFirst ? 'No. 1 end leading' : 'No. 2 end leading';
 }

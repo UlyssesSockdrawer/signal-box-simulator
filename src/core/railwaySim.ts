@@ -1,7 +1,7 @@
 import { newId } from './store';
 import { MARKED, type OccupancyBoard } from './occupancy';
-import { arrivalChoices } from './places';
-import { DEFAULT_DIVERGING_SPEED, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoMaxSpeed, trainLength, vehiclesText, workingVehicles } from './railway';
+import { arrivalChoices, CARRIAGE_PLACES, ENGINE_PLACES, roadsOfCircuit } from './places';
+import { DEFAULT_DIVERGING_SPEED, facingWords, hasFacing, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoLength, locoMaxSpeed, needsEngineLeading, splitVehicles, trainLength, vehiclesText, workingVehicles } from './railway';
 import { boxSignals, findPath, leavesScene, lineCircuits, lineEntries, nextSteps, type Dir, type Passing, type SignalDef, type Step } from './routing';
 import { Emitter, type Scheduler } from './scheduler';
 import type { SectionSession } from './session';
@@ -12,7 +12,7 @@ import type { ScoreRuleId } from './score';
 import { boxInterlocking, Frame, type Release } from './interlocking';
 import { postKey, signalsOf, SIGNAL_KINDS } from './signals';
 import type { TrainEventSource } from './trainEvents';
-import type { AppState, Layout, Loco, PlaceRef, PlanSignal, StockRake } from './types';
+import type { AppState, Layout, Loco, PlaceKind, PlaceRef, PlanSignal, StockRake, StockVehicles } from './types';
 
 /*
  * THE SIMULATED RAILWAY (signaller play mode, v0.3.28).
@@ -67,7 +67,21 @@ import type { AppState, Layout, Loco, PlaceRef, PlanSignal, StockRake } from './
  * ROLLING STOCK: a train's vehicles come from its working's consist. A loco that sets off as a light
  * engine (or engine and brake van) from a road leaves its other vehicles there as a rake of stock
  * (saved on the layout), which keeps the circuit occupied; a loco setting off as a train from a road
- * where a rake stands takes the rake with it.
+ * where a rake stands takes the rake with it. A timetabled shunt can say what it moves with ("2 vans"):
+ * it takes those and leaves the rest, so trains can be broken up into several roads.
+ *
+ * THE ENGINE'S END OF ITS TRAIN (v0.3.35): the railway remembers which end of its train each loco is at
+ * (Working.locoEnd: the end of the circuit it stands on). A train arrives engine first; an engine that
+ * runs on to stock couples up at the end it came in by. A loco hauled train goes out on to a line with
+ * its engine leading (setting back and propelling within the station is fine: the search counts the
+ * reversals). One standing with its engine at the wrong end RUNS ROUND first, by itself, when its
+ * departure is set (or earlier, when the timetable asks): uncouple, light engine round by a loop or
+ * release crossover (asking for blocking back where it goes over a clearing point), couple up at the
+ * other end. An engine that cannot run round (buffer stops, no release, or the release blocked by
+ * standing stock) is released by the STATION PILOT, ECS-style: the pilot couples to the outer end and
+ * draws the stock off to a free road, the engine goes out of the way, the pilot puts the stock back
+ * into the platform, and the engine backs on at the outer end. Railcars, push-pull trains and light
+ * engines need none of this.
  */
 
 const PASSENGER = new Set(['express_passenger', 'ordinary_passenger', 'branch_passenger', 'railcar', 'parcels', 'ecs']);
@@ -78,6 +92,22 @@ const TICK_MS = 250;
 const DRIVER_MS = 3000;
 /** How far clear of the points a train setting back draws up beyond them (metres). */
 const CLEAR_OF_POINTS = 10;
+/** Uncoupling an engine from its train, and coupling one up (simulated ms). */
+const UNCOUPLE_MS = 30_000;
+const COUPLE_MS = 45_000;
+/** Turning an engine on a turntable (simulated ms). */
+const TURN_MS = 90_000;
+
+/** Two lists of vehicles together (counts of the same kind added up). */
+function mergeVehicles(a: StockVehicles[], b: StockVehicles[]): StockVehicles[] {
+  const out = a.map((v) => ({ ...v }));
+  for (const v of b) {
+    const x = out.find((y) => y.kind === v.kind);
+    if (x) x.count += v.count;
+    else out.push({ kind: v.kind, count: v.count, metres: v.metres });
+  }
+  return out;
+}
 
 export interface SimBox {
   boxId: string;
@@ -176,6 +206,31 @@ interface SimTrain {
   permWait: string;
   /** Lines on which it has already been found out on the line without permission (scored once each). */
   penalised: Set<string>;
+  /** The engine is at the front of its train on the leg it is running (it changes with every reversal). */
+  leads: boolean;
+  /** The engine runs smokebox (No. 1 end) first on this leg; null = not known (v0.3.36). Flips with every reversal. */
+  smoke: boolean | null;
+  /** Stopped on a turntable: when it will have been turned (scheduler time). */
+  turnAt: number | null;
+}
+
+/**
+ * Work the railway does by itself to get an engine to the right end of its train (v0.3.35): running
+ * round, or the station pilot releasing a trapped engine. A list of steps, each tried every tick until
+ * it starts (it may have to wait for a clear way); a step that moves a loco finishes when it stops.
+ */
+interface Job {
+  id: string;
+  kind: 'runRound' | 'pilot';
+  boxId: string;
+  /** The train's engine. */
+  locoId: string;
+  pilotId?: string;
+  steps: Array<() => 'started' | 'done' | string>;
+  i: number;
+  busy: boolean;
+  status: string;
+  onDone?: (ok: boolean) => void;
 }
 
 /** A step of a path to be run: a circuit (or null: off the plan), maybe with a signal at its end. */
@@ -199,6 +254,8 @@ export interface SimIncomingView {
   /** Where it arrived (the road), for the arrival report. */
   at: PlaceRef | null;
   status: string;
+  /** How the engine is running: "smokebox first", "tender first"… ('' when not known or it does not matter). */
+  facing: string;
 }
 
 export interface SimEvents extends Record<string, unknown> {
@@ -224,6 +281,8 @@ export class RailwaySim {
   private cpCache = new Map<string, { plan: unknown; cp: number; set: Set<string> }>();
   /** Each line's instrument as last seen (to catch Line Clear given with the clearing point obstructed). */
   private lastInstrument = new Map<string, string>();
+  /** Running round and pilot releases under way, by the train's engine (v0.3.35). */
+  private jobs = new Map<string, Job>();
 
   constructor(private o: RailwaySimOptions) {}
 
@@ -247,6 +306,7 @@ export class RailwaySim {
     return () => {
       this.boxes = this.boxes.filter((b) => b !== box);
       this.trains = this.trains.filter((t) => this.boxes.some((b) => b.boxId === t.purpose.boxId));
+      for (const [k, j] of this.jobs) if (!this.boxes.some((b) => b.boxId === j.boxId)) this.jobs.delete(k);
       if (!this.boxes.length) this.stop();
       this.emit();
     };
@@ -271,6 +331,8 @@ export class RailwaySim {
     if (this.timer !== null) this.o.scheduler.clearTimeout(this.timer);
     this.timer = null;
     this.trains = [];
+    for (const j of this.jobs.values()) j.onDone?.(false);
+    this.jobs.clear();
     this.signalState.clear();
     this.lie.clear();
     this.frames.clear();
@@ -304,6 +366,7 @@ export class RailwaySim {
       this.lastTick = now;
       this.dropFinished(layout);
       this.spawnIncoming(layout);
+      this.runJobs();
       this.startOutgoing(layout);
       this.signaller(layout);
       this.placedSignaller(layout);
@@ -395,6 +458,9 @@ export class RailwaySim {
       p.setBack = true;
     }
     t.readyAt = this.now + DRIVER_MS / this.scale();
+    // Setting back: the other end of the train leads now.
+    t.leads = !t.leads;
+    if (t.smoke !== null) t.smoke = !t.smoke;
   }
 
   /**
@@ -480,8 +546,10 @@ export class RailwaySim {
   }
 
   /** A new train standing in a circuit, about to run towards `toward`: drawn up to that end. */
-  private standingTrain(layout: Layout, l: Loco, circuitId: string, toward: 0 | 1, purpose: Purpose): SimTrain {
-    const length = trainLength(l);
+  private standingTrain(layout: Layout, l: Loco, circuitId: string, toward: 0 | 1, purpose: Purpose, lengthOf?: number): SimTrain {
+    const length = lengthOf ?? trainLength(l);
+    // Which end of the train the engine is at (as far as is known): it leads when it is at the end it sets off towards.
+    const end = this.locoEndIn(l, circuitId);
     const c = findCircuit(layout.trackPlan, circuitId)!;
     const t = this.blank(l, purpose, length);
     const metres = this.lengthOf(layout, c.id);
@@ -489,7 +557,74 @@ export class RailwaySim {
     this.append(t, [{ circuitId, toward, metres, via: null }]);
     for (const p of t.parts) p.origin = true;
     t.head = this.partsTotal(t);
+    t.leads = end === null || end === toward;
+    // Which way it faces (as far as is known): smokebox first if its smokebox points the way it sets off.
+    // Turned "as needed" (a turntable, or off the layout): not settled until its next run on a line.
+    const f = l.working.facing;
+    t.smoke = !l.working.facingFree && f && f.circuitId === circuitId ? f.end === toward : null;
     return t;
+  }
+
+  /** The end of a circuit a loco standing on it is at (its end of its train), or null when not known. */
+  private locoEndIn(l: Loco, circuitId: string): 0 | 1 | null {
+    const e = l.working.locoEnd;
+    return e && e.circuitId === circuitId ? e.end : null;
+  }
+
+  /** Is stock (a rake) standing on a circuit? */
+  private stockOn(layout: Layout, circuitId: string): boolean {
+    return (layout.stock ?? []).some((r) => r.circuitId === circuitId);
+  }
+
+  /**
+   * A train has stopped: remember which end of its train the engine is at. Leading into an empty road it
+   * is at the end it ran towards; pushing its train in, or running on to stock to couple up, at the end it came in by.
+   */
+  private recordEnd(layout: Layout, t: SimTrain, turned = false): void {
+    const last = [...t.parts].reverse().find((p) => p.circuitId && p.start < t.head);
+    if (!last?.circuitId) return;
+    const end = (t.leads && !this.stockOn(layout, last.circuitId) ? last.toward : 1 - last.toward) as 0 | 1;
+    const circuitId = last.circuitId;
+    // Which way the engine faces: its smokebox the way it ran, if it ran smokebox first.
+    const facing = t.smoke === null ? null : ((t.smoke ? last.toward : 1 - last.toward) as 0 | 1);
+    this.o.update((s) => {
+      const loco = s.roster.find((x) => x.id === t.locoId);
+      if (!loco) return;
+      loco.working.locoEnd = { circuitId, end };
+      if (facing !== null) loco.working.facing = { circuitId, end: facing };
+      if (turned) loco.working.facingFree = true;
+    });
+  }
+
+  /**
+   * Settle the facing of an engine turned "as needed" for the run it is setting off on: smokebox first on
+   * the last leg (the one out on to the line), so on the first leg smokebox first if it sets back an even
+   * number of times on the way. Remembered where it stands.
+   */
+  private settleFacing(t: SimTrain, path: PathStep[], from: string): void {
+    const l = this.loco(t.locoId);
+    if (!l?.working.facingFree || !hasFacing(l)) return;
+    const flips = path.filter((p) => p.reverse).length % 2 === 1;
+    t.smoke = !flips;
+    const toward = path[0]?.toward ?? 0;
+    const end = (t.smoke ? toward : 1 - toward) as 0 | 1;
+    this.o.update((s) => {
+      const loco = s.roster.find((x) => x.id === t.locoId);
+      if (!loco) return;
+      delete loco.working.facingFree;
+      loco.working.facing = { circuitId: from, end };
+    });
+  }
+
+  /** Does a train stopping on this circuit stop on a turntable (a road of a place that is a turntable)? */
+  private onTurntable(layout: Layout, circuitId: string | null): boolean {
+    return !!circuitId && roadsOfCircuit(layout, circuitId).some((x) => x.place.kind === 'turntable');
+  }
+
+  /** Words for how a loco is running ('' when it does not matter or is not known): "tender first", "smokebox first"… */
+  private facingNote(t: SimTrain): string {
+    const l = this.loco(t.locoId);
+    return l && t.smoke !== null && hasFacing(l) ? facingWords(l, t.smoke) : '';
   }
 
   private blank(l: Loco, purpose: Purpose, length: number): SimTrain {
@@ -514,6 +649,9 @@ export class RailwaySim {
       changeEndsAt: null,
       permWait: '',
       penalised: new Set(),
+      leads: true,
+      smoke: null,
+      turnAt: null,
     };
   }
 
@@ -553,6 +691,19 @@ export class RailwaySim {
         }
         const t = this.blank(l, { kind: 'incoming', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
         t.fromLine = line;
+        // Which way it faces coming on (v0.3.37): off the layout (a fiddle yard, the box beyond) engines and
+        // trains are turned as an operator would, ready for their next journey, whatever the line (single or
+        // double, out and back or round). A train comes on engine and smokebox first; a light engine faces
+        // whichever way the train it goes to work wants (settled when that train sets off).
+        const light = !workingVehicles(l.working).length;
+        t.smoke = !hasFacing(l) || light ? null : true;
+        this.o.update((st) => {
+          const loco = st.roster.find((x) => x.id === l.id);
+          if (!loco) return;
+          delete loco.working.facing;
+          if (light && hasFacing(l)) loco.working.facingFree = true;
+          else delete loco.working.facingFree;
+        });
         if (!path) {
           t.status = 'Cannot find a way from the far end of the line to the home signal on the track plan.';
           this.trains.push(t);
@@ -619,9 +770,13 @@ export class RailwaySim {
       const k = kindOf(r);
       const c = this.roadCircuit(layout, r);
       const plat = c ? !!findCircuit(layout.trackPlan, c)?.platform : false;
+      // Parcels and vans: a dock (a goods or other place's road on a platform, often the same track as a station road) first.
+      // Empty stock: to the carriage sidings or shed; light engines to the shed, turntable or servicing.
+      if (type === 'ecs') return CARRIAGE_PLACES.has(k) ? 0 : k === 'station' ? (plat ? 1 : 2) : k === 'sidings' ? 2 : 3;
+      if (type === 'parcels') return (k === 'goods' || k === 'other') && plat ? 0 : k === 'station' ? (plat ? 1 : 2) : k === 'goods' || k === 'sidings' ? 2 : 3;
       if (PASSENGER.has(type)) return k === 'station' ? (plat ? 0 : 1) : 3;
       if (GOODS.has(type)) return k === 'goods' || k === 'sidings' ? 0 : k === 'station' ? (plat ? 2 : 1) : 3;
-      return k === 'depot' || k === 'sidings' ? 0 : k === 'goods' ? 1 : k === 'station' ? 2 : 3;
+      return ENGINE_PLACES.has(k) || k === 'sidings' ? 0 : k === 'goods' ? 1 : k === 'station' ? 2 : 3;
     };
     const fits = (r: PlaceRef) => {
       const c = this.roadCircuit(layout, r);
@@ -695,8 +850,10 @@ export class RailwaySim {
         // a train that stopped at the box (a box that works no place) sets off from where it stands.
         const standingAtBox = existing && existing.arrived && existing.purpose.kind === 'incoming' && existing.dest?.kind === 'circuit';
         if (existing && !standingAtBox) continue;
-        if (!this.lineClearFor(b.boxId, s.connection.id, l.id)) {
-          this.outgoingStatus.set(key, `The section signal stays at danger until ${s.connection.neighbourName} gives Line Clear.`);
+        // Running round (or being released by the station pilot) first: wait for it.
+        const job = this.jobs.get(l.id);
+        if (job) {
+          this.outgoingStatus.set(key, job.status);
           continue;
         }
         const from = standingAtBox ? this.headPart(existing!)?.circuitId ?? null : this.standingCircuit(layout, l);
@@ -704,22 +861,21 @@ export class RailwaySim {
           this.outgoingStatus.set(key, `${this.name(l)} is not standing on a road on the track plan, so it cannot be run.`);
           continue;
         }
-        const secs = this.sectionSignals(layout, b.boxId, s.connection.id);
-        const probe = this.blank(l, { kind: 'outgoing', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
-        let steps: Step[] | null = null;
-        const blocked = (c: string) => c !== from && this.blockedFor(probe, c);
-        for (const toward of [0, 1] as const) {
-          steps = findPath(this.state, layout, { circuitId: from, toward }, (d) => secs.some((x) => x.circuitId === d.circuitId && x.end === d.toward), {
-            blocked,
-            junctionFree: (j) => this.junctionFree(probe, j),
-            reverseIn: (c, tw) => this.reverseRoom(layout, probe, c, tw, blocked),
-          });
-          if (steps) break;
+        // A loco hauled train goes out with its engine leading: one at the wrong end runs round first,
+        // as soon as its departure is set (it needs no Line Clear for that).
+        if (!standingAtBox && this.ensureLeading(layout, b.boxId, l, from, s.connection.id, key)) continue;
+        if (!this.lineClearFor(b.boxId, s.connection.id, l.id)) {
+          this.outgoingStatus.set(key, `The section signal stays at danger until ${s.connection.neighbourName} gives Line Clear.`);
+          continue;
         }
+        const steps = this.departurePath(layout, b.boxId, s.connection.id, this.loco(l.id)!, from, !standingAtBox);
         if (!steps) {
           this.outgoingStatus.set(key, `No clear route from ${this.circuitName(layout, from)} to the line to ${s.connection.neighbourName} yet.`);
           continue;
         }
+        const secs = this.sectionSignals(layout, b.boxId, s.connection.id);
+        const probe = this.blank(l, { kind: 'outgoing', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
+        const blocked = (c: string) => c !== from && this.blockedFor(probe, c);
         const onward = this.lineOnward(layout, probe, b.boxId, s.connection.id, steps[steps.length - 1]);
         if (!onward) {
           this.outgoingStatus.set(key, `Cannot find the way along the line to ${s.connection.neighbourName} on the track plan.`);
@@ -742,10 +898,507 @@ export class RailwaySim {
         t.dest = { kind: 'line', boxId: b.boxId, connId: s.connection.id };
         t.locked = true;
         t.readyAt = this.now + DRIVER_MS / this.scale();
-        t.status = `Section signal off: departing for ${s.connection.neighbourName}.`;
+        // An engine turned "as needed" faces the way this train wants: smokebox first out on to the line
+        // (counting the times it sets back on the way, it faces this way where it stands now).
+        this.settleFacing(t, path, from);
+        const fn = this.facingNote(t);
+        t.status = `Section signal off: departing for ${s.connection.neighbourName}${fn ? ` (${fn})` : ''}.`;
         this.outgoingStatus.delete(key);
         this.trains.push(t);
       }
+  }
+
+  /**
+   * The way from where a departing train stands to one of its line's section signals. With `lead`, a
+   * loco hauled train must reach it with its engine leading (it may set back and propel on the way, in
+   * the station); otherwise any way will do. Null when there is none clear now.
+   */
+  private departurePath(layout: Layout, boxId: string, connId: string, l: Loco, from: string, lead: boolean, opts: { ignoreOccupancy?: boolean } = {}): Step[] | null {
+    const secs = this.sectionSignals(layout, boxId, connId);
+    const probe = this.blank(l, { kind: 'outgoing', boxId, connId }, this.departLength(layout, l, from));
+    const blocked = (c: string) => c !== from && !opts.ignoreOccupancy && this.blockedFor(probe, c);
+    const end = lead && this.mustLead(layout, l, from) ? this.locoEndIn(l, from) : null;
+    // Setting off either way: the better of the two (fewest reversals, then the shortest).
+    let best: { steps: Step[]; cost: number } | null = null;
+    for (const toward of [0, 1] as const) {
+      const leads0 = end === null || end === toward;
+      const steps = findPath(this.state, layout, { circuitId: from, toward }, (d, flipped) => secs.some((x) => x.circuitId === d.circuitId && x.end === d.toward) && (end === null || leads0 !== flipped), {
+        blocked,
+        junctionFree: (j) => opts.ignoreOccupancy || this.junctionFree(probe, j),
+        reverseIn: (c, tw) => this.reverseRoom(layout, probe, c, tw, blocked),
+        parity: end !== null,
+      });
+      if (!steps) continue;
+      const cost = steps.reduce((m, x) => m + x.metres + (x.reverse ? 100_000 : 0), 0);
+      if (!best || cost < best.cost) best = { steps, cost };
+    }
+    return best?.steps ?? null;
+  }
+
+  /** The vehicles a loco sets off with from a road: its own, and (unless it runs light) any rake standing there. */
+  private departVehicles(layout: Layout, l: Loco, circuitId: string): StockVehicles[] {
+    const own = workingVehicles(l.working);
+    if (l.working.trainTypeId === 'light_engine' || l.working.trainTypeId === 'engine_brake_van') return own;
+    const loc = l.location;
+    const rake = loc.kind === 'place' ? (layout.stock ?? []).find((r) => r.placeId === loc.placeId && r.roadId === loc.roadId) ?? (layout.stock ?? []).find((r) => r.circuitId === circuitId) : undefined;
+    return rake ? rake.vehicles : own;
+  }
+
+  private departLength(layout: Layout, l: Loco, circuitId: string): number {
+    if (l.working.length) return trainLength(l);
+    return locoLength(l) + this.departVehicles(layout, l, circuitId).reduce((m, v) => m + v.count * v.metres, 0);
+  }
+
+  /** Must this loco lead its train out (a loco hauled train with vehicles, and we know which end it is at)? */
+  private mustLead(layout: Layout, l: Loco, circuitId: string): boolean {
+    return this.locoEndIn(l, circuitId) !== null && needsEngineLeading(l, this.departVehicles(layout, l, circuitId));
+  }
+
+  /**
+   * Before a departure: is the engine at the right end? When it is not (no way out with it leading, but
+   * there is one with it at the back), it runs round first, or the station pilot releases it. Returns
+   * true while the departure must wait for that (the status says why).
+   */
+  private ensureLeading(layout: Layout, boxId: string, l: Loco, from: string, connId: string, statusKey: string | null): boolean {
+    if (!this.mustLead(layout, l, from)) return false;
+    // A way out with the engine leading, even if not clear yet: nothing to do (the departure waits for it as usual).
+    if (this.departurePath(layout, boxId, connId, l, from, true, { ignoreOccupancy: true })) return false;
+    // No way out at all, however it is worked: nothing running round can fix (the usual status follows).
+    if (!this.departurePath(layout, boxId, connId, l, from, false, { ignoreOccupancy: true })) return false;
+    const r = this.reEnd(layout, boxId, l.id, null);
+    if (statusKey) this.outgoingStatus.set(statusKey, r ?? this.jobs.get(l.id)?.status ?? '');
+    return true;
+  }
+
+  // ------------------------------------------------------------------------------ running round and the station pilot (v0.3.35)
+
+  /** Run the jobs under way: each step is tried until it starts; a step that moves a loco finishes when it stops. */
+  private runJobs(): void {
+    for (const [k, j] of [...this.jobs]) {
+      while (!j.busy && j.i < j.steps.length) {
+        const r = j.steps[j.i]();
+        if (r === 'done') {
+          j.i++;
+          continue;
+        }
+        if (r !== 'started') j.status = r;
+        break;
+      }
+      if (!j.busy && j.i >= j.steps.length) {
+        this.jobs.delete(k);
+        j.onDone?.(true);
+      }
+    }
+  }
+
+  /** A job step that waits a while (uncoupling, coupling up). */
+  private waitStep(j: Job, ms: number, text: string): () => 'done' | string {
+    let until: number | null = null;
+    return () => {
+      until ??= this.now + ms / this.scale();
+      j.status = text;
+      return this.now >= until ? 'done' : text;
+    };
+  }
+
+  /**
+   * Get a loco to the other end of its train where it stands: run round if it can, else have the station
+   * pilot release it. `want` = the end it must end up at (null: the other end from where it is). Returns
+   * null when a job has been set going (or one is under way), else why not.
+   */
+  private reEnd(layout: Layout, boxId: string, locoId: string, want: 0 | 1 | null, onDone?: (ok: boolean) => void): string | null {
+    if (this.jobs.has(locoId)) return null;
+    const l = this.loco(locoId);
+    const c = l ? this.standingCircuit(layout, l) : null;
+    if (!l || !c) return 'It is not standing on a road on the track plan.';
+    const known = this.locoEndIn(l, c);
+    const e = (known ?? (want === null ? null : 1 - want)) as 0 | 1 | null;
+    // Not known which end it is at: whichever end it can run round from.
+    const ends: Array<0 | 1> = e === null ? [0, 1] : [e];
+    if (want !== null && e === want) return null;
+    const ref = l.location.kind === 'place' ? { placeId: l.location.placeId, roadId: l.location.roadId } : null;
+    for (const end of ends) {
+      if (this.runRoundPath(layout, boxId, l, c, end, false)) {
+        this.startRunRound(layout, boxId, l, c, end, ref, onDone);
+        return null;
+      }
+    }
+    // In the way only of trains on the move (or routes set for them): wait for them to go by.
+    for (const end of ends)
+      if (this.runRoundPath(layout, boxId, l, c, end, true)) return `${this.name(l)} is to run round its train: waiting for the way round to clear.`;
+    // Trapped: buffer stops, no loop or release crossover, or the release blocked by standing stock or engines.
+    const end = ends[0];
+    const pilot = this.findPilot(layout, boxId, l, c, end);
+    if (!pilot) {
+      const place = ref ? layout.places.find((p) => p.id === ref.placeId)?.name ?? 'here' : 'here';
+      return `${this.name(l)} is trapped at the wrong end of its train (it cannot run round from ${this.circuitName(layout, c)}). A station pilot could release it: give a loco the Shunter / pilot duty for ${place} in the roster, and have it stand in a road nearby.`;
+    }
+    this.startPilotRelease(layout, boxId, l, c, end, ref, pilot, onDone);
+    return null;
+  }
+
+  /** Circuits a loco may run through on its own in the box's area (no lines; points and roads as given). */
+  private shuntBlocked(layout: Layout, t: SimTrain, opts: { through?: string; into?: string; standingOnly?: boolean }): (c: string) => boolean {
+    const moving = new Set(this.trains.map((o) => o.locoId));
+    return (c: string) => {
+      if (c === opts.through || c === opts.into) return false;
+      const x = findCircuit(layout.trackPlan, c);
+      if (!x || x.owner.kind === 'line') return true;
+      // Only what stands still counts (stock, engines standing): trains on the move will go by.
+      if (opts.standingOnly) return this.o.board.occupants(c).some((id) => id !== t.locoId && !moving.has(id));
+      return this.blockedFor(t, c);
+    };
+  }
+
+  /**
+   * The way for a light engine standing at end `end` of its train in circuit `c` to run round it: out by
+   * that end, round by a loop or release crossover (setting back where it must), and back into `c` from
+   * its other end. `standingOnly`: only what stands still is in the way (trains on the move will go by:
+   * to tell "wait for the way round" from "trapped").
+   */
+  private runRoundPath(layout: Layout, boxId: string, l: Loco, c: string, end: 0 | 1, standingOnly: boolean): Step[] | null {
+    const probe = this.blank(l, { kind: 'shunt', boxId, to: { placeId: '', roadId: '' }, onDone: () => {} }, locoLength(l));
+    const blocked = this.shuntBlocked(layout, probe, { into: c, standingOnly });
+    const moving = new Set(this.trains.map((o) => o.locoId));
+    const anyBlocked = (x: string) => x !== c && (standingOnly ? this.o.board.occupants(x).some((id) => id !== l.id && !moving.has(id)) : this.blockedFor(probe, x));
+    return findPath(this.state, layout, { circuitId: c, toward: end }, (d) => d.circuitId === c && d.toward === end, {
+      blocked,
+      anyWay: true,
+      notStart: true,
+      // Back into its train's road only from the far end (not back the way it went).
+      enter: (d) => d.circuitId !== c || d.toward === end,
+      junctionFree: (j) => standingOnly || this.junctionFree(probe, j),
+      reverseIn: (x, tw) => x !== c && this.reverseRoom(layout, probe, x, tw, anyBlocked),
+    });
+  }
+
+  /**
+   * Move a loco by itself (a job step): from where it stands to a circuit, as a shunt in the box's area.
+   * `length`: the loco and what it has with it. `startToward`: the way it must set off. `enterToward`: the
+   * way it must run into the target (to come in at the right end). `into`: the target may hold stock or an
+   * engine (to couple up, or the engine at the far end). Returns 'started', or why it cannot go yet.
+   */
+  private jobMove(layout: Layout, j: Job, locoId: string, target: { circuitId: string; ref: PlaceRef | null } | (() => { circuitId: string; ref: PlaceRef | null } | null), opts: { length: number; startToward?: 0 | 1; enterToward?: 0 | 1; into?: boolean; text: string; then?: (at: string) => void }): 'started' | string {
+    const l = this.loco(locoId);
+    if (!l) return 'The loco is no longer on the roster.';
+    if (this.trainOf(locoId)) return opts.text;
+    const from = this.standingCircuit(layout, l);
+    if (!from) return `${this.name(l)} is not standing on a road on the track plan.`;
+    const tgt = typeof target === 'function' ? target() : target;
+    if (!tgt) return `${opts.text} Waiting for a free road.`;
+    const probe = this.blank(l, { kind: 'shunt', boxId: j.boxId, to: tgt.ref ?? { placeId: '', roadId: '' }, onDone: () => {} }, opts.length);
+    const blocked = this.shuntBlocked(layout, probe, { through: from, into: opts.into ? tgt.circuitId : undefined });
+    const anyBlocked = (x: string) => x !== from && x !== tgt.circuitId && this.blockedFor(probe, x);
+    let steps: Step[] | null = null;
+    for (const toward of opts.startToward === undefined ? ([0, 1] as const) : [opts.startToward]) {
+      steps = findPath(this.state, layout, { circuitId: from, toward }, (d) => d.circuitId === tgt.circuitId && (opts.enterToward === undefined || d.toward === opts.enterToward), {
+        blocked,
+        anyWay: true,
+        notStart: true,
+        enter: (d) => d.circuitId !== tgt.circuitId || opts.enterToward === undefined || d.toward === opts.enterToward,
+        junctionFree: (x) => this.junctionFree(probe, x),
+        reverseIn: (x, tw) => x !== tgt.circuitId && this.reverseRoom(layout, probe, x, tw, anyBlocked),
+      });
+      if (steps) break;
+    }
+    if (!steps) return `${opts.text} Waiting for a clear way.`;
+    const path = this.fitReversals(layout, probe, steps, anyBlocked);
+    const t = this.standingTrain(layout, l, from, steps[0].toward, {
+      kind: 'shunt',
+      boxId: j.boxId,
+      to: tgt.ref ?? { placeId: '', roadId: '' },
+      onDone: () => {
+        // It stands on the target's road now.
+        const ref = tgt.ref ?? this.roadRefOf(layout, tgt.circuitId, j.boxId);
+        if (ref)
+          this.o.update((s) => {
+            const loco = s.roster.find((x) => x.id === locoId);
+            if (loco) loco.location = { kind: 'place', placeId: ref.placeId, roadId: ref.roadId };
+          });
+        opts.then?.(tgt.circuitId);
+        j.busy = false;
+        j.i++;
+      },
+    }, opts.length);
+    this.append(t, path.slice(1));
+    this.lock(layout, t, path);
+    t.dest = { kind: 'road', placeId: tgt.ref?.placeId ?? '', roadId: tgt.ref?.roadId ?? '', circuitId: tgt.circuitId };
+    t.locked = true;
+    t.readyAt = this.now + DRIVER_MS / this.scale();
+    t.status = opts.text;
+    this.trains.push(t);
+    j.busy = true;
+    j.status = opts.text;
+    return 'started';
+  }
+
+  /** A road (of a place, preferably one the box works) a circuit is. */
+  private roadRefOf(layout: Layout, circuitId: string, boxId: string): PlaceRef | null {
+    const all = roadsOfCircuit(layout, circuitId);
+    const mine = all.find((x) => x.place.workedBy.some((w) => w.kind === 'box' && w.boxId === boxId)) ?? all[0];
+    return mine ? { placeId: mine.place.id, roadId: mine.road.id } : null;
+  }
+
+  /**
+   * A free road in the box's area for a loco (and what it has with it), to get out of the way or to stand
+   * stock on: tied to a circuit nothing stands on or is routed over, long enough, not one of `avoid`.
+   * `prefer` orders the kinds of place.
+   */
+  private freeRoad(layout: Layout, boxId: string, length: number, avoid: Set<string>, prefer: PlaceKind[]): { circuitId: string; ref: PlaceRef } | null {
+    const out: Array<{ circuitId: string; ref: PlaceRef; rank: number; plat: boolean }> = [];
+    for (const p of layout.places) {
+      if (p.kind === 'fiddleYard' || !p.workedBy.some((w) => w.kind === 'box' && w.boxId === boxId)) continue;
+      for (const r of p.roads) {
+        const c = r.circuitId;
+        if (!c || avoid.has(c) || !findCircuit(layout.trackPlan, c)) continue;
+        if (this.o.board.occupants(c).length || this.trains.some((t) => t.circuitsLocked.has(c) || this.footprint(t).includes(c))) continue;
+        if (this.lengthOf(layout, c) < length) continue;
+        const k = prefer.indexOf(p.kind);
+        out.push({ circuitId: c, ref: { placeId: p.id, roadId: r.id }, rank: k < 0 ? prefer.length : k, plat: !!findCircuit(layout.trackPlan, c)?.platform });
+      }
+    }
+    out.sort((a, b) => a.rank - b.rank);
+    return out[0] ? { circuitId: out[0].circuitId, ref: out[0].ref } : null;
+  }
+
+  /** Uncouple a loco from its train where it stands: its vehicles become a rake on the road. */
+  private uncouple(layout: Layout, locoId: string, circuitId: string): void {
+    const l = this.loco(locoId);
+    if (!l || l.location.kind !== 'place') return;
+    const vehicles = consistVehicles(l.working.consist ?? '');
+    if (!vehicles.length) return;
+    const loc = l.location;
+    this.o.update((s) => {
+      const lay = s.layouts.find((x) => x.id === layout.id);
+      const loco = s.roster.find((x) => x.id === locoId);
+      if (!lay || !loco) return;
+      const here = (lay.stock ?? []).find((r) => r.circuitId === circuitId);
+      if (here) {
+        here.vehicles = mergeVehicles(here.vehicles, vehicles);
+        here.description = vehiclesText(here.vehicles);
+      } else (lay.stock ??= []).push({ id: newId('rake'), description: vehiclesText(vehicles), vehicles: vehicles.map((v) => ({ kind: v.kind, count: v.count, metres: v.metres })), placeId: loc.placeId, roadId: loc.roadId, circuitId });
+      loco.working.consist = '';
+    });
+  }
+
+  /** Couple a loco up to the stock standing on its circuit: the stock becomes its train. */
+  private coupleUp(layout: Layout, locoId: string, circuitId: string): void {
+    this.o.update((s) => {
+      const lay = s.layouts.find((x) => x.id === layout.id);
+      const loco = s.roster.find((x) => x.id === locoId);
+      if (!lay || !loco) return;
+      const rakes = (lay.stock ?? []).filter((r) => r.circuitId === circuitId);
+      if (!rakes.length) return;
+      const all = rakes.reduce<StockVehicles[]>((m, r) => mergeVehicles(m, r.vehicles), consistVehicles(loco.working.consist ?? ''));
+      lay.stock = (lay.stock ?? []).filter((r) => r.circuitId !== circuitId);
+      if (!lay.stock.length) delete lay.stock;
+      loco.working.consist = vehiclesText(all);
+    });
+  }
+
+  /** The vehicles a loco has with it now (its consist), as a length behind it. */
+  private stockLength(locoId: string): number {
+    const l = this.loco(locoId);
+    return l ? locoLength(l) + consistVehicles(l.working.consist ?? '').reduce((m, v) => m + v.count * v.metres, 0) : 0;
+  }
+
+  private startRunRound(layout: Layout, boxId: string, l: Loco, c: string, end: 0 | 1, ref: PlaceRef | null, onDone?: (ok: boolean) => void): void {
+    const j: Job = { id: newId('job'), kind: 'runRound', boxId, locoId: l.id, steps: [], i: 0, busy: false, status: `${this.name(l)} is running round its train.`, onDone };
+    const who = this.name(l);
+    j.steps = [
+      this.waitStep(j, UNCOUPLE_MS, `${who} is uncoupling to run round its train.`),
+      () => {
+        this.uncouple(layout, l.id, c);
+        return 'done';
+      },
+      () => this.jobMove(layout, j, l.id, { circuitId: c, ref }, { length: locoLength(l), startToward: end, enterToward: end, into: true, text: `${who} is running round its train.` }),
+      this.waitStep(j, COUPLE_MS, `${who} is coupling up at the other end of its train.`),
+      () => {
+        this.coupleUp(layout, l.id, c);
+        this.setEnd(l.id, c, (1 - end) as 0 | 1);
+        return 'done';
+      },
+    ];
+    this.jobs.set(l.id, j);
+    this.runJobs();
+  }
+
+  private setEnd(locoId: string, circuitId: string, end: 0 | 1): void {
+    this.o.update((s) => {
+      const loco = s.roster.find((x) => x.id === locoId);
+      if (loco) loco.working.locoEnd = { circuitId, end };
+    });
+  }
+
+  /**
+   * A station pilot to release an engine trapped at end `end` of its train in `c`: a loco with the pilot
+   * duty for the place (or anywhere), standing light on a road of the box's area, not moving or wanted on
+   * a line, that can get to the far end of the train. The nearest such.
+   */
+  private findPilot(layout: Layout, boxId: string, l: Loco, c: string, end: 0 | 1): Loco | null {
+    const placeId = l.location.kind === 'place' ? l.location.placeId : '';
+    const wanted = new Set<string>();
+    for (const b of this.boxes)
+      for (const s of b.sessions) {
+        const v = s.controller.view;
+        if (v.outgoing?.locoId) wanted.add(v.outgoing.locoId);
+        if (v.incoming?.locoId) wanted.add(v.incoming.locoId);
+      }
+    const busy = new Set([...this.jobs.values()].flatMap((j) => [j.locoId, j.pilotId ?? '']));
+    let best: { l: Loco; d: number } | null = null;
+    for (const p of this.state.roster) {
+      if (p.id === l.id || wanted.has(p.id) || busy.has(p.id) || this.trainOf(p.id)) continue;
+      if (!(p.jobs ?? []).some((jb) => jb.duty === 'pilot' && (!jb.placeIds.length || jb.placeIds.includes(placeId)))) continue;
+      if (consistVehicles(p.working.consist ?? '').length && p.working.trainTypeId !== 'light_engine') continue;
+      const at = this.standingCircuit(layout, p);
+      if (!at || at === c) continue;
+      const probe = this.blank(p, { kind: 'shunt', boxId, to: { placeId: '', roadId: '' }, onDone: () => {} }, locoLength(p));
+      const steps = findPath(this.state, layout, { circuitId: at, toward: 0 }, (d) => d.circuitId === c && d.toward === end, {
+        blocked: this.shuntBlocked(layout, probe, { through: at, into: c, standingOnly: true }),
+        anyWay: true,
+        enter: (d) => d.circuitId !== c || d.toward === end,
+        reverseIn: (x) => x !== c && this.mayReverse(layout, x),
+      }) ?? findPath(this.state, layout, { circuitId: at, toward: 1 }, (d) => d.circuitId === c && d.toward === end, {
+        blocked: this.shuntBlocked(layout, probe, { through: at, into: c, standingOnly: true }),
+        anyWay: true,
+        enter: (d) => d.circuitId !== c || d.toward === end,
+        reverseIn: (x) => x !== c && this.mayReverse(layout, x),
+      });
+      if (!steps) continue;
+      const d = steps.reduce((m, x) => m + x.metres, 0);
+      if (!best || d < best.d) best = { l: p, d };
+    }
+    return best?.l ?? null;
+  }
+
+  /**
+   * The station pilot releases an engine trapped at end `end` of its train in `c`, ECS-style: it couples to
+   * the outer end and draws the stock off to a free road; the engine goes out of the way; the pilot puts
+   * the stock back and gets clear (unless it is left at the buffer-stop end, where it waits for the train
+   * to go); the engine backs on at the outer end.
+   */
+  private startPilotRelease(layout: Layout, boxId: string, l: Loco, c: string, end: 0 | 1, ref: PlaceRef | null, pilot: Loco, onDone?: (ok: boolean) => void): void {
+    const j: Job = { id: newId('job'), kind: 'pilot', boxId, locoId: l.id, pilotId: pilot.id, steps: [], i: 0, busy: false, status: '', onDone };
+    const who = this.name(l);
+    const pn = `The station pilot (${this.name(pilot)})`;
+    const outer = (1 - end) as 0 | 1;
+    const lay = () => this.layout ?? layout;
+    let stockAt: { circuitId: string; ref: PlaceRef } | null = null;
+    let engineAt: { circuitId: string; ref: PlaceRef } | null = null;
+    let pilotEnd: 0 | 1 | null = null;
+    const pilotHome = pilot.location.kind === 'place' ? { placeId: pilot.location.placeId, roadId: pilot.location.roadId } : null;
+    const homeCircuit = this.standingCircuit(layout, pilot);
+    j.status = `${who} cannot run round: ${pn.toLowerCase()} is coming to release it.`;
+    j.steps = [
+      this.waitStep(j, UNCOUPLE_MS, `${who} is trapped at the wrong end of its train: uncoupling for the station pilot.`),
+      () => {
+        this.uncouple(lay(), l.id, c);
+        return 'done';
+      },
+      // 1. The pilot runs on to the outer end of the stock.
+      () => this.jobMove(lay(), j, pilot.id, { circuitId: c, ref }, { length: locoLength(pilot), enterToward: end, into: true, text: `${pn} is coming on to the outer end of ${who}'s train to release it.` }),
+      this.waitStep(j, COUPLE_MS, `${pn} is coupling up to the stock.`),
+      () => {
+        this.coupleUp(lay(), pilot.id, c);
+        this.setEnd(pilot.id, c, outer);
+        return 'done';
+      },
+      // 2. It draws the stock off to a free road.
+      () =>
+        this.jobMove(lay(), j, pilot.id, () => (stockAt ??= this.freeRoad(lay(), boxId, this.stockLength(pilot.id), new Set([c]), ['carriageSidings', 'carriageShed', 'sidings', 'station', 'other', 'goods', 'depot'])), {
+          length: this.stockLength(pilot.id),
+          startToward: outer,
+          text: `${pn} is drawing the stock off ${this.circuitName(layout, c)}, releasing ${who}.`,
+        }),
+      // 3. The engine, released, goes out of the way.
+      () =>
+        this.jobMove(lay(), j, l.id, () => (engineAt ??= this.freeRoad(lay(), boxId, locoLength(l), new Set([c, stockAt?.circuitId ?? '']), ['depot', 'turntable', 'coaling', 'water', 'fuel', 'sidings', 'goods', 'station', 'other'])), {
+          length: locoLength(l),
+          startToward: outer,
+          text: `${who} is released: out of the way while the pilot puts the stock back.`,
+        }),
+      // 4. The pilot puts the stock back into the road.
+      () =>
+        this.jobMove(lay(), j, pilot.id, { circuitId: c, ref }, {
+          length: this.stockLength(pilot.id),
+          text: `${pn} is putting the stock back into ${this.circuitName(layout, c)}.`,
+          then: () => {
+            pilotEnd = this.locoEndIn(this.loco(pilot.id)!, c);
+          },
+        }),
+      this.waitStep(j, UNCOUPLE_MS, `${pn} is uncoupling from the stock.`),
+      () => {
+        this.uncouple(lay(), pilot.id, c);
+        return 'done';
+      },
+      // 5. A pilot left at the outer end gets clear (one at the buffer stops waits there until the train has gone).
+      () => {
+        if (pilotEnd !== outer) return 'done';
+        const back = homeCircuit && pilotHome && !this.o.board.occupants(homeCircuit).length ? { circuitId: homeCircuit, ref: pilotHome } : null;
+        return this.jobMove(lay(), j, pilot.id, () => back ?? this.freeRoad(lay(), boxId, locoLength(pilot), new Set([c]), ['depot', 'turntable', 'coaling', 'water', 'fuel', 'sidings', 'goods', 'station', 'other']), {
+          length: locoLength(pilot),
+          startToward: outer,
+          text: `${pn} is getting clear of the outer end.`,
+        });
+      },
+      // 6. The engine backs on at the outer end.
+      () => this.jobMove(lay(), j, l.id, { circuitId: c, ref }, { length: locoLength(l), enterToward: end, into: true, text: `${who} is backing on to its train at the outer end.` }),
+      this.waitStep(j, COUPLE_MS, `${who} is coupling up to its train.`),
+      () => {
+        this.coupleUp(lay(), l.id, c);
+        this.setEnd(l.id, c, outer);
+        return 'done';
+      },
+    ];
+    this.jobs.set(l.id, j);
+    this.runJobs();
+  }
+
+  /**
+   * Get a departure ready early (the timetable asks, when the train has nothing else to do): if its engine
+   * is at the wrong end for its line, it runs round (or is released by the pilot) now. Returns what is
+   * happening in words ('' when nothing needs doing).
+   */
+  prepareDeparture(boxId: string, locoId: string, connId: string): string {
+    const layout = this.layout;
+    const l = this.loco(locoId);
+    if (!layout || !l || !this.box(boxId) || this.trainOf(locoId)) return '';
+    const job = this.jobs.get(locoId);
+    if (job) return job.status;
+    const from = this.standingCircuit(layout, l);
+    if (!from) return '';
+    return this.ensureLeading(layout, boxId, l, from, connId, null) ? (this.jobs.get(locoId)?.status ?? `${this.name(l)} is to run round its train.`) : '';
+  }
+
+  /**
+   * Run a loco round its train where it stands (a timetabled run round): it ends at the other end. Returns
+   * why it cannot be done (the timetable falls back to a card), or null.
+   */
+  runRound(boxId: string, locoId: string, onDone: (ok: boolean) => void): string | null {
+    const layout = this.layout;
+    const l = this.loco(locoId);
+    if (!layout || !l || !this.box(boxId)) return 'No railway running.';
+    if (this.trainOf(locoId)) return 'It is already moving.';
+    const c = this.standingCircuit(layout, l);
+    if (!c) return 'It is not standing on a road drawn on the track plan.';
+    if (!consistVehicles(l.working.consist ?? '').length && !this.stockOn(layout, c)) {
+      this.o.scheduler.setTimeout(() => onDone(true), 0);
+      return null;
+    }
+    const known = this.locoEndIn(l, c);
+    const err = this.reEnd(layout, boxId, locoId, known === null ? null : ((1 - known) as 0 | 1), onDone);
+    if (err && !this.jobs.has(locoId)) return err;
+    return null;
+  }
+
+  /** What the railway is doing by itself in a box's area (running round, pilot releases), in words. */
+  jobsText(boxId: string): string[] {
+    return [...this.jobs.values()].filter((j) => j.boxId === boxId).map((j) => j.status);
+  }
+
+  /** Is a loco busy with a run round or a pilot release (as the engine or the pilot)? */
+  busyWithJob(locoId: string): boolean {
+    return [...this.jobs.values()].some((j) => j.locoId === locoId || j.pilotId === locoId);
   }
 
   /** From a section signal, out along the line: to the far place's road if it is on the plan, else over the line's exit. */
@@ -1197,9 +1850,23 @@ export class RailwaySim {
     const d = t.dest;
     const lastCircuit = t.parts[t.parts.length - 1].circuitId;
     if (t.purpose.kind === 'shunt') {
+      // On a turntable: turned before it is done (it faces the other way now).
+      if (this.onTurntable(layout, lastCircuit) && t.length <= locoLength(this.loco(t.locoId) ?? ({ powerType: '' } as Loco)) + 1) {
+        if (t.turnAt === null) {
+          t.turnAt = this.now + TURN_MS / this.scale();
+          t.status = 'Being turned on the turntable.';
+          return;
+        }
+        if (this.now < t.turnAt) return;
+        // Turned to face whichever way its next train needs (settled when that train sets off on a line):
+        // it may well run back to its train tender first, to leave with it smokebox first.
+        t.smoke = null;
+        t.turnAt = Infinity;
+      }
       const done = t.purpose.onDone;
       this.trains = this.trains.filter((x) => x !== t);
       this.forgetTrain(t);
+      this.recordEnd(layout, t, t.turnAt === Infinity);
       done(true);
       return;
     }
@@ -1207,6 +1874,7 @@ export class RailwaySim {
     // An outgoing train that ran to a road of the far place drawn on the plan has arrived there.
     const atFar = d?.kind === 'line' && t.purpose.kind === 'outgoing';
     if (atDest || atFar) {
+      this.recordEnd(layout, t);
       t.arrived = true;
       for (const p of t.parts) if (p.circuitId) t.circuitsLocked.delete(p.circuitId);
       t.junctionsLocked.clear();
@@ -1225,6 +1893,12 @@ export class RailwaySim {
     this.trains = this.trains.filter((x) => x !== t);
     this.forgetTrain(t);
     const d = t.dest;
+    // Off the layout: how it faces there is up to the operators (it is turned as needed for its next journey).
+    if (d?.kind === 'line')
+      this.o.update((s) => {
+        const loco = s.roster.find((x) => x.id === t.locoId);
+        if (loco) delete loco.working.facing;
+      });
     if (d?.kind === 'line') this.reportFar(d.boxId, d.connId, t.locoId);
   }
 
@@ -1287,9 +1961,26 @@ export class RailwaySim {
    * A loco setting off from a road: as a light engine (or engine and brake van) it leaves its other
    * vehicles there as a rake; as a train it takes a rake standing there.
    */
-  private takeOrLeaveStock(layout: Layout, l: Loco, circuitId: string): void {
+  private takeOrLeaveStock(layout: Layout, l: Loco, circuitId: string, movesWith?: string): void {
     const loc = l.location;
     if (loc.kind !== 'place') return;
+    if (movesWith?.trim()) {
+      // A shunt that says what it moves with (v0.3.35): take those from its own train and the stock here, leave the rest.
+      const rakes = (layout.stock ?? []).filter((r) => r.circuitId === circuitId || (r.placeId === loc.placeId && r.roadId === loc.roadId));
+      const pool = rakes.reduce<StockVehicles[]>((m, r) => mergeVehicles(m, r.vehicles), consistVehicles(l.working.consist ?? ''));
+      const { taken, left } = splitVehicles(pool, movesWith);
+      this.o.update((s) => {
+        const lay = s.layouts.find((x) => x.id === layout.id);
+        const loco = s.roster.find((x) => x.id === l.id);
+        if (!lay || !loco) return;
+        const gone = new Set(rakes.map((r) => r.id));
+        lay.stock = (lay.stock ?? []).filter((r) => !gone.has(r.id));
+        if (left.length) lay.stock.push({ id: newId('rake'), description: vehiclesText(left), vehicles: left.map((v) => ({ kind: v.kind, count: v.count, metres: v.metres })), placeId: loc.placeId, roadId: loc.roadId, circuitId });
+        if (!lay.stock.length) delete lay.stock;
+        loco.working.consist = vehiclesText(taken);
+      });
+      return;
+    }
     const keep = workingVehicles(l.working);
     const all = consistVehicles(l.working.consist ?? '');
     const light = l.working.trainTypeId === 'light_engine' || l.working.trainTypeId === 'engine_brake_van';
@@ -1360,7 +2051,7 @@ export class RailwaySim {
    * (a timetable shunt move). The route is set and locked at once; `onDone` is called when it has
    * stopped there. Returns why it cannot be done (then the timetable falls back to a card), or null.
    */
-  shunt(boxId: string, locoId: string, to: PlaceRef, onDone: (ok: boolean, at: PlaceRef) => void): string | null {
+  shunt(boxId: string, locoId: string, to: PlaceRef, onDone: (ok: boolean, at: PlaceRef) => void, opts: { vehicles?: string } = {}): string | null {
     const layout = this.layout;
     const l = this.loco(locoId);
     if (!layout || !l || !this.box(boxId)) return 'No railway running.';
@@ -1379,7 +2070,7 @@ export class RailwaySim {
       if (!target) continue;
       if (target === from) {
         // A change of working where it stands (e.g. now a light engine: its coaches stay here).
-        this.takeOrLeaveStock(layout, l, from);
+        this.takeOrLeaveStock(layout, l, from, opts.vehicles);
         this.o.scheduler.setTimeout(() => onDone(true, ref), 0);
         return null;
       }
@@ -1395,8 +2086,11 @@ export class RailwaySim {
     }
     if (!found) return roads.some((r) => this.roadCircuit(layout, r)) ? `No clear route to ${this.refName(layout, roads[0])} yet.` : 'Not on a road drawn on the track plan.';
     const { steps, ref, target } = found;
-    this.takeOrLeaveStock(layout, l, from);
-    const t = this.standingTrain(layout, this.loco(locoId)!, from, steps[0].toward, { kind: 'shunt', boxId, to: ref, onDone: (ok) => onDone(ok, ref) });
+    this.takeOrLeaveStock(layout, l, from, opts.vehicles);
+    const now = this.loco(locoId)!;
+    // Moving with some vehicles whatever its working says (a pilot drawing stock off as a light engine): their length counts.
+    const len = opts.vehicles?.trim() ? this.stockLength(locoId) : undefined;
+    const t = this.standingTrain(layout, now, from, steps[0].toward, { kind: 'shunt', boxId, to: ref, onDone: (ok) => onDone(ok, ref) }, len);
     this.append(t, steps.slice(1));
     this.lock(layout, t, steps);
     t.dest = { kind: 'road', placeId: ref.placeId, roadId: ref.roadId, circuitId: target };
@@ -1453,6 +2147,7 @@ export class RailwaySim {
       passedDetected,
       at: dest,
       status: t.permWait || t.status,
+      facing: this.facingNote(t),
     };
   }
 
