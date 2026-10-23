@@ -7,8 +7,10 @@ import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCirc
  * 5: optional real-railway lengths and speeds, and the units setting (v0.3.27; nothing needs filling in).
  * 6: simulated running settings and rakes of stock left standing on a layout (v0.3.28; nothing needs filling in).
  * 7: signals on track plans, facing point locks and lever numbers (v0.3.29; nothing needs filling in).
+ * 8: rolling stock (v0.3.38): each layout's library types, fleet and rakes; stock left standing in play mode is
+ *    individual vehicles (older anonymous standing stock is dropped on load, D14/D19).
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';

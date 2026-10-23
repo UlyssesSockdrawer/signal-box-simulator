@@ -1,3 +1,4 @@
+import { stockLibrary, vehiclesDescription } from './stock';
 import { describe, expect, it } from 'vitest';
 import { createDefaultState as shippedState } from './defaults';
 import { boxSignals, findPath, playReadiness } from './routing';
@@ -215,7 +216,8 @@ describe('simulated running (signaller play mode)', () => {
     const seen = new Set<string>();
     expect(t.sim.shunt('sigsim-central', 'lms5025', { placeId: 'sgc-goods', roadId: 'sgc-shed' }, () => (done = true))).toBeNull();
     expect(s.layouts[0].stock).toHaveLength(1);
-    expect(s.layouts[0].stock![0]).toMatchObject({ description: '4 coaches', placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t4' });
+    expect(s.layouts[0].stock![0]).toMatchObject({ placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t4' });
+    expect(vehiclesDescription(s.layouts[0].stock![0].vehicles, stockLibrary())).toBe('4 coaches');
     expect(bf.working.consist).toBe('');
     // It sets back in the west end (T4) to get from P1 into the goods yard; the coaches keep P1 occupied.
     expect(t.until(() => (t.occupied().forEach((c) => seen.add(c)), done))).toBe(true);

@@ -1,3 +1,5 @@
+import type { RollingStock, StandingRake, Vehicle } from './stockTypes';
+
 // Core domain types. Nothing in /core touches the DOM, so it can be reused
 // unchanged by a future Android wrapper, a networked peer, or tests.
 
@@ -76,6 +78,12 @@ export interface Working {
    * wants: the railway settles it when it next sets off on a line, so that it leads smokebox first.
    */
   facingFree?: boolean;
+  /**
+   * The vehicles behind the loco, one by one (signaller play mode, v0.3.38, D19): minted from the
+   * library for a text consist when stock is left standing, and carried when it takes stock. Only used
+   * while it still matches the consist text (a changed consist mints afresh). Discarded off the layout.
+   */
+  vehicles?: Vehicle[];
 }
 
 /*
@@ -625,32 +633,13 @@ export interface Layout {
    * (440 yards). The line may not be accepted (Line Clear) while it is obstructed this far in.
    */
   clearingPoint?: number;
-  /** Rolling stock standing on its own (uncoupled from a loco): rakes left in roads (signaller play mode, v0.3.28). */
-  stock?: StockRake[];
-}
-
-/** One kind of vehicle in a rake: e.g. 4 × coach (20 m each). Kept as a list so numbered stock can be added later. */
-export interface StockVehicles {
-  kind: string;
-  count: number;
-  /** Length of each vehicle over buffers, in metres. */
-  metres: number;
-}
-
-/**
- * An anonymous rake of rolling stock (coaches, wagons, vans) standing without a loco, e.g. the
- * coaches of a terminating train left in the platform while its engine runs round. It keeps the
- * track circuit it stands on occupied until a loco takes it away.
- */
-export interface StockRake {
-  id: string;
-  /** What it is, as written in the consist it came from, e.g. "4 coaches". */
-  description: string;
-  vehicles: StockVehicles[];
-  /** Where it stands: a road of a place (and the track circuit the road is on). */
-  placeId: string;
-  roadId: string;
-  circuitId: string;
+  /**
+   * Rolling stock standing on its own (uncoupled from a loco) in roads, in signaller play mode (v0.3.28;
+   * individual vehicles since v0.3.38, D19).
+   */
+  stock?: StandingRake[];
+  /** The layout's stock library types, fleet and saved rakes (v0.3.38). Absent = none yet. */
+  rollingStock?: RollingStock;
 }
 
 /** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */

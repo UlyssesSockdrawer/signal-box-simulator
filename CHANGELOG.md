@@ -2,6 +2,20 @@
 
 Short notes on what each version brought. Newest first.
 
+## 0.3.38
+
+* New **Stock** tab in the layout configurator: a library of vehicle types (LMS grouping-era types from
+  research, plus generic types for any company or era), a fleet of individual vehicles with identities
+  you can override, and saved rakes built from them.
+* The rake builder works out length over buffers ("about" where lengths are approximate), the fitted
+  head and goods train class, push-pull and where the guard rides, and notes things a railway would
+  avoid without ever blocking a build. A vehicle can be in several rakes.
+* Rakes are drawn to scale, with a brake pipe under the fitted head, loads, and a check against a road.
+* Play mode: stock left standing in roads is now individual vehicles, and trains' guessed vehicle
+  lengths use the generic library lengths (a little shorter than before). Old standing stock in saved
+  data is cleared once.
+* New tutorial page: Rolling stock.
+
 ## 0.3.37
 
 * Off the layout (fiddle yards, the boxes beyond), engines and trains are always turned as an operator

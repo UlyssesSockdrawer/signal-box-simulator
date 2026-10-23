@@ -25,6 +25,7 @@ import {
   SHORT_CIRCUIT_LENGTH,
   STATION_CIRCUIT_LENGTH,
   trainLength,
+  CONSIST_METRES,
 } from './railway';
 import { FakeScheduler } from './scheduler';
 import { createBoxSession } from './session';
@@ -290,9 +291,9 @@ describe('real-railway data: lengths and speeds', () => {
     const loco = s.roster.find((l) => l.id === 'lms5025')!;
     loco.working.consist = '4 coaches + brake van';
     expect(consistVehicles(loco.working.consist).map((v) => `${v.count} ${v.kind}`)).toEqual(['4 coach', '1 brake van']);
-    expect(trainLength(loco)).toBe(20 + 4 * 20 + 8);
+    expect(trainLength(loco)).toBeCloseTo(20 + 4 * CONSIST_METRES.coach + CONSIST_METRES['brake van'], 6);
     loco.working.consist = 'six wagons, a brake van';
-    expect(trainLength(loco)).toBe(20 + 6 * 6 + 8);
+    expect(trainLength(loco)).toBeCloseTo(20 + 6 * CONSIST_METRES.wagon + CONSIST_METRES['brake van'], 6);
     loco.working.consist = '';
     expect(trainLength(loco)).toBe(20); // light engine
     loco.working.length = 150;
@@ -301,7 +302,7 @@ describe('real-railway data: lengths and speeds', () => {
     jinty.working.consist = 'auto-coach';
     expect(trainLength(jinty)).toBe(11); // as a light engine it has nothing behind it
     jinty.working.trainTypeId = 'branch_passenger';
-    expect(trainLength(jinty)).toBe(11 + 19);
+    expect(trainLength(jinty)).toBeCloseTo(11 + CONSIST_METRES['auto-coach'], 6);
     jinty.powerType = 'DMU';
     jinty.working.consist = '2-car';
     expect(trainLength(jinty)).toBe(40);
@@ -318,6 +319,12 @@ describe('real-railway data: lengths and speeds', () => {
     expect(parseLength('12m 40ch')).toBeCloseTo(12.5 * METRES_PER_MILE, 6); // railway mileage: m = miles beside chains
     expect(parseLength('1/2 mi')).toBeCloseTo(METRES_PER_MILE / 2, 6);
     expect(parseLength('3', 'mi')).toBeCloseTo(3 * METRES_PER_MILE, 6);
+    // Vehicle lengths (v0.3.38): feet and inches, millimetres; shown as feet and inches or metres.
+    expect(parseLength('60 ft 8 in')).toBeCloseTo(18.4912, 6);
+    expect(parseLength('7137 mm')).toBeCloseTo(7.137, 6);
+    expect(formatLength(18.4912, 'imperial', 'vehicle')).toBe('60 ft 8 in');
+    expect(formatLength(18.4912, 'metric', 'vehicle')).toBe('18.49 m');
+    expect(formatLength(parseLength('57 ft')!, 'imperial', 'vehicle')).toBe('57 ft');
     for (const bad of ['', 'far', '2 mi far', '0 m', '-3 m', '2 40 ch']) expect(parseLength(bad)).toBeNull();
     expect(parseSpeed('25 mph')).toBeCloseTo(25 * MPS_PER_MPH, 9);
     expect(parseSpeed('40 km/h')).toBeCloseTo(40 * MPS_PER_KMH, 9);

@@ -20,7 +20,7 @@ import { generateScreen } from './screens/timetableGenerate';
 import { findTimetable } from '../core/timetables';
 import { applyTheme } from './theme';
 
-export const APP_VERSION = '0.3.37';
+export const APP_VERSION = '0.3.38';
 
 export interface Ctx {
   store: Store;
@@ -347,7 +347,7 @@ export function startApp(root: HTMLElement, store: Store): void {
         }
         {
           const t = route.split('/')[2];
-          screen = trackPlanScreen(ctx, layout.id, t === 'details' || t === 'places' || t === 'signals' ? t : undefined);
+          screen = trackPlanScreen(ctx, layout.id, t === 'details' || t === 'places' || t === 'signals' || t === 'stock' ? t : undefined);
         }
         break;
       }

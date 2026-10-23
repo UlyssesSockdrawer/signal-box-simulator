@@ -1,3 +1,4 @@
+import { stockLibrary, vehiclesDescription } from '../../core/stock';
 import { findLayout } from '../../core/layouts';
 import { arrivalChoices, arrivedLabel, farPlace, findPlace, findRoad, placeLocationText } from '../../core/places';
 import { pointsText } from '../../core/score';
@@ -480,10 +481,12 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       if (loc.kind === 'place') {
         meta = loc.roads.length ? `${loc.roads.length} ${loc.roads.length === 1 ? 'road' : 'roads'}` : '';
         // Rakes of stock left standing (signaller play mode) are listed with the road they stand on.
+        const stockLayout = findLayout(st, st.boxes.find((x) => x.id === box.id)?.layoutId ?? box.layoutId);
+        const stockLib = stockLibrary(stockLayout?.rollingStock);
         const stockOn = (roadId: string) =>
-          (findLayout(st, st.boxes.find((x) => x.id === box.id)?.layoutId ?? box.layoutId)?.stock ?? [])
+          (stockLayout?.stock ?? [])
             .filter((r) => r.placeId === loc.place.id && r.roadId === roadId)
-            .map((r) => `stock: ${r.description || 'vehicles'}`);
+            .map((r) => `stock: ${vehiclesDescription(r.vehicles, stockLib) || 'vehicles'}`);
         rows = loc.roads.flatMap(({ road, locos }) => {
           const all = [...locos.map(trainText), ...stockOn(road.id)];
           return [h('dt', null, road.name), h('dd', { class: all.length ? '' : 'muted' }, all.length ? all.join('; ') : 'empty')];

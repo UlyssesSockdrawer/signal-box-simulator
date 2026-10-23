@@ -93,6 +93,7 @@ import { confirmButton, h, option, safeRerender, toast } from '../dom';
 import { plusIcon } from './boxConfig';
 import { layoutDetails } from './layouts';
 import { layoutPlaces } from './places';
+import { layoutStock } from './stock';
 
 /*
  * Layout configurator: build the layout's track plan by growing it from its
@@ -115,7 +116,7 @@ const LINE_GREY = '#5f6368';
 /** Box colours on the enamel diagram (all dark enough for white text and to stand out on cream). */
 const BOX_COLOURS = ['#1f4e8c', '#b5541b', '#2e6b3a', '#6a3d8c', '#8a5a00', '#0f6b6b', '#a3271f', '#455a64'];
 
-type Tab = 'plan' | 'areas' | 'places' | 'signals' | 'details';
+type Tab = 'plan' | 'areas' | 'places' | 'signals' | 'stock' | 'details';
 type Sel = { kind: 'circuit'; id: string } | { kind: 'junction'; id: string } | { kind: 'marker'; id: string } | null;
 type Pick =
   | { kind: 'join'; from: OpenEndRef }
@@ -340,7 +341,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
         },
         label,
       );
-    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('signals', 'Signalling'), tab('details', 'Details'));
+    tabsEl.replaceChildren(tab('plan', 'Track plan'), tab('areas', 'Box areas'), tab('places', 'Places'), tab('signals', 'Signalling'), tab('stock', 'Stock'), tab('details', 'Details'));
   };
 
   /** The plan's bounds widened so the names of level exits ("To Fiddle Yard West") fit on the board too. */
@@ -2613,8 +2614,8 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   const renderSide = safeRerender(() => sideEl, renderSideNow);
 
   // ---------------------------------------------------------------- everything
-  const pageTab = () => ui.tab === 'details' || ui.tab === 'places' || ui.tab === 'signals';
-  const pageContent = () => (ui.tab === 'places' ? layoutPlaces(ctx, layoutId) : ui.tab === 'signals' ? layoutSignalling(ctx, layoutId) : layoutDetails(ctx, layoutId));
+  const pageTab = () => ui.tab === 'details' || ui.tab === 'places' || ui.tab === 'signals' || ui.tab === 'stock';
+  const pageContent = () => (ui.tab === 'places' ? layoutPlaces(ctx, layoutId) : ui.tab === 'signals' ? layoutSignalling(ctx, layoutId) : ui.tab === 'stock' ? layoutStock(ctx, layoutId) : layoutDetails(ctx, layoutId));
   const renderDetails = safeRerender(() => detailsEl, () => detailsEl.replaceChildren(pageContent()));
   const renderAll = () => {
     // The layout may just have been deleted (the screen is about to be left).
@@ -2623,7 +2624,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
     if (title) title.textContent = layout().name;
     const details = pageTab();
     // The Places tab can use the whole width of a big screen.
-    document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals');
+    document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals' || ui.tab === 'stock');
     shelfEl.hidden = details;
     detailsEl.hidden = !details;
     if (details) {
@@ -2657,7 +2658,7 @@ export function trackPlanScreen(ctx: Ctx, layoutId: string, startTab?: Tab): Scr
   });
 
   renderTabs();
-  document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals');
+  document.body.classList.toggle('wide-page', ui.tab === 'places' || ui.tab === 'signals' || ui.tab === 'stock');
   if (pageTab()) {
     shelfEl.hidden = true;
     detailsEl.hidden = false;

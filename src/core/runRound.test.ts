@@ -1,3 +1,4 @@
+import { mintFromConsist, stockLibrary, vehiclesDescription } from './stock';
 import { describe, expect, it } from 'vitest';
 import { accept, play } from './simHarness';
 import { addTimetable, addTrain } from './timetables';
@@ -94,7 +95,7 @@ describe('the engine at the right end of its train (play mode)', () => {
     const bf = t.loco('lms5025');
     // Stock standing in the loop (P2) and the West inner: no way round.
     const l = t.state.layouts[0];
-    l.stock = [{ id: 'rake-x', description: '6 vans', vehicles: [{ kind: 'van', count: 6, metres: 17 }], placeId: 'sgc-station', roadId: 'sgc-p2', circuitId: 'sgc-t5' }];
+    l.stock = [{ id: 'rake-x', vehicles: mintFromConsist('6 vans'), placeId: 'sgc-station', roadId: 'sgc-p2', circuitId: 'sgc-t5' }];
     t.tick(500);
     t.west.setOutgoing('lms5025', 'ordinary_passenger');
     const texts = new Set<string>();
@@ -122,7 +123,7 @@ describe('the engine at the right end of its train (play mode)', () => {
     const t = play();
     arriveInP1(t);
     t.loco('lms7298').jobs = [];
-    t.state.layouts[0].stock = [{ id: 'rake-x', description: '6 vans', vehicles: [{ kind: 'van', count: 6, metres: 17 }], placeId: 'sgc-station', roadId: 'sgc-p2', circuitId: 'sgc-t5' }];
+    t.state.layouts[0].stock = [{ id: 'rake-x', vehicles: mintFromConsist('6 vans'), placeId: 'sgc-station', roadId: 'sgc-p2', circuitId: 'sgc-t5' }];
     t.tick(500);
     t.west.setOutgoing('lms5025', 'ordinary_passenger');
     t.tick(500);
@@ -147,7 +148,8 @@ describe('the engine at the right end of its train (play mode)', () => {
     let done = false;
     expect(t.sim.shunt('sigsim-central', 'lms5025', { placeId: 'sgc-station', roadId: 'sgc-p2' }, () => (done = true), { vehicles: '2 vans' })).toBeNull();
     expect(bf.working.consist).toBe('2 vans');
-    expect(t.state.layouts[0].stock).toMatchObject([{ description: '4 coaches', circuitId: 'sgc-t4' }]);
+    expect(t.state.layouts[0].stock).toMatchObject([{ circuitId: 'sgc-t4' }]);
+    expect(vehiclesDescription(t.state.layouts[0].stock![0].vehicles, stockLibrary())).toBe('4 coaches');
     const blocked = new Set<string>();
     expect(t.until(() => (blockBackAsAsked(t, blocked), done), 600_000)).toBe(true);
   });

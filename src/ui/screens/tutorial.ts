@@ -11,6 +11,8 @@ import { drawDiagram } from '../planDiagram';
 import { signalSample } from '../signalDrawing';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
+import { drawRake } from '../rakeDrawing';
+import { classCode, mintVehicle, resolveVehicle, stockLibrary } from '../../core/stock';
 import { formatLength, layoutClearingPoint } from '../../core/railway';
 
 /*
@@ -19,7 +21,7 @@ import { formatLength, layoutClearingPoint } from '../../core/railway';
  * Everything is named from the data (the starting data ships Sigsim Central between Fiddle Yard
  * West and Fiddle Yard East), so it still reads correctly after the user has changed things.
  */
-export const TUTORIAL_TABS = ['basics', 'examples', 'tapper', 'try', 'timetables', 'signals'] as const;
+export const TUTORIAL_TABS = ['basics', 'examples', 'tapper', 'try', 'timetables', 'signals', 'stock'] as const;
 export type TutorialTab = (typeof TUTORIAL_TABS)[number];
 /** The page last shown, so coming back to the tutorial opens where you were. */
 let lastTab: TutorialTab = 'basics';
@@ -411,6 +413,35 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
     ]),
   ];
 
+  /** Rolling stock (v0.3.38): the library, fleet and rakes, with two sample rakes drawn by the visualiser. */
+  function stockSection(): HTMLElement[] {
+    const lib = stockLibrary();
+    const units = ctx.store.state.settings.units;
+    const sample = (ids: string[], loaded: number[], title: string) => {
+      const vs = ids.map((id, i) => ({ ...mintVehicle(id), ...(loaded.includes(i) ? { loaded: true } : {}) }));
+      const rv = vs.map((x) => resolveVehicle(x, lib));
+      return h('div', { class: 'sk-vis' }, drawRake(rv, { engineEnd: 'A', units, engine: true, labels: rv.map((r) => classCode(r.cls)), title }));
+    };
+    const openStock = () => layout && ctx.goFrom(`plan/${layout.id}/stock`, { route: 'tutorial/stock', label: 'tutorial' });
+    const items: Array<HTMLElement | null> = [
+      h('h2', null, 'Rolling stock'),
+      h('p', null, 'Each layout has its own rolling stock, on the ', h('strong', null, 'Stock'), ' tab of the Layout configurator:'),
+      h(
+        'ul',
+        null,
+        h('li', null, h('strong', null, 'Library'), ': types of vehicle with their length over buffers, brake, corridor and guard’s compartment. Built-in types come from research into real railways (the LMS in the grouping era first), with generic types that stand in for any company or era. Lengths marked “about” are estimated, nominal or generic. Add your own types for anything missing; hide or copy the built-in ones.'),
+        h('li', null, h('strong', null, 'Fleet'), ': your individual vehicles. Each has a permanent system identity (its type code and part of its id, e.g. BTK-3f9a1c); type your own identity, such as a running number, to override it.'),
+        h('li', null, h('strong', null, 'Rakes'), ': vehicles in order, with ends A and B. Choose which end the engine is assumed at, and the builder works out the length, the fitted head and the goods train class, whether it can work push-pull, and where the guard rides. Notes point out things a railway would avoid (a goods train with no brake van, an unfitted brake van on a fitted train) but never stop you building it. A vehicle can be in several rakes, to try variations.'),
+      ),
+      h('p', null, 'The drawing is to scale. A solid brake pipe runs under the fitted vehicles next to the engine and stops at the first unfitted one; dashed outlines are approximate lengths. Choose a road to see whether the rake fits it.'),
+      sample(['generic-passenger-brake-57', 'generic-coach-57', 'generic-coach-57', 'generic-full-brake-50'], [], 'A passenger rake'),
+      sample(['generic-vent-van-12t-fitted', 'generic-vent-van-12t-fitted', 'generic-open-7plank-12t', 'generic-open-7plank-12t', 'generic-brake-van-20t-fitted'], [1, 2], 'A part-fitted goods rake'),
+      h('p', null, 'In signaller play mode, coaches and wagons that an engine leaves standing in a road are individual vehicles too, made from the generic types, and the train that collects them takes the same vehicles away. Later versions will let timetables and the timetable generator use rakes.'),
+      layout ? h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: openStock } }, `Open ${layout.name}’s stock`)) : null,
+    ];
+    return items.filter((x): x is HTMLElement => !!x);
+  }
+
   const tokenAndTapper = [
     h('h2', null, 'Using the tapper'),
     h('p', null, 'Press the TAPPER button (or the space bar) in rhythm. Beats close together are one group; a longer pause starts the next group. Stop tapping and the code is sent after a moment. The chips beside the tapper send the everyday codes, and the Code card lists them all. Timing can be adjusted in Settings.'),
@@ -433,8 +464,9 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
     try: session.length ? session : [h('p', null, 'Set up a signal box with at least one connected box in the Box configurator, then come back here.'), tryButton()],
     timetables: ttSection,
     signals: signalsSection,
+    stock: stockSection(),
   };
-  const TAB_LABELS: Record<TutorialTab, string> = { basics: 'Absolute block', examples: 'Worked examples', tapper: 'Tapper & tokens', try: 'Try it', timetables: 'Timetables', signals: 'Signals' };
+  const TAB_LABELS: Record<TutorialTab, string> = { basics: 'Absolute block', examples: 'Worked examples', tapper: 'Tapper & tokens', try: 'Try it', timetables: 'Timetables', signals: 'Signals', stock: 'Rolling stock' };
 
   let current: TutorialTab = TUTORIAL_TABS.includes(tab as TutorialTab) ? (tab as TutorialTab) : lastTab;
   const tabsEl = h('nav', { class: 'config-tabs tut-tabs', 'aria-label': 'Tutorial pages' });

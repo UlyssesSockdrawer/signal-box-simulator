@@ -1,3 +1,4 @@
+import { mintFromConsist } from './stock';
 import { describe, expect, it } from 'vitest';
 import { accept, play } from './simHarness';
 
@@ -131,7 +132,7 @@ describe('which way an engine faces (play mode, v0.3.36)', () => {
     l.places.push({ id: 'tt', kind: 'turntable', name: 'Turntable', shortName: '', notes: '', roads: [{ id: 'tt-r', name: 'Turntable road', notes: '', circuitId: 'sgc-t9' }], workedBy: [{ kind: 'box', boxId: 'sigsim-central' }] });
     const bf = lightIntoP1(t);
     // Its coaches stand in P1 (as if it had brought them in from the west and been uncoupled).
-    l.stock = [{ id: 'rake-c', description: '4 coaches', vehicles: [{ kind: 'coach', count: 4, metres: 20 }], placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t4' }];
+    l.stock = [{ id: 'rake-c', vehicles: mintFromConsist('4 coaches'), placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t4' }];
     const permitted = new Set<string>();
     const block = () => {
       for (const w of t.sim.permissions('sigsim-central').waiting) {

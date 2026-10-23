@@ -1,3 +1,4 @@
+import { sanitiseStanding, sanitiseVehicles } from './stockSanitise';
 import type { AppState, ConnectionDef, Junction, Layout, Loco, TrackCircuit, UnitSystem, Working } from './types';
 
 /*
@@ -140,14 +141,20 @@ export function circuitRunning(state: AppState, layout: Layout, c: TrackCircuit)
 
 // ---------------------------------------------------------------------------- train lengths
 
-/** Rough lengths over buffers (metres) for working out a train's length from its consist. */
+/**
+ * Lengths over buffers (metres) for working out a train's length from its consist: the generic library
+ * types' lengths (D18, v0.3.38; core/stockData/generic.json, checked by a test): 57 ft coach and driving
+ * trailer 60 ft 8 in, 50 ft van 53 ft 8 in, 20-ton brake van 7137 mm, 7-plank wagon 20 ft 6 in.
+ * A multiple unit's car stays at 20 m.
+ */
+export const CONSIST_METRES = { coach: 18.4912, 'auto-coach': 18.4912, van: 16.3576, 'brake van': 7.137, wagon: 6.2484, car: 20 } as const;
 const VEHICLES: Array<{ re: RegExp; metres: number; kind: string }> = [
-  { re: /^auto[- ]?(coach|trailer)s?$/, metres: 19, kind: 'auto-coach' },
-  { re: /^(brake ?vans?|guards? vans?)$/, metres: 8, kind: 'brake van' },
-  { re: /^(coach(es)?|carriages?|trailers?|corridors?|non-corridors?)$/, metres: 20, kind: 'coach' },
-  { re: /^(cars?)$/, metres: 20, kind: 'car' },
-  { re: /^(vans?|parcels? vans?|bogie vans?)$/, metres: 17, kind: 'van' },
-  { re: /^(wagons?|trucks?|tankers?|tanks?|hoppers?|opens?|minerals?|vehicles?|flats?|bolsters?)$/, metres: 6, kind: 'wagon' },
+  { re: /^auto[- ]?(coach|trailer)s?$/, metres: CONSIST_METRES['auto-coach'], kind: 'auto-coach' },
+  { re: /^(brake ?vans?|guards? vans?)$/, metres: CONSIST_METRES['brake van'], kind: 'brake van' },
+  { re: /^(coach(es)?|carriages?|trailers?|corridors?|non-corridors?)$/, metres: CONSIST_METRES.coach, kind: 'coach' },
+  { re: /^(cars?)$/, metres: CONSIST_METRES.car, kind: 'car' },
+  { re: /^(vans?|parcels? vans?|bogie vans?)$/, metres: CONSIST_METRES.van, kind: 'van' },
+  { re: /^(wagons?|trucks?|tankers?|tanks?|hoppers?|opens?|minerals?|vehicles?|flats?|bolsters?)$/, metres: CONSIST_METRES.wagon, kind: 'wagon' },
 ];
 /** How many there usually are when a consist names them in the plural with no number ("Coal wagons", "Vans"). */
 const TYPICAL: Record<string, number> = { coach: 4, car: 2, van: 6, wagon: 12, 'auto-coach': 1, 'brake van': 1 };
@@ -227,7 +234,7 @@ export function workingVehicles(w: Working): Array<{ count: number; kind: string
   const vehicles = consistVehicles(w.consist ?? '');
   if (w.trainTypeId === 'engine_brake_van') {
     const vans = vehicles.filter((v) => v.kind === 'brake van');
-    return vans.length ? vans : [{ count: 1, kind: 'brake van', metres: 8 }];
+    return vans.length ? vans : [{ count: 1, kind: 'brake van', metres: CONSIST_METRES['brake van'] }];
   }
   return vehicles;
 }
@@ -240,15 +247,18 @@ export function vehiclesText(vehicles: Array<{ count: number; kind: string }>): 
 
 // ---------------------------------------------------------------------------- typing and showing values
 
-const LENGTH_UNITS: Array<{ re: RegExp; unit: 'mi' | 'ch' | 'yd' | 'ft' | 'm' | 'km' }> = [
+type LengthUnit = 'mi' | 'ch' | 'yd' | 'ft' | 'in' | 'm' | 'mm' | 'km';
+const LENGTH_UNITS: Array<{ re: RegExp; unit: LengthUnit }> = [
   { re: /^(mi|mile|miles|mls?)$/, unit: 'mi' },
   { re: /^(ch|chs|chain|chains)$/, unit: 'ch' },
   { re: /^(yd|yds|yard|yards)$/, unit: 'yd' },
   { re: /^(ft|foot|feet|')$/, unit: 'ft' },
+  { re: /^(in|ins|inch|inches)$/, unit: 'in' },
+  { re: /^(mm|millimetres?|millimeters?)$/, unit: 'mm' },
   { re: /^(m|metre|metres|meter|meters)$/, unit: 'm' },
   { re: /^(km|kms|kilometre|kilometres|kilometer|kilometers)$/, unit: 'km' },
 ];
-const METRES: Record<'mi' | 'ch' | 'yd' | 'ft' | 'm' | 'km', number> = { mi: METRES_PER_MILE, ch: METRES_PER_CHAIN, yd: METRES_PER_YARD, ft: METRES_PER_FOOT, m: 1, km: 1000 };
+const METRES: Record<LengthUnit, number> = { mi: METRES_PER_MILE, ch: METRES_PER_CHAIN, yd: METRES_PER_YARD, ft: METRES_PER_FOOT, in: METRES_PER_FOOT / 12, m: 1, mm: 0.001, km: 1000 };
 
 /** "2½", "2 1/2", "1.25", "¾" → a number, else NaN. */
 function parseNumber(s: string): number {
@@ -265,9 +275,10 @@ function parseNumber(s: string): number {
 /**
  * A length typed in either system, in metres; null if it cannot be read (or is not more than zero).
  * Accepts "2 mi 40 ch", "2 miles 40 chains", "10 ch", "2½ ch", "220 yd", "200 m", "1.2 km", "660 ft",
- * and railway mileage "12m 40ch" (with chains, "m" means miles). A number on its own is in `bare`.
+ * vehicle lengths "60 ft 8 in" and "7137 mm", and railway mileage "12m 40ch" (with chains, "m" means
+ * miles). A number on its own is in `bare`.
  */
-export function parseLength(text: string, bare: 'mi' | 'ch' | 'yd' | 'm' | 'km' = 'm'): number | null {
+export function parseLength(text: string, bare: 'mi' | 'ch' | 'yd' | 'ft' | 'm' | 'km' = 'm'): number | null {
   const t = text.trim().toLowerCase().replace(/,/g, '');
   if (!t) return null;
   // Number-and-unit parts, which must make up the whole text ("2 mi 40 ch", "2½ ch", "1.2 km").
@@ -314,9 +325,18 @@ export function parseSpeed(text: string, bare: 'mph' | 'km/h' = 'mph'): number |
 /**
  * A length for showing. `scale`: 'section' for block sections (imperial: miles and chains,
  * "2 mi 40 ch"; metric: km, or m under 1 km), 'station' for track circuits in a box's area
- * (imperial: yards; metric: metres).
+ * (imperial: yards; metric: metres), 'vehicle' for rolling stock (imperial: feet and inches, "60 ft 8 in";
+ * metric: metres to two places, "18.49 m").
  */
-export function formatLength(metres: number, units: UnitSystem, scale: 'section' | 'station' = 'station'): string {
+export function formatLength(metres: number, units: UnitSystem, scale: 'section' | 'station' | 'vehicle' = 'station'): string {
+  if (scale === 'vehicle') {
+    // Vehicles and rakes (v0.3.38): feet and inches, or metres to two places.
+    if (units === 'metric') return `${trim(metres.toFixed(2))} m`;
+    const inches = Math.round(metres / (METRES_PER_FOOT / 12));
+    const ft = Math.floor(inches / 12);
+    const inch = inches % 12;
+    return inch ? `${ft} ft ${inch} in` : `${ft} ft`;
+  }
   if (units === 'metric') {
     if (scale === 'section' && metres >= 1000) return `${trim((metres / 1000).toFixed(2))} km`;
     return `${Math.round(metres)} m`;
@@ -365,17 +385,14 @@ export function sanitiseRailwayData(state: AppState): void {
       clean(c, 'lineSpeed');
     }
     for (const j of l.trackPlan.junctions) clean(j, 'divergingSpeed');
-    // Rakes left standing (v0.3.28): keep those on a road of this layout, with sensible vehicles.
+    // Stock left standing (v0.3.28; individual vehicles since v0.3.38): on a road of this layout, with real
+    // vehicles. Older saves' anonymous counts have none and are dropped (D14, D19).
     if (l.stock !== undefined) {
-      const roads = new Set(l.places.flatMap((p) => p.roads.map((r) => `${p.id}|${r.id}`)));
-      l.stock = (Array.isArray(l.stock) ? l.stock : []).filter(
-        (r) => r && typeof r.id === 'string' && Array.isArray(r.vehicles) && roads.has(`${r.placeId}|${r.roadId}`),
-      );
-      for (const r of l.stock) {
-        r.description = String(r.description ?? '');
-        r.vehicles = r.vehicles.filter((v) => v && typeof v.kind === 'string' && positive(v.count) !== undefined && positive(v.metres) !== undefined);
-        r.circuitId = l.places.find((p) => p.id === r.placeId)?.roads.find((x) => x.id === r.roadId)?.circuitId ?? '';
-      }
+      const roadCircuit = (placeId: string, roadId: string) => {
+        const road = l.places.find((p) => p.id === placeId)?.roads.find((r) => r.id === roadId);
+        return road ? road.circuitId ?? '' : null;
+      };
+      l.stock = sanitiseStanding(l.stock, roadCircuit);
       if (!l.stock.length) delete l.stock;
     }
   }
@@ -390,6 +407,11 @@ export function sanitiseRailwayData(state: AppState): void {
     if (f !== undefined && !(f && typeof f.circuitId === 'string' && f.circuitId && (f.end === 0 || f.end === 1))) delete l.working.facing;
     if (l.working && 'offFacing' in l.working) delete (l.working as { offFacing?: unknown }).offFacing;
     if (l.working?.facingFree !== undefined && l.working.facingFree !== true) delete l.working.facingFree;
+    // The vehicles behind it, one by one (v0.3.38).
+    if (l.working && l.working.vehicles !== undefined) {
+      l.working.vehicles = sanitiseVehicles(l.working.vehicles);
+      if (!l.working.vehicles.length) delete l.working.vehicles;
+    }
   }
 }
 

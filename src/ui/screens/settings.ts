@@ -4,6 +4,7 @@ import { topBar, type Ctx, type Screen } from '../app';
 import { confirmDialog, field, h, option, toast } from '../dom';
 import { disposeAllBoxRuntimes } from '../boxRuntime';
 import { resetPlacesUi } from './places';
+import { resetStockUi } from './stock';
 import { resetRosterUi } from './roster';
 import { resetTimetablesUi } from './timetables';
 import { resetSignallingUi } from './signalling';
@@ -183,6 +184,7 @@ export function settingsScreen(ctx: Ctx): Screen {
     disposeAllRailways();
     resetTrackPlanUi();
     resetPlacesUi();
+    resetStockUi();
     resetRosterUi();
     resetTimetablesUi();
     resetSignallingUi();

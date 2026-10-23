@@ -1045,7 +1045,7 @@ details.loco[open] > .row.end { border-radius: 0 0 8px 8px; padding: 0 16px 16px
 .config-case .field label, .config-case .field-label { color: var(--btn-fg); font-weight: 600; font-size: 0.9rem; }
 .config-case .help { color: var(--btn-muted); }
 .config-case .case-sub { color: var(--btn-muted); }
-.config-case input[type='text'], .config-case input[type='number'], .config-case select {
+.config-case input[type='text'], .config-case input[type='search'], .config-case input[type='number'], .config-case select {
   background: var(--shelf-bg);
   color: var(--btn-fg);
   border: 1px solid var(--btn-border);
@@ -2203,3 +2203,95 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
 }
 @media (max-width: 600px) { .code-ref:not(.compact) .codes td.ca-cell::before { content: 'Call attn first: '; } }
 .code-ref.compact .codes td:nth-child(2) { white-space: nowrap; }
+
+/* v0.3.38 Stock tab: library, fleet, rakes and the rake visualiser */
+.sk-page { display: flex; flex-direction: column; gap: 14px; }
+.sk-case { max-width: 1400px; }
+.sk-body h3.shelf-label { margin: 4px 0 0; }
+.sk-rake-picks { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.sk-pick { background: var(--shelf-bg); }
+.sk-pick[aria-pressed='true'] { background: var(--btn-fg); color: var(--btn-bg); border-color: var(--btn-fg); }
+.sk-rake-picks .add-tile { flex-direction: row; padding: 6px 14px; min-height: 44px; gap: 8px; }
+.sk-rake-picks .add-tile .mi-label { font-size: 1rem; }
+.sk-rake-head { padding: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.sk-vis { overflow-x: auto; max-width: 100%; background: var(--enamel); border: 6px solid var(--wood-edge); border-radius: 6px; padding: 6px 0; }
+.sk-vis svg { display: block; }
+.sk-derived { margin: 0; color: var(--btn-fg); }
+.sk-derived dt { color: var(--btn-muted); font-weight: 600; }
+.sk-notes { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.sk-notes li { color: #e9cf8a; }
+.sk-notes li.sk-safety { color: var(--btn-danger-fg); font-weight: 700; }
+.sk-rows, .sk-fleet, .sk-lib { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; }
+.sk-row { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr) auto; gap: 8px; align-items: center; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 4px 6px; }
+.sk-pos { font-family: var(--font-mono); color: var(--btn-muted); text-align: right; }
+.sk-name { min-width: 0; overflow-wrap: anywhere; }
+.sk-btns { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.sk-btns .btn { min-width: 38px; min-height: 38px; background: var(--btn-bg); }
+.sk-btns .btn.armed { background: var(--signal-red); color: #fff; }
+.sk-adders { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.sk-adders .row, .sk-body > .field .row { flex-wrap: nowrap; gap: 6px; }
+.sk-adders select, .sk-body > .field select { flex: 1 1 auto; min-width: 0; }
+.sk-body textarea { background: var(--shelf-bg); color: var(--btn-fg); border: 1px solid var(--btn-border); border-radius: var(--radius); padding: 8px 10px; font: inherit; resize: vertical; }
+.sk-tools { flex-wrap: wrap; gap: 8px; }
+.sk-tools input[type='search'] { flex: 1 1 220px; min-width: 0; }
+.sk-tools select { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.sk-fleet-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 25rem); gap: 6px; align-items: start; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 6px; container-type: inline-size; }
+.sk-fleet-row input[type='text'], .sk-fleet-row select { background: var(--btn-bg); min-height: 38px; font-size: 0.92rem; }
+.sk-fleet-end { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; }
+.sk-fleet-end select { max-width: 12rem; }
+.sk-fleet-end .btn { min-width: 38px; min-height: 38px; background: var(--btn-bg); }
+.sk-fleet-end .btn.armed { background: var(--signal-red); color: #fff; }
+.sk-warn { color: #e9cf8a; font-size: 0.8rem; }
+@media (max-width: 720px) {
+  .sk-fleet-row { grid-template-columns: minmax(0, 1fr); }
+  .sk-fleet-end { justify-content: flex-start; }
+}
+.sk-lib-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 6px 8px; }
+.sk-lib-row.sk-hidden { opacity: 0.6; }
+.sk-lib-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.sk-lib-main strong { overflow-wrap: anywhere; }
+.sk-lib-main small { flex: 1 1 100%; margin: 0; }
+.sk-lib-main .pl-kind-tag { padding: 0 8px; }
+.sk-lib-len { color: var(--btn-fg) !important; }
+.sk-src { font-style: italic; }
+.sk-class-form { grid-column: 1 / -1; padding: 8px 0 0; border-top: 1px solid var(--btn-border); grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+.sk-class-form input[type='text'], .sk-class-form select { background: var(--btn-bg); }
+.sk-checks { justify-content: flex-end; }
+.sk-add-type { flex-direction: row; justify-content: flex-start; padding: 10px 14px; gap: 10px; text-align: left; }
+@media (max-width: 560px) {
+  .sk-lib-row { grid-template-columns: minmax(0, 1fr); }
+  .sk-btns { justify-content: flex-start; }
+}
+/* The visualiser: drawn on the enamel board in ink, like the box diagram. */
+.rk-svg { color: var(--enamel-ink); font-family: var(--font-body); }
+.rk-rail { stroke: var(--enamel-ink); stroke-width: 1.5; }
+.rk-body { fill: var(--face); stroke: var(--enamel-ink); stroke-width: 1.4; }
+.rk-approx .rk-body { stroke-dasharray: 5 2.5; }
+.rk-unknown .rk-body { stroke-dasharray: 1.5 2.5; }
+.rk-win, .rk-mark { fill: var(--enamel-ink); }
+.rk-line { fill: none; stroke: var(--enamel-ink); stroke-width: 1; }
+.rk-plank { stroke: var(--enamel-ink); stroke-width: 0.6; opacity: 0.6; }
+.rk-frame { stroke: var(--enamel-ink); stroke-width: 2.4; }
+.rk-buffer { fill: var(--enamel-ink); }
+.rk-wheel { fill: var(--enamel); stroke: var(--enamel-ink); stroke-width: 1.6; }
+.rk-load { fill: var(--enamel-ink); }
+.rk-loaded-hatch { fill: none; stroke: var(--enamel-ink); stroke-width: 7; stroke-dasharray: 1.2 3; opacity: 0.55; }
+.rk-pipe { stroke: var(--enamel-ink); stroke-width: 2.6; }
+.rk-pipe-off { stroke-dasharray: 3 3; stroke-width: 1.6; }
+.rk-gangway { fill: var(--enamel); stroke: var(--enamel-ink); stroke-width: 1.2; }
+.rk-engine .rk-body { fill: var(--enamel-ink); }
+.rk-label { font-size: 9.5px; fill: var(--enamel-ink); }
+.rk-end { font-family: var(--font-plate); font-weight: 700; font-size: 12px; fill: var(--enamel-ink); }
+.rk-q { font-weight: 700; font-size: 16px; fill: var(--enamel-ink); }
+.rk-road { stroke: var(--lever-green); stroke-width: 2; stroke-dasharray: 6 4; }
+.rk-road.rk-road-short { stroke: var(--signal-red); }
+.rk-road-label { font-size: 10px; font-weight: 700; fill: var(--enamel-ink); }
+.rk-scale { stroke: var(--enamel-ink); stroke-width: 1.5; }
+.rk-scale-label { font-size: 10px; fill: var(--enamel-ink); }
+.sk-body .btn.primary.small { white-space: nowrap; }
+@media (max-width: 560px) {
+  .sk-row { grid-template-columns: 2rem minmax(0, 1fr); }
+  .sk-row .sk-btns { grid-column: 2; justify-content: flex-start; }
+}
+.sk-tools input[type='search'] { min-height: 44px; padding: 8px 10px; border-radius: var(--radius); font: inherit; }
+.sk-page .add-tile { min-height: 0; }

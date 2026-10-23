@@ -1,3 +1,4 @@
+import { mintFromConsist } from './stock';
 import { describe, expect, it } from 'vitest';
 import { createDefaultState } from './defaults';
 import { accept, play } from './simHarness';
@@ -94,7 +95,7 @@ describe('station limits and the clearing point', () => {
     t.west.sendBell('2-4');
     t.tick(6000);
     t.west.setInstrument('TOL');
-    t.state.layouts[0].stock = [{ id: 'r1', description: 'wagons', vehicles: [{ kind: 'wagon', count: 4, metres: 6 }], placeId: '', roadId: '', circuitId: 'sgc-twi' }];
+    t.state.layouts[0].stock = [{ id: 'r1', vehicles: mintFromConsist('4 wagons'), placeId: '', roadId: '', circuitId: 'sgc-twi' }];
     t.tick(1000);
     t.west.sendBell('1');
     t.tick();

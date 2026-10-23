@@ -4,6 +4,8 @@ import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
 import { sanitiseTimetables } from './timetables';
 import { sanitiseRailwayData } from './railway';
+import { builtInClasses } from './stockLibrary';
+import { sanitiseRollingStock } from './stockSanitise';
 import type { AppState, BoxDef, ConnectionDef, Layout, Place, PlaceRoad, TrackPlan } from './types';
 
 /** Shapes saved by earlier versions (before places, v0.3.13 and earlier). */
@@ -170,6 +172,13 @@ export function migrate(raw: unknown): AppState {
   sanitiseTimetables(state);
   // Real-railway lengths and speeds (v0.3.27): all optional; unusable values are dropped so the defaults apply.
   sanitiseRailwayData(state);
+  // Rolling stock (v0.3.38, schema 8): the library types, fleet and rakes of each layout.
+  const builtInIds = new Set(builtInClasses().map((c) => c.id));
+  for (const l of state.layouts) {
+    const rs = sanitiseRollingStock(l.rollingStock, builtInIds, new Set(l.places.map((p) => p.id)));
+    if (rs) l.rollingStock = rs;
+    else delete l.rollingStock;
+  }
   return state;
 }
 

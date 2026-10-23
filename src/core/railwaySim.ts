@@ -1,7 +1,7 @@
 import { newId } from './store';
 import { MARKED, type OccupancyBoard } from './occupancy';
 import { arrivalChoices, CARRIAGE_PLACES, ENGINE_PLACES, roadsOfCircuit } from './places';
-import { DEFAULT_DIVERGING_SPEED, facingWords, hasFacing, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoLength, locoMaxSpeed, needsEngineLeading, splitVehicles, trainLength, vehiclesText, workingVehicles } from './railway';
+import { DEFAULT_DIVERGING_SPEED, facingWords, hasFacing, circuitLength, layoutClearingPoint, circuitLineSpeed, consistVehicles, locoLength, locoMaxSpeed, needsEngineLeading, trainLength, vehiclesText, workingVehicles } from './railway';
 import { boxSignals, findPath, leavesScene, lineCircuits, lineEntries, nextSteps, type Dir, type Passing, type SignalDef, type Step } from './routing';
 import { Emitter, type Scheduler } from './scheduler';
 import type { SectionSession } from './session';
@@ -12,7 +12,9 @@ import type { ScoreRuleId } from './score';
 import { boxInterlocking, Frame, type Release } from './interlocking';
 import { postKey, signalsOf, SIGNAL_KINDS } from './signals';
 import type { TrainEventSource } from './trainEvents';
-import type { AppState, Layout, Loco, PlaceKind, PlaceRef, PlanSignal, StockRake, StockVehicles } from './types';
+import type { AppState, Layout, Loco, PlaceKind, PlaceRef, PlanSignal } from './types';
+import type { Vehicle } from './stockTypes';
+import { consistKind, splitVehicleList, stockLibrary, vehicleGroups, vehiclesMetres, mintFromConsist, type StockLibrary } from './stock';
 
 /*
  * THE SIMULATED RAILWAY (signaller play mode, v0.3.28).
@@ -68,7 +70,9 @@ import type { AppState, Layout, Loco, PlaceKind, PlaceRef, PlanSignal, StockRake
  * engine (or engine and brake van) from a road leaves its other vehicles there as a rake of stock
  * (saved on the layout), which keeps the circuit occupied; a loco setting off as a train from a road
  * where a rake stands takes the rake with it. A timetabled shunt can say what it moves with ("2 vans"):
- * it takes those and leaves the rest, so trains can be broken up into several roads.
+ * it takes those and leaves the rest, so trains can be broken up into several roads. Since v0.3.38 (D19)
+ * standing stock is individual vehicles: minted from the generic library types for a text consist, carried
+ * by the train that takes them (Working.vehicles, while they match its consist), discarded off the layout.
  *
  * THE ENGINE'S END OF ITS TRAIN (v0.3.35): the railway remembers which end of its train each loco is at
  * (Working.locoEnd: the end of the circuit it stands on). A train arrives engine first; an engine that
@@ -98,16 +102,34 @@ const COUPLE_MS = 45_000;
 /** Turning an engine on a turntable (simulated ms). */
 const TURN_MS = 90_000;
 
-/** Two lists of vehicles together (counts of the same kind added up). */
-function mergeVehicles(a: StockVehicles[], b: StockVehicles[]): StockVehicles[] {
-  const out = a.map((v) => ({ ...v }));
-  for (const v of b) {
-    const x = out.find((y) => y.kind === v.kind);
-    if (x) x.count += v.count;
-    else out.push({ kind: v.kind, count: v.count, metres: v.metres });
-  }
-  return out;
+/** Do these vehicles still match the consist text (same kinds and counts)? Else the text has changed since. */
+function matchesConsist(vehicles: Vehicle[], consist: string, lib: StockLibrary): boolean {
+  const a = vehicleGroups(vehicles, lib);
+  const b = consistVehicles(consist);
+  return a.length === b.length && a.every((g) => b.some((x) => x.kind === g.kind && x.count === g.count));
 }
+
+/**
+ * The vehicles behind a loco, one by one (v0.3.38, D19): those it carries while they still match its
+ * consist, else minted from the generic library for the consist text. A light engine has none; an
+ * engine and brake van its brake van(s).
+ */
+export function ownVehicles(l: Loco, lib: StockLibrary): Vehicle[] {
+  const w = l.working;
+  if (w.trainTypeId === 'light_engine') return [];
+  const all = consistStock(l, lib);
+  if (w.trainTypeId === 'engine_brake_van') return all.filter((v) => consistKind(lib.cls(v.classId)) === 'brake van');
+  return all;
+}
+
+/** Every vehicle its consist names, whatever its working (a light engine about to leave them, a pilot moving some). */
+function consistStock(l: Loco, lib: StockLibrary): Vehicle[] {
+  const w = l.working;
+  return w.vehicles?.length && matchesConsist(w.vehicles, w.consist ?? '', lib) ? w.vehicles : mintFromConsist(w.consist ?? '');
+}
+
+/** Some vehicles as consist text ("4 coaches + a brake van"). */
+const describe = (vehicles: Vehicle[], lib: StockLibrary) => vehiclesText(vehicleGroups(vehicles, lib));
 
 export interface SimBox {
   boxId: string;
@@ -936,8 +958,9 @@ export class RailwaySim {
   }
 
   /** The vehicles a loco sets off with from a road: its own, and (unless it runs light) any rake standing there. */
-  private departVehicles(layout: Layout, l: Loco, circuitId: string): StockVehicles[] {
-    const own = workingVehicles(l.working);
+  private departVehicles(layout: Layout, l: Loco, circuitId: string): Vehicle[] {
+    const lib = stockLibrary(layout.rollingStock);
+    const own = ownVehicles(l, lib);
     if (l.working.trainTypeId === 'light_engine' || l.working.trainTypeId === 'engine_brake_van') return own;
     const loc = l.location;
     const rake = loc.kind === 'place' ? (layout.stock ?? []).find((r) => r.placeId === loc.placeId && r.roadId === loc.roadId) ?? (layout.stock ?? []).find((r) => r.circuitId === circuitId) : undefined;
@@ -946,12 +969,12 @@ export class RailwaySim {
 
   private departLength(layout: Layout, l: Loco, circuitId: string): number {
     if (l.working.length) return trainLength(l);
-    return locoLength(l) + this.departVehicles(layout, l, circuitId).reduce((m, v) => m + v.count * v.metres, 0);
+    return locoLength(l) + vehiclesMetres(this.departVehicles(layout, l, circuitId), stockLibrary(layout.rollingStock));
   }
 
   /** Must this loco lead its train out (a loco hauled train with vehicles, and we know which end it is at)? */
   private mustLead(layout: Layout, l: Loco, circuitId: string): boolean {
-    return this.locoEndIn(l, circuitId) !== null && needsEngineLeading(l, this.departVehicles(layout, l, circuitId));
+    return this.locoEndIn(l, circuitId) !== null && needsEngineLeading(l, vehicleGroups(this.departVehicles(layout, l, circuitId), stockLibrary(layout.rollingStock)));
   }
 
   /**
@@ -1165,7 +1188,7 @@ export class RailwaySim {
   private uncouple(layout: Layout, locoId: string, circuitId: string): void {
     const l = this.loco(locoId);
     if (!l || l.location.kind !== 'place') return;
-    const vehicles = consistVehicles(l.working.consist ?? '');
+    const vehicles = consistStock(l, stockLibrary(layout.rollingStock));
     if (!vehicles.length) return;
     const loc = l.location;
     this.o.update((s) => {
@@ -1173,11 +1196,10 @@ export class RailwaySim {
       const loco = s.roster.find((x) => x.id === locoId);
       if (!lay || !loco) return;
       const here = (lay.stock ?? []).find((r) => r.circuitId === circuitId);
-      if (here) {
-        here.vehicles = mergeVehicles(here.vehicles, vehicles);
-        here.description = vehiclesText(here.vehicles);
-      } else (lay.stock ??= []).push({ id: newId('rake'), description: vehiclesText(vehicles), vehicles: vehicles.map((v) => ({ kind: v.kind, count: v.count, metres: v.metres })), placeId: loc.placeId, roadId: loc.roadId, circuitId });
+      if (here) here.vehicles.push(...structuredClone(vehicles));
+      else (lay.stock ??= []).push({ id: newId('rake'), vehicles: structuredClone(vehicles), placeId: loc.placeId, roadId: loc.roadId, circuitId });
       loco.working.consist = '';
+      delete loco.working.vehicles;
     });
   }
 
@@ -1189,17 +1211,20 @@ export class RailwaySim {
       if (!lay || !loco) return;
       const rakes = (lay.stock ?? []).filter((r) => r.circuitId === circuitId);
       if (!rakes.length) return;
-      const all = rakes.reduce<StockVehicles[]>((m, r) => mergeVehicles(m, r.vehicles), consistVehicles(loco.working.consist ?? ''));
+      const lib = stockLibrary(lay.rollingStock);
+      const all = [...consistStock(loco, lib), ...rakes.flatMap((r) => r.vehicles)];
       lay.stock = (lay.stock ?? []).filter((r) => r.circuitId !== circuitId);
       if (!lay.stock.length) delete lay.stock;
-      loco.working.consist = vehiclesText(all);
+      loco.working.consist = describe(all, lib);
+      loco.working.vehicles = all;
     });
   }
 
   /** The vehicles a loco has with it now (its consist), as a length behind it. */
   private stockLength(locoId: string): number {
     const l = this.loco(locoId);
-    return l ? locoLength(l) + consistVehicles(l.working.consist ?? '').reduce((m, v) => m + v.count * v.metres, 0) : 0;
+    const lib = stockLibrary(this.layout?.rollingStock);
+    return l ? locoLength(l) + vehiclesMetres(consistStock(l, lib), lib) : 0;
   }
 
   private startRunRound(layout: Layout, boxId: string, l: Loco, c: string, end: 0 | 1, ref: PlaceRef | null, onDone?: (ok: boolean) => void): void {
@@ -1897,7 +1922,10 @@ export class RailwaySim {
     if (d?.kind === 'line')
       this.o.update((s) => {
         const loco = s.roster.find((x) => x.id === t.locoId);
-        if (loco) delete loco.working.facing;
+        if (!loco) return;
+        delete loco.working.facing;
+        // Vehicles minted for the train are discarded when it leaves the layout (D1a).
+        delete loco.working.vehicles;
       });
     if (d?.kind === 'line') this.reportFar(d.boxId, d.connId, t.locoId);
   }
@@ -1964,37 +1992,43 @@ export class RailwaySim {
   private takeOrLeaveStock(layout: Layout, l: Loco, circuitId: string, movesWith?: string): void {
     const loc = l.location;
     if (loc.kind !== 'place') return;
+    const lib = stockLibrary(layout.rollingStock);
     if (movesWith?.trim()) {
       // A shunt that says what it moves with (v0.3.35): take those from its own train and the stock here, leave the rest.
       const rakes = (layout.stock ?? []).filter((r) => r.circuitId === circuitId || (r.placeId === loc.placeId && r.roadId === loc.roadId));
-      const pool = rakes.reduce<StockVehicles[]>((m, r) => mergeVehicles(m, r.vehicles), consistVehicles(l.working.consist ?? ''));
-      const { taken, left } = splitVehicles(pool, movesWith);
+      const pool = [...consistStock(l, lib), ...rakes.flatMap((r) => r.vehicles)];
+      const { taken, left } = splitVehicleList(pool, movesWith, lib);
       this.o.update((s) => {
         const lay = s.layouts.find((x) => x.id === layout.id);
         const loco = s.roster.find((x) => x.id === l.id);
         if (!lay || !loco) return;
         const gone = new Set(rakes.map((r) => r.id));
         lay.stock = (lay.stock ?? []).filter((r) => !gone.has(r.id));
-        if (left.length) lay.stock.push({ id: newId('rake'), description: vehiclesText(left), vehicles: left.map((v) => ({ kind: v.kind, count: v.count, metres: v.metres })), placeId: loc.placeId, roadId: loc.roadId, circuitId });
+        if (left.length) lay.stock.push({ id: newId('rake'), vehicles: structuredClone(left), placeId: loc.placeId, roadId: loc.roadId, circuitId });
         if (!lay.stock.length) delete lay.stock;
-        loco.working.consist = vehiclesText(taken);
+        loco.working.consist = describe(taken, lib);
+        if (taken.length) loco.working.vehicles = structuredClone(taken);
+        else delete loco.working.vehicles;
       });
       return;
     }
-    const keep = workingVehicles(l.working);
-    const all = consistVehicles(l.working.consist ?? '');
     const light = l.working.trainTypeId === 'light_engine' || l.working.trainTypeId === 'engine_brake_van';
     if (light) {
-      const keptKinds = new Set(keep.map((v) => v.kind));
-      const left = all.filter((v) => !keptKinds.has(v.kind));
+      // Every vehicle behind it (whatever the working says), less the brake vans an engine and brake van keeps.
+      const all = consistStock(l, lib);
+      const keepVans = l.working.trainTypeId === 'engine_brake_van';
+      const keep = keepVans ? all.filter((v) => consistKind(lib.cls(v.classId)) === 'brake van') : [];
+      const left = all.filter((v) => !keep.includes(v));
       if (!left.length) return;
-      const rake: StockRake = { id: newId('rake'), description: vehiclesText(left), vehicles: left.map((v) => ({ kind: v.kind, count: v.count, metres: v.metres })), placeId: loc.placeId, roadId: loc.roadId, circuitId };
+      const keepText = keep.length ? describe(keep, lib) : keepVans ? vehiclesText(workingVehicles(l.working)) : '';
       this.o.update((s) => {
         const lay = s.layouts.find((x) => x.id === layout.id);
         const loco = s.roster.find((x) => x.id === l.id);
         if (!lay || !loco) return;
-        (lay.stock ??= []).push(rake);
-        loco.working.consist = keep.length ? vehiclesText(keep) : '';
+        (lay.stock ??= []).push({ id: newId('rake'), vehicles: structuredClone(left), placeId: loc.placeId, roadId: loc.roadId, circuitId });
+        loco.working.consist = keepText;
+        if (keep.length) loco.working.vehicles = structuredClone(keep);
+        else delete loco.working.vehicles;
       });
       return;
     }
@@ -2006,7 +2040,8 @@ export class RailwaySim {
       if (!lay || !loco) return;
       lay.stock = (lay.stock ?? []).filter((r) => r.id !== rake.id);
       if (!lay.stock.length) delete lay.stock;
-      loco.working.consist = rake.description;
+      loco.working.consist = describe(rake.vehicles, lib);
+      loco.working.vehicles = structuredClone(rake.vehicles);
     });
   }
 
