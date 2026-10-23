@@ -559,8 +559,9 @@ export class RailwaySim {
     t.head = this.partsTotal(t);
     t.leads = end === null || end === toward;
     // Which way it faces (as far as is known): smokebox first if its smokebox points the way it sets off.
+    // Turned "as needed" (a turntable, or off the layout): not settled until its next run on a line.
     const f = l.working.facing;
-    t.smoke = f && f.circuitId === circuitId ? f.end === toward : null;
+    t.smoke = !l.working.facingFree && f && f.circuitId === circuitId ? f.end === toward : null;
     return t;
   }
 
@@ -579,7 +580,7 @@ export class RailwaySim {
    * A train has stopped: remember which end of its train the engine is at. Leading into an empty road it
    * is at the end it ran towards; pushing its train in, or running on to stock to couple up, at the end it came in by.
    */
-  private recordEnd(layout: Layout, t: SimTrain): void {
+  private recordEnd(layout: Layout, t: SimTrain, turned = false): void {
     const last = [...t.parts].reverse().find((p) => p.circuitId && p.start < t.head);
     if (!last?.circuitId) return;
     const end = (t.leads && !this.stockOn(layout, last.circuitId) ? last.toward : 1 - last.toward) as 0 | 1;
@@ -591,7 +592,27 @@ export class RailwaySim {
       if (!loco) return;
       loco.working.locoEnd = { circuitId, end };
       if (facing !== null) loco.working.facing = { circuitId, end: facing };
-      delete loco.working.offFacing;
+      if (turned) loco.working.facingFree = true;
+    });
+  }
+
+  /**
+   * Settle the facing of an engine turned "as needed" for the run it is setting off on: smokebox first on
+   * the last leg (the one out on to the line), so on the first leg smokebox first if it sets back an even
+   * number of times on the way. Remembered where it stands.
+   */
+  private settleFacing(t: SimTrain, path: PathStep[], from: string): void {
+    const l = this.loco(t.locoId);
+    if (!l?.working.facingFree || !hasFacing(l)) return;
+    const flips = path.filter((p) => p.reverse).length % 2 === 1;
+    t.smoke = !flips;
+    const toward = path[0]?.toward ?? 0;
+    const end = (t.smoke ? toward : 1 - toward) as 0 | 1;
+    this.o.update((s) => {
+      const loco = s.roster.find((x) => x.id === t.locoId);
+      if (!loco) return;
+      delete loco.working.facingFree;
+      loco.working.facing = { circuitId: from, end };
     });
   }
 
@@ -670,12 +691,19 @@ export class RailwaySim {
         }
         const t = this.blank(l, { kind: 'incoming', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
         t.fromLine = line;
-        // Which way it faces coming on (v0.3.36): back from a box with no turntable that it went off to, the
-        // other way round from how it went; otherwise (a box that turns its engines, or trains made up off the
-        // layout) smokebox first.
-        const off = l.working.offFacing;
-        const turns = !!this.boxDef(b.boxId)?.connections.find((c) => c.id === s.connection.id)?.turntable;
-        t.smoke = hasFacing(l) ? (off && off.connectionId === s.connection.id && !turns ? !off.smokeboxFirst : true) : null;
+        // Which way it faces coming on (v0.3.37): off the layout (a fiddle yard, the box beyond) engines and
+        // trains are turned as an operator would, ready for their next journey, whatever the line (single or
+        // double, out and back or round). A train comes on engine and smokebox first; a light engine faces
+        // whichever way the train it goes to work wants (settled when that train sets off).
+        const light = !workingVehicles(l.working).length;
+        t.smoke = !hasFacing(l) || light ? null : true;
+        this.o.update((st) => {
+          const loco = st.roster.find((x) => x.id === l.id);
+          if (!loco) return;
+          delete loco.working.facing;
+          if (light && hasFacing(l)) loco.working.facingFree = true;
+          else delete loco.working.facingFree;
+        });
         if (!path) {
           t.status = 'Cannot find a way from the far end of the line to the home signal on the track plan.';
           this.trains.push(t);
@@ -870,6 +898,9 @@ export class RailwaySim {
         t.dest = { kind: 'line', boxId: b.boxId, connId: s.connection.id };
         t.locked = true;
         t.readyAt = this.now + DRIVER_MS / this.scale();
+        // An engine turned "as needed" faces the way this train wants: smokebox first out on to the line
+        // (counting the times it sets back on the way, it faces this way where it stands now).
+        this.settleFacing(t, path, from);
         const fn = this.facingNote(t);
         t.status = `Section signal off: departing for ${s.connection.neighbourName}${fn ? ` (${fn})` : ''}.`;
         this.outgoingStatus.delete(key);
@@ -1827,13 +1858,15 @@ export class RailwaySim {
           return;
         }
         if (this.now < t.turnAt) return;
-        if (t.smoke !== null) t.smoke = !t.smoke;
+        // Turned to face whichever way its next train needs (settled when that train sets off on a line):
+        // it may well run back to its train tender first, to leave with it smokebox first.
+        t.smoke = null;
         t.turnAt = Infinity;
       }
       const done = t.purpose.onDone;
       this.trains = this.trains.filter((x) => x !== t);
       this.forgetTrain(t);
-      this.recordEnd(layout, t);
+      this.recordEnd(layout, t, t.turnAt === Infinity);
       done(true);
       return;
     }
@@ -1860,17 +1893,12 @@ export class RailwaySim {
     this.trains = this.trains.filter((x) => x !== t);
     this.forgetTrain(t);
     const d = t.dest;
-    // How it went off (smokebox first or not), to know how it comes back.
-    if (d?.kind === 'line') {
-      const connectionId = d.connId;
-      const smokeboxFirst = t.smoke ?? true;
+    // Off the layout: how it faces there is up to the operators (it is turned as needed for its next journey).
+    if (d?.kind === 'line')
       this.o.update((s) => {
         const loco = s.roster.find((x) => x.id === t.locoId);
-        if (!loco) return;
-        delete loco.working.facing;
-        loco.working.offFacing = { connectionId, smokeboxFirst };
+        if (loco) delete loco.working.facing;
       });
-    }
     if (d?.kind === 'line') this.reportFar(d.boxId, d.connId, t.locoId);
   }
 

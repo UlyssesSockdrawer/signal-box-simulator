@@ -70,8 +70,12 @@ export interface Working {
    * Only a turntable (or a triangle) turns it. Absent, or for another circuit = not known.
    */
   facing?: { circuitId: string; end: 0 | 1 };
-  /** How it faced when it last ran off the layout over a line (to know how it comes back). */
-  offFacing?: { connectionId: string; smokeboxFirst: boolean };
+  /**
+   * Turned "as needed" (v0.3.37): it has been on a turntable, or come on to the layout as a light engine
+   * (operators off the layout turn engines as they would), and is to face whichever way its next train
+   * wants: the railway settles it when it next sets off on a line, so that it leads smokebox first.
+   */
+  facingFree?: boolean;
 }
 
 /*
@@ -318,9 +322,9 @@ export interface ConnectionDef {
   /** Length of the block section in metres; absent = the default (2 miles). Its line's track circuits share it. */
   sectionLength?: number;
   /**
-   * The far (simulated) box works a turntable (and engine shed) off the layout (v0.3.36): an engine sent
-   * to it comes back turned (smokebox first). Timetables use it to turn engines when the layout has none.
-   * Without it, an engine that went off over this line comes back the other way round.
+   * The far (simulated) box works a turntable (and engine shed) off the layout (v0.3.36): timetables send
+   * engines there light to be turned when the layout has no turntable of its own. (Off the layout every
+   * engine and train is turned as an operator would, ready for its next journey, v0.3.37.)
    */
   turntable?: boolean;
 }

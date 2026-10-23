@@ -388,8 +388,8 @@ export function sanitiseRailwayData(state: AppState): void {
     // Which way it faces (v0.3.36), and how it went off the layout.
     const f = l.working?.facing;
     if (f !== undefined && !(f && typeof f.circuitId === 'string' && f.circuitId && (f.end === 0 || f.end === 1))) delete l.working.facing;
-    const o = l.working?.offFacing;
-    if (o !== undefined && !(o && typeof o.connectionId === 'string' && typeof o.smokeboxFirst === 'boolean')) delete l.working.offFacing;
+    if (l.working && 'offFacing' in l.working) delete (l.working as { offFacing?: unknown }).offFacing;
+    if (l.working?.facingFree !== undefined && l.working.facingFree !== true) delete l.working.facingFree;
   }
 }
 

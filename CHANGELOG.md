@@ -2,6 +2,16 @@
 
 Short notes on what each version brought. Newest first.
 
+## 0.3.37
+
+* Off the layout (fiddle yards, the boxes beyond), engines and trains are always turned as an operator
+  would, ready for their next journey, on single and double lines alike: a train comes back on
+  smokebox first; a light engine faces whichever way the train it goes to work needs.
+* A turntable turns an engine to suit its next train rather than just the other way round: it may run
+  back to its coaches tender first so as to leave with them smokebox first.
+* The box configurator's turntable option now only marks a box that timetables can send engines to
+  for turning.
+
 ## 0.3.36
 
 * New kinds of place: carriage sidings, carriage shed, turntable, coaling stage, water column or tank,

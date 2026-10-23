@@ -286,7 +286,7 @@ export function boxConfigScreen(ctx: Ctx, boxId?: string): Screen {
             h('input', { id: `bc_tt_${c.id}`, type: 'checkbox', checked: !!c.turntable, on: { change: (e: Event) => updConn(c.id, (cc) => ((e.target as HTMLInputElement).checked ? (cc.turntable = true) : delete cc.turntable)) } }),
             h('span', null, `${c.neighbourName} works a turntable (and engine shed) off the layout`),
           ),
-          h('small', { class: 'help' }, c.turntable ? `Engines sent to ${c.neighbourName} come back turned, smokebox first. Timetables send engines there to be turned when the layout has no turntable of its own.` : `Without one, an engine that goes to ${c.neighbourName} and back comes back facing the other way.`),
+          h('small', { class: 'help' }, `${c.turntable ? `Timetables send engines light to ${c.neighbourName} to be turned when the layout has no turntable of its own. ` : ''}Off the layout, engines and trains are always turned as an operator would, ready for their next journey: a train comes back on smokebox first, a light engine facing whichever way the train it goes to work needs.`),
         ),
       ),
       h(

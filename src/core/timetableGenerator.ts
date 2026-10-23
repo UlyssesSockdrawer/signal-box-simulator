@@ -782,7 +782,7 @@ export class TimetableGenerator {
     let t = at;
     let firstMove = true;
     for (const p of stops) {
-      const why = p.kind === 'turntable' ? 'Light engine to the turntable: turned to face the other way.' : p.kind === 'coaling' ? 'Light engine to the coaling stage.' : p.kind === 'water' ? 'Light engine to the water column for water.' : p.kind === 'fuel' ? 'Light engine to the fuelling point.' : `Light engine to ${p.name}.`;
+      const why = p.kind === 'turntable' ? 'Light engine to the turntable: turned to face the way its train leaves (it may run back on to it tender first, to leave smokebox first).' : p.kind === 'coaling' ? 'Light engine to the coaling stage.' : p.kind === 'water' ? 'Light engine to the water column for water.' : p.kind === 'fuel' ? 'Light engine to the fuelling point.' : `Light engine to ${p.name}.`;
       const m = this.move(draft, u, 'shunt', 'light_engine', p.id, t, t + this.serviceMin(p) + 3, firstMove ? `${first} ${why}` : why);
       if (!m) return null;
       if (firstMove) hold.to = INF;
