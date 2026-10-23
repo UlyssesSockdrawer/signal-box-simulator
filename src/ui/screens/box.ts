@@ -167,6 +167,9 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
           : ttg
             ? { text: ttg.text, hint: '' }
             : ui.guidance();
+    // The railway running an engine round its train, or the station pilot at work (play mode): said under the step.
+    const jobs = runtime.sim?.jobsText(box.id) ?? [];
+    if (jobs.length && !g.hint) g.hint = jobs.join(' ');
     nextStep.hidden = false;
     replace(
       nextStep,
@@ -384,7 +387,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   if (runtime.sim)
     ctx.onLeave(
       runtime.sim.events.on('change', () => {
-        const t = permissionGuidance();
+        const t = permissionGuidance() + (runtime.sim?.jobsText(box.id).join(' ') ?? '');
         if (t === lastPermText) return;
         lastPermText = t;
         renderNextStep();

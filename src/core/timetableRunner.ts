@@ -54,7 +54,13 @@ export interface RunnerBox {
   /** The box's source of train events: the simulated fiddle yard operator reports arrivals through it. */
   trains: TrainEventSource;
   /** Signaller play mode: the simulated railway, which runs shunt moves through the track plan by itself. */
-  railway?: { shunt(boxId: string, locoId: string, to: PlaceRef, onDone: (ok: boolean, at: PlaceRef) => void): string | null };
+  railway?: {
+    shunt(boxId: string, locoId: string, to: PlaceRef, onDone: (ok: boolean, at: PlaceRef) => void, opts?: { vehicles?: string }): string | null;
+    /** A timetabled run round where the train stands (v0.3.35). */
+    runRound?(boxId: string, locoId: string, onDone: (ok: boolean) => void): string | null;
+    /** Get a departure's engine to the right end of its train early, while it has nothing else to do (v0.3.35). */
+    prepareDeparture?(boxId: string, locoId: string, connId: string): string;
+  };
 }
 
 export interface RunnerOptions {
@@ -592,6 +598,7 @@ export class TimetableRunner {
         if (it.state !== 'waiting') continue;
         if (this.canRelease(it)) this.activate(it);
       }
+      this.prepareDepartures();
     }
     this.logProgress();
     if (!this.endless && !this.finished && this.items.length && this.items.every((it) => it.state === 'done' || it.state === 'skipped')) {
@@ -665,6 +672,34 @@ export class TimetableRunner {
     return it.entry.dep <= now + 1e-9;
   }
 
+  /**
+   * Signaller play mode (v0.3.35): a departure not yet due, whose train has nothing else to do before it,
+   * gets its engine to the right end of its train now (running round, or the station pilot) if it must,
+   * so the time it takes comes out of the wait rather than making the train late.
+   */
+  private prepareDepartures(): void {
+    for (const it of this.items) {
+      if (it.state !== 'waiting' || it.entry.kind !== 'run' || this.blockedByTrain(it)) continue;
+      const locoId = it.locoId ?? it.train?.locoId ?? (it.train ? this.anyLoco.get(it.train.id) : undefined);
+      const loco = locoId ? this.state.roster.find((l) => l.id === locoId) : undefined;
+      const from = it.entry.from;
+      if (!loco || loco.location.kind !== 'place' || loco.location.placeId !== from.placeId) continue;
+      const layout = this.layout;
+      if (!layout) continue;
+      const legs = routeBetween(this.state, layout, from.placeId, it.entry.to.placeId);
+      const i = legs?.findIndex((l) => l.kind === 'line' && l.dir === 'out') ?? -1;
+      const out = i >= 0 ? (legs![i] as Extract<RouteLeg, { kind: 'line' }>) : null;
+      if (!out || legs!.slice(0, i).some((l) => l.kind === 'line')) continue;
+      const rb = this.o.box(out.boxId);
+      if (rb?.mode !== 'play' || !rb.railway?.prepareDeparture) continue;
+      const text = rb.railway.prepareDeparture(out.boxId, loco.id, out.connectionId);
+      if (text && text !== it.status) {
+        it.status = `Getting ready: ${text}`;
+        this.note(`${this.shortName(it)}: ${text}`);
+      }
+    }
+  }
+
   private activate(it: RunItem): void {
     if (!this.resolveLoco(it)) {
       it.status = `Waiting for a loco: none with the duty for ${this.typeName(it.train?.anyWorking ?? it.entry.trainTypeId).toLowerCase()} is free${it.entry.from.placeId ? ` at ${refText(this.state, it.entry.from)}` : ''}.`;
@@ -736,6 +771,8 @@ export class TimetableRunner {
 
   private applyWorking(it: RunItem): void {
     if (!it.locoId || it.entry.kind === 'note') return;
+    // Running round: the train stays as it is (its engine just changes ends).
+    if (it.entry.kind === 'shunt' && it.entry.runRound) return;
     const w: Partial<Working> = { trainTypeId: it.entry.trainTypeId, headcode: it.entry.headcode };
     if (it.train?.consist && it.entry.trainTypeId !== 'light_engine') w.consist = it.train.consist;
     this.o.setWorking(it.locoId, w);
@@ -836,21 +873,36 @@ export class TimetableRunner {
         const rb = this.o.box(s.boxId);
         if (!rb) return this.startAuto(it, { kind: 'auto', dest: s.dest, ms: this.o.autoMoveMs ?? AUTO_MS }, s);
         const same = it.entry.from.placeId === it.entry.to.placeId && it.entry.from.roadId === it.entry.to.roadId;
+        const runRound = !!it.entry.runRound && (same || !it.entry.to.placeId);
+        const withWhat = it.entry.vehicles?.trim() ? ` with ${it.entry.vehicles.trim()}` : '';
         // Signaller play mode: the simulated railway shunts it (falls back to a card if it cannot).
         if (rb.mode === 'play' && rb.railway && it.locoId && s.dest.kind === 'place') {
           const dest = s.dest;
-          const err = rb.railway.shunt(s.boxId, it.locoId, { placeId: dest.placeId, roadId: dest.roadId }, (ok, at) => {
-            if (!ok || it.state !== 'active' || it.segs[it.seg] !== s) return;
-            s.dest = { kind: 'place', placeId: at.placeId, roadId: at.roadId };
-            this.completeSeg(it);
-          });
+          const err = runRound && rb.railway.runRound
+            ? rb.railway.runRound(s.boxId, it.locoId, (ok) => {
+                if (!ok || it.state !== 'active' || it.segs[it.seg] !== s) return;
+                this.completeSeg(it);
+              })
+            : rb.railway.shunt(s.boxId, it.locoId, { placeId: dest.placeId, roadId: dest.roadId }, (ok, at) => {
+                if (!ok || it.state !== 'active' || it.segs[it.seg] !== s) return;
+                s.dest = { kind: 'place', placeId: at.placeId, roadId: at.roadId };
+                this.completeSeg(it);
+              }, { vehicles: it.entry.vehicles });
           if (!err) {
-            it.status = `Shunting ${who} to ${posText(st, s.dest)} (simulated).`;
+            it.status = runRound ? `${who} runs round its train in ${refText(st, it.entry.from)} (simulated).` : `Shunting ${who}${withWhat} to ${posText(st, s.dest)} (simulated).`;
             break;
           }
           it.status = `${err} `;
         }
-        it.card = { kind: 'shunt', text: same ? `${who}: now ${this.typeName(it.entry.trainTypeId).toLowerCase()} where it stands (${refText(st, it.entry.from)}).${it.entry.notes ? ` ${it.entry.notes}` : ''}` : `Shunt ${who} (${this.typeName(it.entry.trainTypeId).toLowerCase()}) from ${refText(st, it.entry.from)} to ${posText(st, s.dest)}.${it.entry.notes ? ` ${it.entry.notes}` : ''}` };
+        const notes = it.entry.notes ? ` ${it.entry.notes}` : '';
+        it.card = {
+          kind: 'shunt',
+          text: runRound
+            ? `Run round: ${who} runs round its train in ${refText(st, it.entry.from)} (uncouple, run round it, couple up at the other end).${notes}`
+            : same
+              ? `${who}: now ${this.typeName(it.entry.trainTypeId).toLowerCase()} where it stands (${refText(st, it.entry.from)})${withWhat ? `, keeping ${it.entry.vehicles!.trim()} and leaving the rest` : ''}.${notes}`
+              : `Shunt ${who} (${this.typeName(it.entry.trainTypeId).toLowerCase()})${withWhat} from ${refText(st, it.entry.from)} to ${posText(st, s.dest)}${withWhat ? ', leaving the rest' : ''}.${notes}`,
+        };
         it.status = `${it.status && rb.mode === 'play' ? it.status : ''}Shunt: press Done once it is there.`;
         break;
       }

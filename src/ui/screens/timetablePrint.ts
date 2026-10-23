@@ -418,7 +418,7 @@ export function cardsView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement 
     const after = k >= 0 && k < mine.length - 1 ? mine[k + 1] : undefined;
     const code = e.kind === 'run' ? set.trainCodes[e.trainTypeId]?.code : undefined;
     const row = (label: string, value: string | HTMLElement | null) => (value ? h('div', { class: 'tc-row' }, h('dt', null, label), h('dd', null, value)) : null);
-    const kindStamp = e.kind === 'run' ? 'Run' : e.kind === 'shunt' ? 'Shunt' : e.kind === 'enter' ? 'On' : e.kind === 'leave' ? 'Off' : 'Note';
+    const kindStamp = e.kind === 'run' ? 'Run' : e.kind === 'shunt' ? (e.runRound ? 'Run round' : 'Shunt') : e.kind === 'enter' ? 'On' : e.kind === 'leave' ? 'Off' : 'Note';
     return h(
       'article',
       { class: `tt-card kind-${e.kind}${s.issues.some((i) => i.level === 'error') ? ' has-error' : ''}`, 'aria-label': `Card ${noOf(e)}` },
@@ -439,7 +439,9 @@ export function cardsView(ctx: Ctx, layout: Layout, tt: Timetable): HTMLElement 
         e.kind !== 'note' ? row(e.kind === 'run' ? 'Runs as' : 'Working', `${trainTypeName(st, e.trainTypeId)}${code ? ` · bell ${code}` : ''}`) : null,
         e.kind !== 'note' && lamps ? row('Lamps', lampRow(e.trainTypeId)) : null,
         e.kind === 'run' || e.kind === 'shunt' || e.kind === 'leave' ? row('From', refText(st, e.from)) : null,
-        e.kind === 'run' || e.kind === 'enter' || (e.kind === 'shunt' && e.to.placeId) ? row(e.kind === 'enter' ? 'Comes on at' : 'To', refText(st, e.to)) : null,
+        e.kind === 'run' || e.kind === 'enter' || (e.kind === 'shunt' && e.to.placeId && !e.runRound) ? row(e.kind === 'enter' ? 'Comes on at' : 'To', refText(st, e.to)) : null,
+        e.kind === 'shunt' && e.runRound ? row('Run round', 'Uncouple, run round the train and couple up at the other end') : null,
+        e.kind === 'shunt' && e.vehicles ? row('Moves with', `${e.vehicles} (leave the rest)`) : null,
         e.calls.length ? row('Calls', e.calls.map((c) => `${refText(st, c)} (${c.stop ? 'stops' : 'passes'})`).join('; ')) : null,
         timed && e.arr !== null ? row('Arrives', fmtTime(e.arr, tt)) : null,
         e.kind !== 'note' && e.notes ? row('Notes', e.notes) : null,

@@ -257,18 +257,52 @@ export function setConnectionPlace(state: AppState, box: BoxDef, conn: Connectio
 }
 
 /** Tie a road to a track circuit ('' to untie). A circuit is one road at most: it is untied from any other road on the layout. */
+/**
+ * Tie a road of a place to a track circuit ('' unties it). One track circuit can be a road of SEVERAL
+ * places (v0.3.35): e.g. a platform that is also the parcels or milk dock of the goods depot, or a bay
+ * platform that is also a carriage siding. Within one place it is one road only: tying another road of
+ * the same place to it unties the first.
+ */
 export function tieRoad(layout: Layout, placeId: string, roadId: string, circuitId: string): void {
-  if (circuitId) for (const p of layout.places) for (const r of p.roads) if (r.circuitId === circuitId) delete r.circuitId;
-  const road = layout.places.find((p) => p.id === placeId)?.roads.find((r) => r.id === roadId);
-  if (!road) return;
+  const place = layout.places.find((p) => p.id === placeId);
+  const road = place?.roads.find((r) => r.id === roadId);
+  if (!place || !road) return;
+  if (circuitId) for (const r of place.roads) if (r !== road && r.circuitId === circuitId) delete r.circuitId;
   if (circuitId) road.circuitId = circuitId;
   else delete road.circuitId;
 }
 
-/** The place road a track circuit is tied to, if any. */
+/** The first place road a track circuit is tied to, if any (see roadsOfCircuit: there may be several). */
 export function roadOfCircuit(layout: Layout, circuitId: string): { place: Place; road: PlaceRoad } | null {
-  for (const place of layout.places) for (const road of place.roads) if (road.circuitId === circuitId) return { place, road };
-  return null;
+  return roadsOfCircuit(layout, circuitId)[0] ?? null;
+}
+
+/** Every place road a track circuit is tied to (one per place at most), in the order of the places. */
+export function roadsOfCircuit(layout: Layout, circuitId: string): Array<{ place: Place; road: PlaceRoad }> {
+  const out: Array<{ place: Place; road: PlaceRoad }> = [];
+  if (!circuitId) return out;
+  for (const place of layout.places) for (const road of place.roads) if (road.circuitId === circuitId) out.push({ place, road });
+  return out;
+}
+
+/** Roads of OTHER places on the same track circuit as this road (it shares the track with them). */
+export function sharedRoads(layout: Layout, placeId: string, roadId: string): Array<{ place: Place; road: PlaceRoad }> {
+  const c = layout.places.find((p) => p.id === placeId)?.roads.find((r) => r.id === roadId)?.circuitId;
+  return c ? roadsOfCircuit(layout, c).filter((x) => x.place.id !== placeId) : [];
+}
+
+/** Locos standing on the same track as a road from one of the other places that share it (they occupy it too). */
+export function sharedOccupants(state: AppState, layout: Layout, placeId: string, roadId: string): Array<{ loco: Loco; place: Place; road: PlaceRoad }> {
+  const out: Array<{ loco: Loco; place: Place; road: PlaceRoad }> = [];
+  for (const x of sharedRoads(layout, placeId, roadId))
+    for (const loco of placeOccupants(state, x.place.id, x.road.id)) out.push({ loco, place: x.place, road: x.road });
+  return out;
+}
+
+/** The key two place roads share when they are the same track (their circuit), else the road's own. */
+export function roadTrackKey(layout: Layout | undefined, ref: { placeId: string; roadId: string }): string {
+  const c = ref.roadId ? layout?.places.find((p) => p.id === ref.placeId)?.roads.find((r) => r.id === ref.roadId)?.circuitId : undefined;
+  return c ? `c:${c}` : `${ref.placeId}|${ref.roadId}`;
 }
 
 /**

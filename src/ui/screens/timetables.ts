@@ -682,7 +682,8 @@ function moveTitle(st: AppState, tt: Timetable, e: TimetableEntry): string {
     case 'leave':
       return `${who}leaves the layout from ${refShort(st, e.from)}`;
     case 'shunt':
-      return `${who}${trainTypeName(st, e.trainTypeId)} ${refShort(st, e.from)}${e.to.placeId && (e.to.placeId !== e.from.placeId || e.to.roadId !== e.from.roadId) ? ` → ${refShort(st, e.to)}` : ' (stays)'}`;
+      if (e.runRound) return `${who}runs round its train in ${refShort(st, e.from)}`;
+      return `${who}${trainTypeName(st, e.trainTypeId)}${e.vehicles ? ` with ${e.vehicles}` : ''} ${refShort(st, e.from)}${e.to.placeId && (e.to.placeId !== e.from.placeId || e.to.roadId !== e.from.roadId) ? ` → ${refShort(st, e.to)}` : ' (stays)'}`;
     default:
       return `${who}${trainTypeName(st, e.trainTypeId)} ${refShort(st, e.from)} → ${refShort(st, e.to)}`;
   }
@@ -811,6 +812,30 @@ function entryForm(ctx: Ctx, layout: Layout, tt: Timetable, e: TimetableEntry, s
   if (e.kind === 'run' || e.kind === 'enter' || e.kind === 'shunt')
     where.push(refSelect(id('to'), e.kind === 'enter' ? 'Comes on at' : 'To', layout, e.to, (r) => edit((x) => (x.to = r)), e.kind === 'shunt' ? 'The same place and road for a change of working where it stands.' : e.kind === 'enter' ? 'Usually a fiddle yard road.' : undefined));
   const route = (e.kind === 'run' || e.kind === 'shunt') && e.from.placeId && e.to.placeId ? h('p', { class: 'help tt-route' }, h('strong', null, 'Route: '), routeText(st, step.route)) : null;
+  // Shunts (v0.3.35): run round where it stands, and what it moves with (to break a train up, or for a pilot to draw stock off).
+  const stays = e.from.placeId === e.to.placeId && e.from.roadId === e.to.roadId;
+  if (e.kind === 'shunt' && stays)
+    where.push(
+      h(
+        'div',
+        { class: 'field tt-with' },
+        h('span', { class: 'field-label' }, 'Running round'),
+        h(
+          'label',
+          { class: 'check', for: id('rr') },
+          h('input', { id: id('rr'), type: 'checkbox', checked: !!e.runRound, on: { change: (ev: Event) => edit((x) => ((ev.target as HTMLInputElement).checked ? (x.runRound = true) : delete x.runRound)) } }),
+          h('span', null, 'The engine runs round its train here'),
+        ),
+        h('small', { class: 'help' }, e.runRound ? 'It uncouples, runs round its train by a loop or release crossover and couples up at the other end, ready to work it back. In signaller play mode the railway does it (or the station pilot, where the engine is trapped).' : 'For a terminating train whose engine will work it back.'),
+      ),
+    );
+  if (e.kind === 'shunt' && !e.runRound)
+    where.push(
+      checkedInput(id('veh'), 'Moves with', e.vehicles ?? '', 60, () => null, (v) => edit((x) => (v.trim() ? (x.vehicles = v.trim()) : delete x.vehicles)), {
+        placeholder: 'As its working says',
+        help: 'Optional, e.g. "2 vans" or "4 coaches": it takes those from its train and the stock on the road it starts from, and leaves the rest there. Shunt moves can break a train up into several roads, or a pilot draw stock off to release an engine.',
+      }),
+    );
 
   const calls = e.kind === 'run' ? callsSection(layout, tt, e, edit, id) : null;
   const notes = h('div', { class: 'field' }, h('label', { for: id('notes') }, e.kind === 'note' ? 'Note' : 'Notes for the operators'), h('textarea', { id: id('notes'), rows: 2, placeholder: e.kind === 'note' ? 'e.g. Pilot attaches a van to the stopper.' : 'e.g. Uncouple and leave the coaches in the platform.', on: { change: (ev: Event) => edit((x) => (x.notes = (ev.target as HTMLTextAreaElement).value.trim())) } }, e.notes));

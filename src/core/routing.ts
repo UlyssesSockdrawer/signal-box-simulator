@@ -88,23 +88,37 @@ export function findPath(
   state: AppState,
   layout: Layout,
   start: Dir,
-  goal: (d: Dir) => boolean,
+  goal: (d: Dir, flipped: boolean) => boolean,
   opts: {
     blocked?: (circuitId: string) => boolean;
     anyWay?: boolean;
     junctionFree?: (junctionId: string) => boolean;
     /** Circuits a train may reverse in (none unless given), having run into it towards `toward`. */
     reverseIn?: (circuitId: string, toward: 0 | 1) => boolean;
+    /**
+     * Count reversals (v0.3.35): the goal is told whether the train has reversed an odd number of times,
+     * i.e. whether the end of the train that led at the start is now at the back. Used to make a loco
+     * hauled train go out on to the line with its engine leading.
+     */
+    parity?: boolean;
+    /** The goal is not met where the train starts (it must go somewhere first: running round). */
+    notStart?: boolean;
+    /** Steps that may be taken (e.g. into the road with the train's coaches only from the far end). */
+    enter?: (d: Dir) => boolean;
   } = {},
 ): Step[] | null {
-  const key = (d: Dir) => `${d.circuitId}|${d.toward}`;
+  const flips = new Map<string, boolean>();
+  const key = (d: Dir, f = false) => `${d.circuitId}|${d.toward}${opts.parity && f ? '|r' : ''}`;
   const c0 = findCircuit(layout.trackPlan, start.circuitId);
   if (!c0) return null;
   const first: Step = { ...start, metres: circuitLength(state, layout, c0).metres, via: null };
-  const dist = new Map<string, number>([[key(start), 0]]);
+  // With notStart, the start is a node of its own, so the search can come back to where it began (running round).
+  const k0 = opts.notStart ? `${key(start)}|start` : key(start);
+  const dist = new Map<string, number>([[k0, 0]]);
   const prev = new Map<string, { from: string; step: Step }>();
-  const steps = new Map<string, Step>([[key(start), first]]);
-  const open: string[] = [key(start)];
+  const steps = new Map<string, Step>([[k0, first]]);
+  flips.set(k0, false);
+  const open: string[] = [k0];
   const done = new Set<string>();
   while (open.length) {
     open.sort((a, b) => dist.get(a)! - dist.get(b)!);
@@ -112,7 +126,8 @@ export function findPath(
     if (done.has(k)) continue;
     done.add(k);
     const s = steps.get(k)!;
-    if (goal(s)) {
+    const flipped = flips.get(k) ?? false;
+    if ((!opts.notStart || prev.has(k)) && goal(s, flipped)) {
       const path: Step[] = [s];
       let cur = k;
       while (prev.has(cur)) {
@@ -129,8 +144,10 @@ export function findPath(
     }
     for (const n of around) {
       if (opts.blocked?.(n.circuitId)) continue;
+      if (opts.enter && !opts.enter(n)) continue;
       if (n.via && opts.junctionFree && !opts.junctionFree(n.via.junctionId)) continue;
-      const nk = key(n);
+      const nf = n.reverse ? !flipped : flipped;
+      const nk = key(n, nf);
       // A little extra for every junction passed, so the straighter of two equal routes is taken.
       const j = n.via ? findJunction(layout.trackPlan, n.via.junctionId) : undefined;
       const diverging = !!j && j.kind !== 'joint' && straightOn(j, n.via!.from) !== n.via!.to;
@@ -139,6 +156,7 @@ export function findPath(
         dist.set(nk, nd);
         prev.set(nk, { from: k, step: n });
         steps.set(nk, n);
+        flips.set(nk, nf);
         open.push(nk);
       }
     }

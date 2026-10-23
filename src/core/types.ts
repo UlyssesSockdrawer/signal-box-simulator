@@ -57,6 +57,13 @@ export interface Working {
   headcode: string; // optional reporting number / lamp code
   /** Length of the whole train in metres, when stated; absent = worked out from the loco and its consist (core/railway.ts). */
   length?: number;
+  /**
+   * Where the loco is in its train (signaller play mode, v0.3.35): the end of the track circuit it stands
+   * on (its road's circuit) that it is at. A train runs on to a line with its engine leading, so one
+   * standing with its engine at the wrong end runs round (or is released by the station pilot) first.
+   * Absent, or for another circuit = not known: it is taken to be at the end it leaves by.
+   */
+  locoEnd?: { circuitId: string; end: 0 | 1 };
 }
 
 /*
@@ -173,6 +180,18 @@ export interface TimetableEntry {
   /** Places it calls at or passes on the way (runs only). */
   calls: TimetableCall[];
   notes: string;
+  /**
+   * Shunts (v0.3.35): the engine runs round its train where it stands (uncouples, runs round it by a
+   * loop or release crossover and couples up at the other end), ready to work it back.
+   */
+  runRound?: boolean;
+  /**
+   * Shunts (v0.3.35): what the engine moves with, e.g. "2 vans" or "4 coaches": it takes those from its
+   * own train and any stock standing on the road it starts from, and leaves the rest there. Blank = as
+   * its working says (a light engine leaves everything; any other working takes all the stock there).
+   * Lets shunt orders break a train up into several roads (and a pilot draw stock off to free an engine).
+   */
+  vehicles?: string;
 }
 
 export interface TimetableTrain {

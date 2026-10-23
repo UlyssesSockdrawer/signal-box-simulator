@@ -1,5 +1,5 @@
 import { canWork, migrateJob, newJob, runsLight } from './duties';
-import { findPlace, findRoad } from './places';
+import { findPlace, findRoad, roadTrackKey } from './places';
 import type { AppState, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableEntryKind, TimetableTiming, TimetableTrain } from './types';
 
 /*
@@ -372,6 +372,8 @@ export function sanitiseTimetables(state: AppState): void {
         e.to ??= { placeId: '', roadId: '' };
         e.calls = Array.isArray(e.calls) ? e.calls.filter((c) => c && typeof c.placeId === 'string') : [];
         e.notes ??= '';
+        if (e.runRound !== undefined && (e.kind !== 'shunt' || e.runRound !== true)) delete e.runRound;
+        if (e.vehicles !== undefined && (e.kind !== 'shunt' || typeof e.vehicles !== 'string' || !e.vehicles.trim())) delete e.vehicles;
       }
       // Moves of trains that no longer exist go (a note stays).
       tt.entries = tt.entries.filter((e) => e.kind === 'note' || trains.has(e.trainId));
@@ -650,8 +652,11 @@ export function walkTimetable(state: AppState, layout: Layout, tt: Timetable): T
       if (train && ends.to) {
         const key = unitKey(train);
         // A road someone else is still standing on (a warning: fitting trains in is the signaller's job).
-        if (ends.to.kind === 'place' && ends.to.roadId) {
-          const taken = [...pos.entries()].find(([k, p]) => k !== key && p.kind === 'place' && p.placeId === (ends.to as TtPos & { kind: 'place' }).placeId && p.roadId === (ends.to as TtPos & { kind: 'place' }).roadId);
+        // Roads of different places on one track circuit are the same track. Shunts are left alone:
+        // running on to stock or another engine to couple up (a pilot, a change of engines) is normal.
+        if (ends.to.kind === 'place' && ends.to.roadId && e.kind !== 'shunt') {
+          const want = roadTrackKey(layout, ends.to as TtPos & { kind: 'place' });
+          const taken = [...pos.entries()].find(([k, p]) => k !== key && p.kind === 'place' && !!p.roadId && roadTrackKey(layout, p) === want);
           if (taken) {
             const other = units.find((u) => u.key === taken[0]);
             const name = other ? trainsName(tt, other) : 'another train';

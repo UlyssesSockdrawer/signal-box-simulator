@@ -18,8 +18,10 @@
 // timetable never sends two trains at each other. At the end, locos go home (or to a fiddle yard).
 // The result walks through the editor's checks with no problems.
 
-import { dutyOf, jobCategory as dutyCategory, isRailcar, pickWorking, runsLight, type MixCategory } from './duties';
+import { canWork, dutyOf, jobCategory as dutyCategory, isRailcar, pickWorking, runsLight, type MixCategory } from './duties';
+import { engineRelease } from './runRound';
 import { HeadcodeAllocator, destinationOf, eraOf } from './headcodes';
+import { roadTrackKey } from './places';
 import { routeBetween, type RouteLeg, type TtPos } from './timetables';
 import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTrain } from './types';
 
@@ -102,12 +104,15 @@ export function mulberry32(seed: number): () => number {
 const LINE_MIN = 6; // minutes along a line between boxes
 const LOCAL_MIN = 3; // a move within a box's area
 const STOP_MIN = 1; // standing at a station it calls at
+const PILOT_RELEASE_MIN = 22; // the station pilot releasing a trapped engine (draw off, out, back, on)
 const INF = Number.POSITIVE_INFINITY;
 
 interface Interval {
   from: number;
   to: number;
   owner: string;
+  /** Others who may use the road meanwhile (an engine coming on to a train's coaches: an engine change). */
+  shared?: string[];
 }
 
 interface Unit {
@@ -133,6 +138,8 @@ interface Move {
   arr: number;
   calls: TimetableCall[];
   notes: string;
+  /** A run round where it stands (v0.3.35). */
+  runRound?: boolean;
 }
 
 interface Draft {
@@ -148,6 +155,12 @@ interface Draft {
   notes: string;
   /** The working of the chain (for the train's "any loco" kind and naming). */
   working: string;
+  /** The consist to give its train (else the loco's own when it is working that way). */
+  consist?: string;
+  /** Other engines' chains planned with this one, committed after it (an engine change). */
+  extra?: Array<{ u: Unit; working: string; draft: Draft }>;
+  /** Engines kept busy by this chain until a time (the station pilot releasing its engine). */
+  busy?: Array<{ u: Unit; until: number }>;
 }
 
 /** A line or road is booked until `until`: try the chain again from then. */
@@ -158,7 +171,6 @@ class Conflict {
 /** The way is blocked with no end in sight (every road through a station is taken for good). */
 class Blocked {}
 
-const roadKey = (r: PlaceRef) => `${r.placeId}|${r.roadId}`;
 
 /** Short train names by working, e.g. "Express 2". */
 const TRAIN_NAMES: Record<string, string> = {
@@ -254,12 +266,12 @@ export class TimetableGenerator {
       // Give a loco standing "somewhere in" a place a road of its own.
       if (!pos.roadId) {
         const p = this.placeMap.get(pos.placeId)!;
-        const free = p.roads.find((r) => this.roadFree(roadKey({ placeId: p.id, roadId: r.id }), -INF, INF, ''));
+        const free = p.roads.find((r) => this.roadFree(this.rk({ placeId: p.id, roadId: r.id }), -INF, INF, ''));
         if (free) pos = { ...pos, roadId: free.id };
         u.pos = pos;
       }
       if (pos.roadId) {
-        const key = roadKey(pos);
+        const key = this.rk(pos);
         if (!this.roadFree(key, -INF, INF, '')) {
           this.notes.push(`${locoLabel(loco)} stands on a road another loco taking part is already on (${this.placeName(pos.placeId)}), so it is left out.`);
           return;
@@ -270,6 +282,11 @@ export class TimetableGenerator {
       }
     }
     this.units.push(u);
+  }
+
+  /** The key a road is booked under: its track circuit when it is tied to one (roads of several places can share a circuit), else the road. */
+  private rk(r: PlaceRef): string {
+    return roadTrackKey(this.layout, r);
   }
 
   private placeName(id: string): string {
@@ -287,14 +304,14 @@ export class TimetableGenerator {
   }
 
   private clash(list: Interval[] | undefined, from: number, to: number, owner: string): Interval | null {
-    for (const iv of list ?? []) if (iv.owner !== owner && iv.from < to && from < iv.to) return iv;
+    for (const iv of list ?? []) if (iv.owner !== owner && !iv.shared?.includes(owner) && iv.from < to && from < iv.to) return iv;
     return null;
   }
 
   private roadFree(key: string, from: number, to: number, owner: string, draft?: Draft): boolean {
     if (key.endsWith('|')) return true; // a place with no roads: no limit
     if (this.clash(this.roads.get(key), from, to, owner)) return false;
-    return !draft?.roads.some((r) => r.key === key && r.iv.owner !== owner && r.iv.from < to && from < r.iv.to);
+    return !draft?.roads.some((r) => r.key === key && r.iv.owner !== owner && !r.iv.shared?.includes(owner) && r.iv.from < to && from < r.iv.to);
   }
 
   /** The key a line is booked under: a single line both ways, a double line each way. */
@@ -322,7 +339,7 @@ export class TimetableGenerator {
     // Prefer the road asked for, else shuffle a little so trains do not all use road 1.
     roads.sort((a, b) => (a.id === prefer ? -1 : b.id === prefer ? 1 : 0));
     if (!prefer && this.rng() < 0.5) roads.reverse();
-    for (const r of roads) if (this.roadFree(roadKey({ placeId, roadId: r.id }), from, to, owner, draft)) return r.id;
+    for (const r of roads) if (this.roadFree(this.rk({ placeId, roadId: r.id }), from, to, owner, draft)) return r.id;
     return null;
   }
 
@@ -355,19 +372,19 @@ export class TimetableGenerator {
           const a = t - LINE_MIN;
           const b = t + STOP_MIN + (stopping ? STOP_MIN : 0);
           if (station.roads.length) {
-            const road = station.roads.find((r) => this.roadFree(roadKey({ placeId: station.id, roadId: r.id }), a, b, owner, draft));
+            const road = station.roads.find((r) => this.roadFree(this.rk({ placeId: station.id, roadId: r.id }), a, b, owner, draft));
             if (!road) {
               // Every road is taken: try again once the first of them is free (or give up if none will be).
               let until = INF;
               for (const r of station.roads) {
-                const k = roadKey({ placeId: station.id, roadId: r.id });
+                const k = this.rk({ placeId: station.id, roadId: r.id });
                 const ends = [...(this.roads.get(k) ?? []), ...draft.roads.filter((x) => x.key === k).map((x) => x.iv)].filter((iv) => iv.owner !== owner && iv.from < b && a < iv.to).map((iv) => iv.to);
                 until = Math.min(until, Math.max(...ends));
               }
               if (!Number.isFinite(until)) throw new Blocked();
               throw new Conflict(until - (t - dep) + LINE_MIN);
             }
-            draft.roads.push({ key: roadKey({ placeId: station.id, roadId: road.id }), iv: { from: a, to: b, owner } });
+            draft.roads.push({ key: this.rk({ placeId: station.id, roadId: road.id }), iv: { from: a, to: b, owner } });
           }
           calls.push({ placeId: station.id, roadId: '', stop: stopping, arr: stopping ? t : null, dep: t + (stopping ? STOP_MIN : 0) });
           if (stopping) t += STOP_MIN;
@@ -404,11 +421,11 @@ export class TimetableGenerator {
     // Leaving the road it stood on (unless the coaches stay: the caller keeps that hold).
     if (draft.endHold) draft.endHold.to = Math.min(draft.endHold.to, dep);
     const hold: Interval = { from: dep - 0.5, to: stayUntil, owner: u.loco.id };
-    if (!sameRoad) draft.roads.push({ key: roadKey(to), iv: hold });
+    if (!sameRoad) draft.roads.push({ key: this.rk(to), iv: hold });
     const m: Move = { kind, trainTypeId, from: { placeId: from.placeId, roadId: from.roadId }, to, dep, arr, calls, notes };
     draft.moves.push(m);
     draft.end = { kind: 'place', placeId: toPlace, roadId };
-    draft.endKey = roadKey(to);
+    draft.endKey = this.rk(to);
     draft.endHold = sameRoad ? draft.endHold : hold;
     if (sameRoad && draft.endHold) draft.endHold.to = stayUntil;
     draft.freeAt = arr;
@@ -445,7 +462,7 @@ export class TimetableGenerator {
 
   /** Remember a draft as it is, to go back to if a try does not work out. */
   private snap(d: Draft) {
-    return { m: d.moves.length, r: d.roads.length, l: d.lines.length, end: d.end, endKey: d.endKey, endHold: d.endHold, holdTo: d.endHold?.to ?? 0, freeAt: d.freeAt, notes: d.notes };
+    return { m: d.moves.length, r: d.roads.length, l: d.lines.length, end: d.end, endKey: d.endKey, endHold: d.endHold, holdTo: d.endHold?.to ?? 0, freeAt: d.freeAt, notes: d.notes, extra: d.extra?.length ?? 0, busy: d.busy?.length ?? 0, consist: d.consist };
   }
 
   private restore(d: Draft, s: ReturnType<TimetableGenerator['snap']>): void {
@@ -458,6 +475,9 @@ export class TimetableGenerator {
     if (s.endHold) s.endHold.to = s.holdTo;
     d.freeAt = s.freeAt;
     d.notes = s.notes;
+    if (d.extra) d.extra.length = s.extra;
+    if (d.busy) d.busy.length = s.busy;
+    d.consist = s.consist;
   }
 
   private newDraft(u: Unit, working: string): Draft {
@@ -482,10 +502,10 @@ export class TimetableGenerator {
       if (roadId === null) return null;
       const to = { placeId: yard, roadId };
       const hold = { from: t - 0.5, to: INF, owner: u.loco.id };
-      draft.roads.push({ key: roadKey(to), iv: hold });
+      draft.roads.push({ key: this.rk(to), iv: hold });
       draft.moves.push({ kind: 'enter', trainTypeId: j.duty === 'pilot' ? runsLight(u.loco) : working, from: { placeId: '', roadId: '' }, to, dep: t, arr: t + 2, calls: [], notes: 'Comes on to the layout from storage.' });
       draft.end = { kind: 'place', ...to };
-      draft.endKey = roadKey(to);
+      draft.endKey = this.rk(to);
       draft.endHold = hold;
       t += 4;
     }
@@ -575,9 +595,14 @@ export class TimetableGenerator {
       if (!m1) return false;
       const platform: PlaceRef = { ...m1.to };
       const coaches = draft.endHold!; // stays until the train leaves
+      // Where the engine stands on the plan, and whether it can get out or run round (v0.3.35).
+      const inb = this.inboundLine(o, d);
+      const rel = inb ? engineRelease(this.state, this.layout, inb.boxId, inb.connectionId, platform) : { known: false, canLeave: true, canRunRound: true };
       // Engine release: to a siding, goods yard or depot the same box works, or run round.
       const boxes = this.boxesOf(d);
-      const release = this.layout.places.filter((p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'));
+      const release = rel.canLeave
+        ? this.layout.places.filter((p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'))
+        : [];
       release.sort((a, b) => rank(a) - rank(b));
       let leaveAt = m1.arr + 12 + Math.floor(this.rng() * 6);
       let released = false;
@@ -590,6 +615,16 @@ export class TimetableGenerator {
         }
         // The coaches keep the platform while the engine is away.
         coaches.to = INF;
+        // An engine change (v0.3.35): sometimes this engine goes on shed and another comes off to take the train out.
+        if (r.kind === 'depot' && this.rng() < 0.4) {
+          const ch = this.engineChange(u, draft, d, platform, coaches, type, back, leaveAt, out.arr);
+          if (ch) {
+            out.notes = `Uncouple and leave the coaches in ${this.roadName(platform)}. Light engine to ${r.name}, where it stays: ${ch.name} takes the train out.`;
+            draft.endHold!.to = INF;
+            draft.notes = `Terminates at ${dName}. The engine goes on shed at ${r.name}; ${ch.name} comes off shed and works the coaches back to ${this.placeName(back)}.`;
+            return true;
+          }
+        }
         const backOn = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 10, INF, `Back on to the coaches in ${this.roadName(platform)}, ready to work them to ${this.placeName(back)}.`, platform.roadId);
         if (!backOn || backOn.to.roadId !== platform.roadId) {
           this.restore(draft, save);
@@ -600,12 +635,35 @@ export class TimetableGenerator {
         draft.notes = `Terminates at ${dName}. The engine is released to ${r.name} and works the coaches back to ${this.placeName(back)}.`;
         break;
       }
-      if (!released) {
+      if (!released && rel.canRunRound) {
         const rr = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 3, INF, `Run round the coaches in ${this.roadName(platform)}.`);
         if (!rr) return false;
+        rr.runRound = true;
         rr.arr = rr.dep + 6;
         leaveAt = Math.max(leaveAt, rr.arr + 3);
         draft.notes = `Terminates at ${dName}, runs round and works back to ${this.placeName(back)}.`;
+      } else if (!released) {
+        // Trapped at the buffer stops (no release, no way round): the station pilot releases it, ECS-style,
+        // with time built in before the train leaves; or another engine takes the train out.
+        const pilot = this.pilotFor(u, d, m1.arr + 3);
+        if (pilot) {
+          const rr = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 3, INF, `Trapped at the buffer stops: the station pilot (${locoLabel(pilot.loco)}) draws the coaches off ${this.roadName(platform)} to release it, puts them back, and the engine backs on at the outer end.`);
+          if (!rr) return false;
+          rr.runRound = true;
+          rr.arr = rr.dep + PILOT_RELEASE_MIN;
+          leaveAt = Math.max(leaveAt, rr.arr + 3);
+          (draft.busy ??= []).push({ u: pilot, until: rr.arr + 2 });
+          draft.notes = `Terminates at ${dName}, where the station pilot releases the engine; it works the coaches back to ${this.placeName(back)}.`;
+        } else {
+          const ch = this.engineChange(u, draft, d, platform, coaches, type, back, leaveAt, m1.arr + 3);
+          if (!ch) return false;
+          // The new engine takes the train out first, which releases this one: it follows later, light.
+          const at = ch.leaves + 4;
+          const away = this.move(draft, u, 'shunt', 'light_engine', this.releaseFor(d, boxes) ?? d, at, INF, `Released once ${ch.name} has taken the train out: light engine away.`);
+          if (!away) return false;
+          draft.notes = `Terminates at ${dName}. ${ch.name} takes the train out from the outer end, which releases this engine.`;
+          return true;
+        }
       }
       const m4 = this.move(draft, u, 'run', type, back, leaveAt, INF);
       if (!m4) return false;
@@ -627,6 +685,79 @@ export class TimetableGenerator {
     if (!m2) return false;
     draft.notes = goods ? `To ${dName}, shunts the yard, and back to ${this.placeName(back)}${type === 'mineral' ? ' with the empties' : ''}.` : `To ${dName} and back to ${this.placeName(back)}.`;
     return true;
+  }
+
+  /** The line a train from `o` comes in on to `d`'s box (the last line in), if any. */
+  private inboundLine(o: string, d: string): { boxId: string; connectionId: string } | null {
+    const legs = routeBetween(this.state, this.layout, o, d) ?? [];
+    for (let i = legs.length - 1; i >= 0; i--) {
+      const l = legs[i];
+      if (l.kind === 'line' && l.dir === 'in') return { boxId: l.boxId, connectionId: l.connectionId };
+    }
+    return null;
+  }
+
+  /** A place an engine can go to out of the way, near `d` (a depot, sidings or goods yard the same box works). */
+  private releaseFor(d: string, boxes: string[]): string | null {
+    const ps = this.layout.places.filter((p) => p.id !== d && p.kind !== 'fiddleYard' && p.kind !== 'station' && p.workedBy.some((w) => w.kind === 'box' && boxes.includes(w.boxId)) && (routeBetween(this.state, this.layout, d, p.id) ?? [{ kind: 'line' }]).every((l) => l.kind === 'local'));
+    ps.sort((a, b) => rank(a) - rank(b));
+    return ps[0]?.id ?? null;
+  }
+
+  /** A station pilot free from `at` for the place: another loco with the pilot duty there (or anywhere), standing near it. */
+  private pilotFor(u: Unit, d: string, at: number): Unit | null {
+    for (const p of this.units) {
+      if (p === u || p.freeAt > at || p.pos.kind !== 'place') continue;
+      if (!p.jobs.some((j) => j.duty === 'pilot' && (!j.placeIds.length || j.placeIds.includes(d)))) continue;
+      const legs = routeBetween(this.state, this.layout, p.pos.placeId, d);
+      if (legs && legs.every((l) => l.kind === 'local')) return p;
+    }
+    return null;
+  }
+
+  /**
+   * An engine change (v0.3.35): another engine that can work the train, free and standing near the
+   * station, comes on to the coaches and takes them out to `back` (at `leaveAt` or as soon as it can).
+   * Its moves are planned as a chain of its own, committed with this one. Null when none can.
+   */
+  private engineChange(u: Unit, draft: Draft, d: string, platform: PlaceRef, coaches: Interval, type: string, back: string, leaveAt: number, from: number): { name: string; leaves: number } | null {
+    for (const b of this.units) {
+      if (b === u || b.pos.kind !== 'place' || b.freeAt > leaveAt - 6 || isRailcar(b.loco) || !canWork(this.state, b.loco, type)) continue;
+      const legs = routeBetween(this.state, this.layout, b.pos.placeId, d);
+      if (!legs || !legs.every((l) => l.kind === 'local')) continue;
+      const dB = this.newDraft(b, type);
+      // Plan it with this chain's bookings in view (taken out again before it is committed).
+      const nr = draft.roads.length;
+      const nl = draft.lines.length;
+      dB.roads.push(...draft.roads);
+      dB.lines.push(...draft.lines);
+      const shared = coaches.shared;
+      coaches.shared = [...(shared ?? []), b.loco.id];
+      try {
+        const on = this.move(dB, b, 'shunt', 'light_engine', d, Math.max(b.freeAt, from + 2), INF, `Engine change: comes on to the coaches in ${this.roadName(platform)} to take them to ${this.placeName(back)}.`, platform.roadId);
+        if (!on || on.to.roadId !== platform.roadId) {
+          coaches.shared = shared;
+          continue;
+        }
+        const run = this.move(dB, b, 'run', type, back, Math.max(leaveAt, on.arr + 4), INF);
+        if (!run) {
+          coaches.shared = shared;
+          continue;
+        }
+        coaches.to = Math.min(coaches.to, run.dep);
+        dB.roads.splice(0, nr);
+        dB.lines.splice(0, nl);
+        dB.notes = `Engine change at ${this.placeName(d)}: comes on to the coaches ${u.loco.number ? `of ${locoLabel(u.loco)} ` : ''}and works them to ${this.placeName(back)}.`;
+        dB.name = 'Engine change';
+        dB.consist = u.loco.working.trainTypeId === type ? u.loco.working.consist : '';
+        (draft.extra ??= []).push({ u: b, working: type, draft: dB });
+        return { name: locoLabel(b.loco), leaves: run.dep };
+      } catch (e) {
+        coaches.shared = shared;
+        if (!(e instanceof Conflict)) throw e;
+      }
+    }
+    return null;
   }
 
   private roadName(r: PlaceRef): string {
@@ -697,6 +828,13 @@ export class TimetableGenerator {
 
   private commit(u: Unit, pilot: boolean, working: string, d: Draft): void {
     if (!d.moves.length) return;
+    this.commitOne(u, pilot, working, d);
+    for (const b of d.busy ?? []) b.u.freeAt = Math.max(b.u.freeAt, b.until);
+    for (const x of d.extra ?? []) this.commitOne(x.u, false, x.working, x.draft);
+  }
+
+  private commitOne(u: Unit, pilot: boolean, working: string, d: Draft): void {
+    if (!d.moves.length) return;
     const first = d.moves[0];
     for (const r of d.roads) this.addIv(this.roads, r.key, r.iv);
     for (const l of d.lines) this.addIv(this.lines, l.key, l.iv);
@@ -714,7 +852,7 @@ export class TimetableGenerator {
       name: `${base} ${n}`,
       locoId: u.loco.id,
       anyWorking: working,
-      consist: u.loco.working.trainTypeId === working ? u.loco.working.consist : '',
+      consist: d.consist ?? (u.loco.working.trainTypeId === working ? u.loco.working.consist : ''),
       notes: d.notes,
     };
     this.trains.push(train);
@@ -767,7 +905,7 @@ export class TimetableGenerator {
     u.pos = pos;
     if (pos.kind === 'place' && pos.roadId) {
       u.hold = { from: at, to: INF, owner: u.loco.id };
-      u.holdKey = roadKey(pos);
+      u.holdKey = this.rk(pos);
       this.addIv(this.roads, u.holdKey, u.hold);
     }
   }
@@ -818,6 +956,7 @@ export class TimetableGenerator {
       calls: m.calls.map((c) => ({ ...c, arr: c.arr === null ? null : Math.round(c.arr), dep: c.dep === null ? null : Math.round(c.dep) })),
       notes: m.notes,
     };
+    if (m.runRound) e.runRound = true;
     e.headcode = alloc.next(e.trainTypeId, destinationOf(e), e.kind);
     return e;
   }

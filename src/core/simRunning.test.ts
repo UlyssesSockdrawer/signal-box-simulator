@@ -225,19 +225,22 @@ describe('simulated running (signaller play mode)', () => {
     t.tick(500);
     expect(t.occupied()).toEqual(['T5', 'T9', 'T10']);
     expect(t.board.occupants('sgc-t4')[0]).toMatch(/^rake:/);
-    // Back on to the coaches (into a road with only stock in it), then away east with them as a train.
+    // Back on to the coaches (into a road with only stock in it): out of the goods yard, setting back in
+    // the west end, it runs on to them from the west, so it couples up at their west end.
     done = false;
     expect(t.sim.shunt('sigsim-central', 'lms5025', { placeId: 'sgc-station', roadId: 'sgc-p1' }, () => (done = true))).toBeNull();
     expect(t.until(() => done)).toBe(true);
+    expect(bf.working.locoEnd).toEqual({ circuitId: 'sgc-t4', end: 0 });
     bf.location = { kind: 'place', placeId: 'sgc-station', roadId: 'sgc-p1' };
     bf.working.trainTypeId = 'ordinary_passenger';
-    t.east.setOutgoing('lms5025', 'ordinary_passenger');
-    t.east.sendBell('1');
+    // Away west with them as a train, engine leading.
+    t.west.setOutgoing('lms5025', 'ordinary_passenger');
+    t.west.sendBell('1');
     t.tick();
-    t.east.sendBell('3-1');
+    t.west.sendBell('3-1');
     expect(t.until(() => !(s.layouts[0].stock ?? []).length, 20_000)).toBe(true);
     expect(bf.working.consist).toBe('4 coaches');
-    expect(t.until(() => t.occupied().includes('T12'))).toBe(true);
+    expect(t.until(() => t.occupied().includes('T2'))).toBe(true);
   });
 
   it('a timetabled shunt runs through the plan by itself in play mode (no card to press)', () => {

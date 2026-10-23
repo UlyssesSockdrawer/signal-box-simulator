@@ -1602,6 +1602,11 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 .bc-places .help { margin: 0; flex: 1 1 260px; }
 .tp-placeroad { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--btn-border); padding-top: 10px; }
 .tp-placeroad select { width: 100%; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.tp-ties { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tp-tie { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--shelf-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 4px 4px 4px 10px; }
+.tp-tie .btn { min-width: 34px; }
+.tp-tie-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 /* Trains in places */
 .place-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .road-title { font-weight: 700; flex: 0 0 auto; margin-right: 8px; }
@@ -1649,6 +1654,7 @@ body.wide-page .tp-page, body.wide-page .config-page { max-width: min(100%, 2200
 .pl-road-trains.occ { color: #9be3b4; font-weight: 600; }
 .pl-road .pl-road-x { min-width: 38px; min-height: 38px; padding: 0 8px; background: var(--btn-bg); }
 .pl-road .pl-road-x.armed { background: var(--signal-red); color: #fff; }
+.pl-road .pl-road-shared { grid-column: 1 / -1; color: #e9cf8a; font-size: 0.8rem; margin: 0; }
 @container (max-width: 520px) {
   .pl-road { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; }
   .pl-road > .field:nth-child(3) { grid-column: 1 / 3; grid-row: 2; }
