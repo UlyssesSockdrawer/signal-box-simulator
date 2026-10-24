@@ -12,6 +12,8 @@ import { disposeAllRunners } from '../timetableRuntime';
 import { disposeAllRailways } from '../railwayRuntime';
 import { MPS_PER_KMH, MPS_PER_MPH, UNIT_SYSTEMS } from '../../core/railway';
 import { resetTrackPlanUi } from './trackPlan';
+import { stockParams } from '../../core/stockLibrary';
+import { layoutStock, stockKindFor } from '../../core/trainStock';
 
 export function settingsScreen(ctx: Ctx): Screen {
   const st = ctx.store.state;
@@ -290,6 +292,53 @@ export function settingsScreen(ctx: Ctx): Screen {
       },
     });
   };
+  // ---------------------------------------------------------------- train limits (v0.3.41, D13, D26)
+  const activeLayout = st.layouts.find((l) => l.id === s.activeLayoutId) ?? st.layouts[0];
+  const { company, era } = layoutStock(activeLayout);
+  const defaults = stockParams(company, [era]).trainLimits;
+  const limitInput = (typeId: string, k: 'maxVehicles' | 'maxTons', label: string) => {
+    const tt = st.trainTypes.find((x) => x.id === typeId)!;
+    const def = defaults[typeId]?.[k];
+    return h('input', {
+      id: `set_lim_${k}_${typeId}`,
+      type: 'number',
+      min: 1,
+      max: k === 'maxVehicles' ? 500 : 10000,
+      step: 1,
+      inputmode: 'numeric',
+      value: tt[k] ?? '',
+      placeholder: def ? String(def) : 'none',
+      'aria-label': `${tt.name}: ${label}`,
+      on: {
+        change: (e: Event) => {
+          const raw = (e.target as HTMLInputElement).value.trim();
+          const v = Math.round(Number(raw));
+          ctx.store.update((a) => {
+            const x = a.trainTypes.find((y) => y.id === typeId);
+            if (!x) return;
+            if (raw && Number.isFinite(v) && v >= 1) x[k] = Math.min(k === 'maxVehicles' ? 500 : 10000, v);
+            else delete x[k];
+          });
+        },
+      },
+    });
+  };
+  const limited = st.trainTypes.filter((t) => stockKindFor(t.id) !== 'none');
+  const anySet = limited.some((t) => t.maxVehicles !== undefined || t.maxTons !== undefined);
+  const trainLimits = h(
+    'section',
+    { class: 'config-case set-case set-limits' },
+    h('h2', { class: 'plate' }, 'Train limits'),
+    h('p', { class: 'muted small' }, `The most vehicles (and tons) a train of each type may have. Generated rakes keep within them. Leave a box empty for the default, shown faintly: ${company === 'generic' ? 'the generic figures (the LMS 1939 table)' : `${company}’s figures`} for ${activeLayout ? `${activeLayout.name}’s` : 'the layout’s'} company and era. Weights are only counted where vehicles have one.`),
+    h(
+      'table',
+      { class: 'set-limit-table' },
+      h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Train type'), h('th', { scope: 'col' }, 'Vehicles'), h('th', { scope: 'col' }, 'Tons'))),
+      h('tbody', null, ...limited.map((t) => h('tr', null, h('th', { scope: 'row' }, t.name), h('td', null, limitInput(t.id, 'maxVehicles', 'most vehicles')), h('td', null, limitInput(t.id, 'maxTons', 'most tons'))))),
+    ),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', id: 'set_lim_reset', disabled: !anySet, on: { click: () => ctx.store.update((a) => a.trainTypes.forEach((x) => (delete x.maxVehicles, delete x.maxTons))) } }, 'Use the defaults for all')),
+  );
+
   const resetPanel = h(
     'section',
     { class: 'config-case set-case' },
@@ -300,6 +349,6 @@ export function settingsScreen(ctx: Ctx): Screen {
 
   return {
     title: 'Settings',
-    el: h('main', { class: 'page config-page' }, topBar(ctx, 'Settings'), h('div', { class: 'config-shelf' }, h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, running, data, resetPanel))),
+    el: h('main', { class: 'page config-page' }, topBar(ctx, 'Settings'), h('div', { class: 'config-shelf' }, h('div', { class: 'settings-grid' }, signalling, appearance, sound, tapper, sim, running, trainLimits, data, resetPanel))),
   };
 }

@@ -20,6 +20,9 @@ export interface TrainType {
   name: string;
   description: string;
   builtIn: boolean;
+  /** Most vehicles (and tons) a train of this type may have (v0.3.41, D13); absent = the company/era default. */
+  maxVehicles?: number;
+  maxTons?: number;
 }
 
 /** Regulation (non train-description) signal, e.g. Train Entering Section. */
@@ -223,7 +226,23 @@ export interface TimetableTrain {
   anyWorking: string;
   /** e.g. "4 coaches". */
   consist: string;
+  /**
+   * Its rolling stock (v0.3.40, D10): any suitable rake (the default for new trains), a rake type, a
+   * specific saved rake, or the text consist. Absent = the text consist (trains from before rakes).
+   */
+  stock?: TrainStock;
   notes: string;
+}
+
+/** How a timetable train gets its rolling stock (v0.3.40). */
+export interface TrainStock {
+  mode: 'any' | 'type' | 'rake' | 'text';
+  /** A rake type (mode 'type'). */
+  rakeTypeId?: string;
+  /** A saved rake of the layout (mode 'rake'). */
+  rakeId?: string;
+  /** The rake made up for it (mode 'type'; v0.3.41): set when generated, so it runs as planned. */
+  formation?: Array<{ classId: string; loaded?: boolean }>;
 }
 
 export interface Timetable {
@@ -640,6 +659,8 @@ export interface Layout {
   stock?: StandingRake[];
   /** The layout's stock library types, fleet and saved rakes (v0.3.38). Absent = none yet. */
   rollingStock?: RollingStock;
+  /** The railway company whose stock data generated rakes use (v0.3.41): absent or 'generic' = generic types and defaults. */
+  stockCompany?: string;
 }
 
 /** grouping: lamp codes 1923–47 + reporting number; brLamps: BR lamp codes 1948–60 + reporting number; br1960: four-character headcodes. */

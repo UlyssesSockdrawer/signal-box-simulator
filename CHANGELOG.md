@@ -2,6 +2,57 @@
 
 Short notes on what each version brought. Newest first.
 
+## 0.3.42
+
+* Weights: every generic vehicle type has a generic weight (tare, and loaded for wagons and vans), and
+  types with no weight of their own use their generic stand-in's (coaching stock scaled by length).
+  Rakes show "about" so many tons, and train limits in tons now count. Your own types can have a
+  loaded weight as well as a tare.
+* Engines in the rake drawings look like engines: a steam tender engine with its tender next to the
+  train, a steam tank engine with side tanks and a bunker, a diesel with a cab at each end on two
+  bogies, and an electric with a pantograph. Timetables draw the loco working the train by its power
+  type; on the Stock tab choose which to draw (Drawn with).
+
+## 0.3.41
+
+* The timetable generator makes up each train's rake from a rake type for its working: a random size
+  within the type's counts, short enough for the roads it stands in and within the train limit. Goods
+  rakes are marshalled with fitted vehicles next to the engine and a brake van at the tail (fitted when
+  the train has a fitted head); pick-up and branch goods are made up unfitted. The rake is kept on the
+  train, so the same pattern gives the same rakes and a kept Endless timetable runs them again.
+* Goods trains are filled from the railway company's goods mix (for LMS, the numbers of each wagon
+  built; a placeholder until goods train make-up is researched). Block trains are rarer in the grouping era.
+* Stock tab: a Railway company setting (Generic or LMS; Sigsim Central is LMS), and Rake types, where you
+  can copy a built-in type or start a new one, choose its train types, how often it is used and its
+  vehicles, see an example drawn to scale, and hide built-in types.
+* Settings: Train limits, the most vehicles and tons for each train type, defaulting to the company's
+  figures (the LMS 1939 table).
+
+## 0.3.40
+
+* Timetable trains choose their stock: any suitable rake (the default for new trains), a rake type,
+  one of your saved rakes, or a written consist (older timetables keep their written consists).
+* Built-in generic rake types: local, medium-distance, express, excursion, push-pull, mail and TPO,
+  parcels, and placeholder goods recipes.
+* The rake is drawn in the train's case and its moves. The checks warn when a rake makes a goods train a
+  different class from its working, or when two trains' rakes share vehicles.
+* When a timetable runs, the train is given its rake where it is made up: in play mode its vehicles
+  come on with it and their real lengths count. In model railway mode a rake sharing vehicles with one
+  already on the layout waits.
+
+## 0.3.39
+
+* Play mode: an engine running round (or released by the pilot) no longer gets stuck when a train is
+  offered from the other side. Next step now puts the movement's blocking back first, and you can
+  refuse a train being offered (call attention instead of repeating it) to block back; the train is held.
+* The clearing point is measured exactly: an engine drawing just clear of the points to set back only
+  needs blocking back if it really comes within 440 yd of the home signal. Sigsim Central's West inner
+  and East inner are now 600 yd, so its run rounds need no blocking back (Reset to defaults to get them).
+* Timetables: no train is offered into the station while an engine runs round there, a through train
+  waits for a train due to depart on to its line first, and early run rounds wait for a gap.
+* Generated timetables plan run rounds for goods trains too, allow 8 minutes for them, and keep the
+  lines into the station clear meanwhile.
+
 ## 0.3.38
 
 * New **Stock** tab in the layout configurator: a library of vehicle types (LMS grouping-era types from

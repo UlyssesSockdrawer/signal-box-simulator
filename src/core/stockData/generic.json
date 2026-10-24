@@ -5,47 +5,334 @@
   "eras": [],
   "note": "Company-neutral fallback types (rakes plan 1a; research doc 12d; D5a, D8, D18). Lengths are Matt's choices, each anchored to a measured LMS vehicle where one exists, and are shown as approximate. The parameters below are the generic defaults: the buffer allowances are the only measured figures so far (LMS vehicles); the train limits copy the LMS 1939 table, the only source so far.",
   "params": {
-    "bufferAllowance": { "coaching": "3 ft 8 in", "freight": "3 ft 5 in" },
+    "bufferAllowance": {
+      "coaching": "3 ft 8 in",
+      "freight": "3 ft 5 in"
+    },
     "trainLimits": {
-      "express_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "ordinary_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "branch_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "parcels": { "maxVehicles": 25 },
-      "ecs": { "maxVehicles": 20 },
-      "freight_fitted_half": { "maxVehicles": 50 },
-      "freight_fitted_third": { "maxVehicles": 55 },
-      "freight_fitted_four": { "maxVehicles": 55 },
-      "freight_unfitted": { "maxVehicles": 100 },
-      "through_freight": { "maxVehicles": 100 },
-      "mineral": { "maxVehicles": 90 },
-      "pickup_goods": { "maxVehicles": 100 },
-      "branch_freight": { "maxVehicles": 100 }
+      "express_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "ordinary_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "branch_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "parcels": {
+        "maxVehicles": 25
+      },
+      "ecs": {
+        "maxVehicles": 20
+      },
+      "freight_fitted_half": {
+        "maxVehicles": 50
+      },
+      "freight_fitted_third": {
+        "maxVehicles": 55
+      },
+      "freight_fitted_four": {
+        "maxVehicles": 55
+      },
+      "freight_unfitted": {
+        "maxVehicles": 100
+      },
+      "through_freight": {
+        "maxVehicles": 100
+      },
+      "mineral": {
+        "maxVehicles": 90
+      },
+      "pickup_goods": {
+        "maxVehicles": 100
+      },
+      "branch_freight": {
+        "maxVehicles": 100
+      }
     },
     "trainLimitsNote": "LMS 1939 limits (research doc 8c). Mapping to the app's train types is an inference: fitted freight No. 1 = 1/2 fitted (50), No. 2 = 1/3 fitted (55); 4 braked as No. 2; other goods 100, mineral 90.",
     "fittedClasses": [
-      { "trainTypeId": "freight_fitted_half", "minProportion": 0.5 },
-      { "trainTypeId": "freight_fitted_third", "minProportion": 0.3333 },
-      { "trainTypeId": "freight_fitted_four", "minFittedHead": 4 }
+      {
+        "trainTypeId": "freight_fitted_half",
+        "minProportion": 0.5
+      },
+      {
+        "trainTypeId": "freight_fitted_third",
+        "minProportion": 0.3333
+      },
+      {
+        "trainTypeId": "freight_fitted_four",
+        "minFittedHead": 4
+      }
     ],
     "unfittedClass": "freight_unfitted",
-    "unfittedTrainTypes": ["pickup_goods", "branch_freight"]
+    "unfittedTrainTypes": [
+      "pickup_goods",
+      "branch_freight"
+    ],
+    "goodsMix": [
+      {
+        "classId": "generic-open-7plank-12t",
+        "weight": 3
+      },
+      {
+        "classId": "generic-vent-van-12t",
+        "weight": 2
+      },
+      {
+        "classId": "generic-vent-van-12t-fitted",
+        "weight": 1
+      }
+    ],
+    "blockWeight": {},
+    "goodsMixNote": "Generic default: mostly opens, some vans (a placeholder, D9).",
+    "weightNote": "Generic weights (v0.3.41, placeholders): typical tare tons by kind of vehicle, and tare plus the load for 12-ton wagons and vans; marked generic (shown as \"about\"). Types with no weight of their own use their generic stand-in's (coaching stock scaled by length)."
   },
   "classes": [
-    { "key": "generic-coach-57", "name": "Generic 57 ft coach", "code": "COACH", "category": "coach", "coachType": "ordinary", "guard": false, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1730, D1742, D1686 (57 ft / 60 ft 8 in, measured) [P]" },
-    { "key": "generic-passenger-brake-57", "name": "Generic passenger brake (57 ft corridor)", "code": "BRAKE", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1730, corridor brake third, measured (R52 p. 65) [P]" },
-    { "key": "generic-driving-trailer-57", "name": "Generic driving trailer (push-pull)", "code": "DT", "category": "coach", "coachType": "drivingTrailer", "guard": true, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As the 57 ft coach, for now (Matt); a driving brake, so it has a guard's compartment [C]" },
-    { "key": "generic-coach-60", "name": "Generic 60 ft coach", "code": "COACH60", "category": "coach", "coachType": "ordinary", "guard": false, "overHeadstocks": "60 ft", "overBuffers": "63 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1792 (60 ft / 63 ft 8 in, measured, R52 p. 108) [P]" },
-    { "key": "generic-tpo-60", "name": "Generic 60 ft TPO (sorting van)", "code": "TPO", "category": "coach", "coachType": "tpo", "guard": false, "overHeadstocks": "60 ft", "overBuffers": "63 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1792 Post Office sorting van [P]" },
-    { "key": "generic-coach-50", "name": "Generic 50 ft coach", "code": "COACH50", "category": "coach", "coachType": "ordinary", "guard": false, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1793 and D1697 (50 ft / 53 ft 8 in, measured) [P]" },
-    { "key": "generic-van-50", "name": "Generic 50 ft van (parcels, luggage)", "code": "VAN50", "category": "van", "coachType": "van", "guard": false, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1793 [P]" },
-    { "key": "generic-tpo-50", "name": "Generic 50 ft TPO (stowage van)", "code": "POT", "category": "coach", "coachType": "tpo", "guard": false, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As LMS D1793 Post Office stowage van [P]" },
-    { "key": "generic-full-brake-50", "name": "Generic full brake", "code": "BG", "category": "van", "coachType": "fullBrake", "guard": true, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As the 50 ft coach (Matt); most LMS full brakes were 50 ft (R5)" },
-    { "key": "generic-coach-48", "name": "Generic 48 ft coach", "code": "COACH48", "category": "coach", "coachType": "ordinary", "guard": false, "overHeadstocks": "48 ft", "overBuffers": "51 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "No measured 48 ft vehicle: 48 ft plus the 3 ft 8 in coach allowance [I]" },
-    { "key": "generic-van-48", "name": "Generic 48 ft van", "code": "VAN48", "category": "van", "coachType": "van", "guard": false, "overHeadstocks": "48 ft", "overBuffers": "51 ft 8 in", "lengthBasis": "generic", "fitted": true, "source": "As the 48 ft coach [I]" },
-    { "key": "generic-brake-van-20t", "name": "Generic 20-ton brake van, unfitted", "code": "BV", "category": "brakeVan", "guard": true, "shape": "brakeVan", "overHeadstocks": "20 ft", "overBuffers": "7137 mm", "lengthBasis": "generic", "fitted": false, "source": "As LMS D1890, measured (R26, museum record) [P]" },
-    { "key": "generic-brake-van-20t-fitted", "name": "Generic 20-ton brake van, vacuum fitted", "code": "BVF", "category": "brakeVan", "guard": true, "shape": "brakeVan", "overHeadstocks": "20 ft", "overBuffers": "7137 mm", "lengthBasis": "generic", "fitted": true, "source": "D1890 length; a fitted van is always available, any era or company (D5a)" },
-    { "key": "generic-vent-van-12t", "name": "Generic 12-ton ventilated van, unfitted", "code": "VENT", "category": "van", "guard": false, "shape": "closed", "overBuffers": "20 ft 6 in", "lengthBasis": "generic", "fitted": false, "source": "Matt's assumed length; close to the 1904 standard van (21 ft) and the LMS 3-plank (20 ft 11 in)" },
-    { "key": "generic-vent-van-12t-fitted", "name": "Generic 12-ton ventilated van, vacuum fitted", "code": "VENTF", "category": "van", "guard": false, "shape": "closed", "overBuffers": "20 ft 6 in", "lengthBasis": "generic", "fitted": true, "source": "As the unfitted van (Matt chose both versions)" },
-    { "key": "generic-open-7plank-12t", "name": "Generic 7-plank 12-ton open wagon", "code": "OPEN", "category": "wagon", "guard": false, "shape": "open", "overHeadstocks": "16 ft 6 in", "overBuffers": "20 ft 6 in", "lengthBasis": "generic", "fitted": false, "source": "Matt's choice: the Dapol OO model figure, 82 mm over buffers (R31) [R/I]; the stand-in for other wagon kinds" }
+    {
+      "key": "generic-coach-57",
+      "name": "Generic 57 ft coach",
+      "code": "COACH",
+      "category": "coach",
+      "coachType": "ordinary",
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 30,
+      "weightBasis": "generic",
+      "source": "As LMS D1730, D1742, D1686 (57 ft / 60 ft 8 in, measured) [P]"
+    },
+    {
+      "key": "generic-passenger-brake-57",
+      "name": "Generic passenger brake (57 ft corridor)",
+      "code": "BRAKE",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 30,
+      "weightBasis": "generic",
+      "source": "As LMS D1730, corridor brake third, measured (R52 p. 65) [P]"
+    },
+    {
+      "key": "generic-driving-trailer-57",
+      "name": "Generic driving trailer (push-pull)",
+      "code": "DT",
+      "category": "coach",
+      "coachType": "drivingTrailer",
+      "guard": true,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 28,
+      "weightBasis": "generic",
+      "source": "As the 57 ft coach, for now (Matt); a driving brake, so it has a guard's compartment [C]"
+    },
+    {
+      "key": "generic-coach-60",
+      "name": "Generic 60 ft coach",
+      "code": "COACH60",
+      "category": "coach",
+      "coachType": "ordinary",
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "overBuffers": "63 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 32,
+      "weightBasis": "generic",
+      "source": "As LMS D1792 (60 ft / 63 ft 8 in, measured, R52 p. 108) [P]"
+    },
+    {
+      "key": "generic-tpo-60",
+      "name": "Generic 60 ft TPO (sorting van)",
+      "code": "TPO",
+      "category": "coach",
+      "coachType": "tpo",
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "overBuffers": "63 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 32,
+      "weightBasis": "generic",
+      "source": "As LMS D1792 Post Office sorting van [P]"
+    },
+    {
+      "key": "generic-coach-50",
+      "name": "Generic 50 ft coach",
+      "code": "COACH50",
+      "category": "coach",
+      "coachType": "ordinary",
+      "guard": false,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 26,
+      "weightBasis": "generic",
+      "source": "As LMS D1793 and D1697 (50 ft / 53 ft 8 in, measured) [P]"
+    },
+    {
+      "key": "generic-van-50",
+      "name": "Generic 50 ft van (parcels, luggage)",
+      "code": "VAN50",
+      "category": "van",
+      "coachType": "van",
+      "guard": false,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 25,
+      "weightBasis": "generic",
+      "source": "As LMS D1793 [P]"
+    },
+    {
+      "key": "generic-tpo-50",
+      "name": "Generic 50 ft TPO (stowage van)",
+      "code": "POT",
+      "category": "coach",
+      "coachType": "tpo",
+      "guard": false,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 28,
+      "weightBasis": "generic",
+      "source": "As LMS D1793 Post Office stowage van [P]"
+    },
+    {
+      "key": "generic-full-brake-50",
+      "name": "Generic full brake",
+      "code": "BG",
+      "category": "van",
+      "coachType": "fullBrake",
+      "guard": true,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 27,
+      "weightBasis": "generic",
+      "source": "As the 50 ft coach (Matt); most LMS full brakes were 50 ft (R5)"
+    },
+    {
+      "key": "generic-coach-48",
+      "name": "Generic 48 ft coach",
+      "code": "COACH48",
+      "category": "coach",
+      "coachType": "ordinary",
+      "guard": false,
+      "overHeadstocks": "48 ft",
+      "overBuffers": "51 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 24,
+      "weightBasis": "generic",
+      "source": "No measured 48 ft vehicle: 48 ft plus the 3 ft 8 in coach allowance [I]"
+    },
+    {
+      "key": "generic-van-48",
+      "name": "Generic 48 ft van",
+      "code": "VAN48",
+      "category": "van",
+      "coachType": "van",
+      "guard": false,
+      "overHeadstocks": "48 ft",
+      "overBuffers": "51 ft 8 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 22,
+      "weightBasis": "generic",
+      "source": "As the 48 ft coach [I]"
+    },
+    {
+      "key": "generic-brake-van-20t",
+      "name": "Generic 20-ton brake van, unfitted",
+      "code": "BV",
+      "category": "brakeVan",
+      "guard": true,
+      "shape": "brakeVan",
+      "overHeadstocks": "20 ft",
+      "overBuffers": "7137 mm",
+      "lengthBasis": "generic",
+      "fitted": false,
+      "tareTons": 20,
+      "weightBasis": "generic",
+      "source": "As LMS D1890, measured (R26, museum record) [P]"
+    },
+    {
+      "key": "generic-brake-van-20t-fitted",
+      "name": "Generic 20-ton brake van, vacuum fitted",
+      "code": "BVF",
+      "category": "brakeVan",
+      "guard": true,
+      "shape": "brakeVan",
+      "overHeadstocks": "20 ft",
+      "overBuffers": "7137 mm",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 20,
+      "weightBasis": "generic",
+      "source": "D1890 length; a fitted van is always available, any era or company (D5a)"
+    },
+    {
+      "key": "generic-vent-van-12t",
+      "name": "Generic 12-ton ventilated van, unfitted",
+      "code": "VENT",
+      "category": "van",
+      "guard": false,
+      "shape": "closed",
+      "overBuffers": "20 ft 6 in",
+      "lengthBasis": "generic",
+      "fitted": false,
+      "tareTons": 7.5,
+      "loadedTons": 19.5,
+      "weightBasis": "generic",
+      "source": "Matt's assumed length; close to the 1904 standard van (21 ft) and the LMS 3-plank (20 ft 11 in)"
+    },
+    {
+      "key": "generic-vent-van-12t-fitted",
+      "name": "Generic 12-ton ventilated van, vacuum fitted",
+      "code": "VENTF",
+      "category": "van",
+      "guard": false,
+      "shape": "closed",
+      "overBuffers": "20 ft 6 in",
+      "lengthBasis": "generic",
+      "fitted": true,
+      "tareTons": 8,
+      "loadedTons": 20,
+      "weightBasis": "generic",
+      "source": "As the unfitted van (Matt chose both versions)"
+    },
+    {
+      "key": "generic-open-7plank-12t",
+      "name": "Generic 7-plank 12-ton open wagon",
+      "code": "OPEN",
+      "category": "wagon",
+      "guard": false,
+      "shape": "open",
+      "overHeadstocks": "16 ft 6 in",
+      "overBuffers": "20 ft 6 in",
+      "lengthBasis": "generic",
+      "fitted": false,
+      "tareTons": 6.5,
+      "loadedTons": 18.5,
+      "weightBasis": "generic",
+      "source": "Matt's choice: the Dapol OO model figure, 82 mm over buffers (R31) [R/I]; the stand-in for other wagon kinds"
+    }
   ]
 }

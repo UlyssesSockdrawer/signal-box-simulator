@@ -27,6 +27,10 @@ export interface StockDataRow {
   fitted: boolean;
   tareKg?: number;
   loadedKg?: number;
+  /** Weights in long tons (what sources quote), converted on reading; with how good they are. */
+  tareTons?: number;
+  loadedTons?: number;
+  weightBasis?: string;
   origin?: string;
   eras?: string[];
   diagram?: string;
@@ -53,6 +57,8 @@ export interface StockDataParams {
   fittedClasses?: FittedClassRule[];
   unfittedClass?: string;
   unfittedTrainTypes?: string[];
+  goodsMix?: Array<{ classId: string; weight: number }>;
+  blockWeight?: Record<string, number>;
   [note: string]: unknown;
 }
 
@@ -75,12 +81,29 @@ export interface StockParams {
   fittedClasses: FittedClassRule[];
   unfittedClass: string;
   unfittedTrainTypes: string[];
+  /** Goods vehicles by how common they were (v0.3.41, D9): the mix goods rakes are filled from. */
+  goodsMix: Array<{ classId: string; weight: number }>;
+  /** How often block trains (one kind of wagon) are chosen, by era (1 = as often as any; lower = rarer). */
+  blockWeight: Record<string, number>;
 }
 
 /** The data files shipped with the app. The generic file comes first and gives the default parameters. */
 export const STOCK_DATA_FILES: StockDataFile[] = [generic as StockDataFile, lmsGrouping as StockDataFile];
 
 export const GENERIC_ORIGIN = 'generic';
+
+/** Companies the library has a data file for (besides the generic one), for the layout's company setting. */
+export function stockCompanies(files: StockDataFile[] = STOCK_DATA_FILES): string[] {
+  return [...new Set(files.map((f) => f.origin).filter((o) => o !== GENERIC_ORIGIN))];
+}
+
+/** The stock era for a layout's headcode era: grouping 1923-47, BR lamps 1948-60 (postwar), BR 1960 on. */
+export function stockEraOf(headcodeEra: string | undefined): string {
+  return headcodeEra === 'grouping' ? 'grouping' : headcodeEra === 'brLamps' ? 'postwar' : 'br1960';
+}
+
+/** Kilograms in a (long) ton. */
+export const KG_PER_TON = 1016.047;
 
 const len = (t: string | undefined): number | undefined => (t ? parseLength(t, 'ft') ?? undefined : undefined);
 
@@ -93,6 +116,8 @@ function genericParams(files: StockDataFile[]): StockParams {
     fittedClasses: [...(g.fittedClasses ?? [])],
     unfittedClass: g.unfittedClass ?? 'freight_unfitted',
     unfittedTrainTypes: [...(g.unfittedTrainTypes ?? [])],
+    goodsMix: [...(g.goodsMix ?? [])],
+    blockWeight: { ...(g.blockWeight ?? {}) },
   };
 }
 
@@ -115,6 +140,8 @@ export function stockParams(origin?: string, eras?: string[], files: StockDataFi
   if (p.fittedClasses?.length) out.fittedClasses = [...p.fittedClasses];
   if (p.unfittedClass) out.unfittedClass = p.unfittedClass;
   if (p.unfittedTrainTypes) out.unfittedTrainTypes = [...p.unfittedTrainTypes];
+  if (p.goodsMix?.length) out.goodsMix = [...p.goodsMix];
+  if (p.blockWeight) out.blockWeight = { ...out.blockWeight, ...p.blockWeight };
   return out;
 }
 
@@ -159,8 +186,9 @@ export function readDataFile(file: StockDataFile, files: StockDataFile[] = STOCK
       metresOverHeadstocks: headstocks,
       lengthBasis: buffers !== undefined ? (row.lengthBasis as LengthBasis | undefined) : undefined,
       fitted: row.fitted,
-      tareKg: row.tareKg,
-      loadedKg: row.loadedKg,
+      tareKg: row.tareKg ?? (row.tareTons !== undefined ? row.tareTons * KG_PER_TON : undefined),
+      loadedKg: row.loadedKg ?? (row.loadedTons !== undefined ? row.loadedTons * KG_PER_TON : undefined),
+      weightBasis: row.weightBasis,
       shape: row.shape,
       origin,
       eras: [...eras],
@@ -177,6 +205,10 @@ export function readDataFile(file: StockDataFile, files: StockDataFile[] = STOCK
       if (raw[k] !== undefined && cls[k] !== raw[k]) problems.push(`${row.key}: ${k} "${String(raw[k])}" not accepted`);
     if (buffers !== undefined && !row.lengthBasis) problems.push(`${row.key}: a length with no basis`);
     if (buffers === undefined && row.lengthBasis) problems.push(`${row.key}: a basis with no length`);
+    const weighed = raw.tareKg !== undefined || raw.loadedKg !== undefined;
+    if (weighed && !row.weightBasis) problems.push(`${row.key}: a weight with no basis`);
+    if (!weighed && row.weightBasis) problems.push(`${row.key}: a weight basis with no weight`);
+    if (raw.tareKg !== undefined && raw.loadedKg !== undefined && (raw.loadedKg as number) < (raw.tareKg as number)) problems.push(`${row.key}: loaded lighter than tare`);
     classes.push(cls);
   }
   return { classes, problems };

@@ -356,8 +356,8 @@ describe('saved data with real-railway values', () => {
       expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
       expect(s.settings.units).toBe('imperial');
       // Nothing is filled in: lengths and speeds stay absent, so the defaults apply (Sigsim Central's
-      // two inner circuits come with their 440 yd, the station limits, and nothing else).
-      expect(JSON.stringify(s).replace(/"length":402\.336/g, '')).not.toMatch(/"(sectionLength|length|lineSpeed|divergingSpeed|maxSpeed)"/);
+      // two inner circuits come with their 600 yd, and nothing else).
+      expect(JSON.stringify(s).replace(/"length":548\.64\d*/g, '')).not.toMatch(/"(sectionLength|length|lineSpeed|divergingSpeed|maxSpeed)"/);
       if (make === shippedState) {
         expect(s.layouts).toEqual(before.layouts);
         expect(s.boxes).toEqual(before.boxes);

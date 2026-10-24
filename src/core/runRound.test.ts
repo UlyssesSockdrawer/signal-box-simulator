@@ -59,35 +59,39 @@ describe('the engine at the right end of its train (play mode)', () => {
     expect(t.sim.jobsText('sigsim-central')).toEqual([]);
   });
 
-  it('back west it runs round first when the departure is set: uncouples, round by the loop (blocking back where it must), couples up at the west end, then goes engine first', () => {
-    const t = play();
-    arriveInP1(t);
-    const bf = t.loco('lms5025');
-    t.west.setOutgoing('lms5025', 'ordinary_passenger');
-    t.tick(500);
-    expect(t.sim.outgoingText('sigsim-central', 'sgc-west')).toMatch(/uncoupling to run round/);
-    const seen = new Set<string>();
-    t.board.onChange(() => t.occupied().forEach((c) => seen.add(c)));
-    const blocked = new Set<string>();
-    expect(
-      t.until(() => {
-        blockBackAsAsked(t, blocked);
-        return bf.working.locoEnd?.end === 0 && !t.sim.jobsText('sigsim-central').length;
-      }, 900_000),
-    ).toBe(true);
-    // Round by the loop: out east on to the East inner, back along the loop, set back in the West inner.
-    for (const c of ['T11', 'T6', 'T3']) expect(seen).toContain(c);
-    expect(bf.working.consist).toBe('4 coaches');
-    expect(t.state.layouts[0].stock ?? []).toHaveLength(0);
-    // It went over both lines' clearing points, so both were blocked back first.
-    expect([...blocked].sort()).toEqual(['sgc-east', 'sgc-west']);
-    for (const c of [t.west, t.east]) {
-      ring(t, c, '2-1');
-      c.setInstrument('LB');
-    }
-    ring(t, t.west, '3-1');
-    expect(t.until(() => t.occupied().includes('T2'), 120_000)).toBe(true);
-  });
+  for (const inner of [600, 440])
+    it(`back west it runs round first when the departure is set: uncouples, round by the loop, couples up at the west end, then goes engine first (inner circuits ${inner} yd: ${inner > 440 ? 'clear of the clearing points, no blocking back' : 'over both clearing points, both blocked back'})`, () => {
+      const t = play();
+      if (inner !== 600) for (const id of ['sgc-twi', 'sgc-tei']) t.state.layouts[0].trackPlan.circuits.find((c) => c.id === id)!.length = inner * 0.9144;
+      arriveInP1(t);
+      const bf = t.loco('lms5025');
+      t.west.setOutgoing('lms5025', 'ordinary_passenger');
+      t.tick(500);
+      expect(t.sim.outgoingText('sigsim-central', 'sgc-west')).toMatch(/uncoupling to run round/);
+      const seen = new Set<string>();
+      t.board.onChange(() => t.occupied().forEach((c) => seen.add(c)));
+      const blocked = new Set<string>();
+      expect(
+        t.until(() => {
+          blockBackAsAsked(t, blocked);
+          return bf.working.locoEnd?.end === 0 && !t.sim.jobsText('sigsim-central').length;
+        }, 900_000),
+      ).toBe(true);
+      // Round by the loop: out east on to the East inner, back along the loop, set back in the West inner.
+      for (const c of ['T11', 'T6', 'T3']) expect(seen).toContain(c);
+      expect(bf.working.consist).toBe('4 coaches');
+      expect(t.state.layouts[0].stock ?? []).toHaveLength(0);
+      // It draws only just clear of the points to set back (v0.3.39): with 600 yd inner circuits that stays
+      // outside the clearing points (440 yd inside the home signals); with 440 yd ones it fouls both.
+      expect([...blocked].sort()).toEqual(inner > 440 ? [] : ['sgc-east', 'sgc-west']);
+      for (const c of [t.west, t.east]) {
+        if (!blocked.has(c === t.west ? 'sgc-west' : 'sgc-east')) continue;
+        ring(t, c, '2-1');
+        c.setInstrument('LB');
+      }
+      ring(t, t.west, '3-1');
+      expect(t.until(() => t.occupied().includes('T2'), 120_000)).toBe(true);
+    });
 
   it('an engine that cannot run round (the loop blocked by standing stock) is released by the station pilot, ECS-style', () => {
     const t = play();

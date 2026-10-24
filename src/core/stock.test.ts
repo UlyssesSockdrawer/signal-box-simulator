@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { migrate } from './store';
 import { createDefaultState, SCHEMA_VERSION } from './defaults';
-import { CONSIST_METRES, parseLength } from './railway';
+import { CONSIST_METRES, locoShape, parseLength } from './railway';
 import {
+  canLoad,
   duplicateIdentities,
   emptyRollingStock,
   fallbackClassId,
@@ -23,7 +24,7 @@ import {
   vehiclesDescription,
   type StockLibrary,
 } from './stock';
-import { builtInClasses, overBuffersFromHeadstocks, readDataFile, STOCK_DATA_FILES, stockParams, type StockDataFile } from './stockLibrary';
+import { builtInClasses, KG_PER_TON, overBuffersFromHeadstocks, readDataFile, STOCK_DATA_FILES, stockParams, type StockDataFile } from './stockLibrary';
 import { LENGTH_BASES, sanitiseVehicleClass } from './stockSanitise';
 import type { Rake, RollingStock, Vehicle } from './stockTypes';
 
@@ -208,8 +209,31 @@ describe('derived values', () => {
     const rake: Rake = { id: 'r', identity: 'Test', vehicleIds: rs.fleet.map((x) => x.id), engineEnd: 'A', notes: '' };
     const s = summariseRake(rake, rs, lib);
     expect(s.length.approx).toBe(true);
-    expect(s.weight).toEqual({ kg: null, missing: 2 });
+    // Weights (v0.3.41): neither has its own, so both take a generic stand-in's, marked approximate.
+    expect(s.weight.missing).toBe(0);
+    expect(s.weight.approx).toBe(true);
+    expect(s.weight.kg).toBeGreaterThan(40 * KG_PER_TON);
     expect(s.notes.map((n) => n.code)).toContain('unknownLength');
+  });
+
+  it('gives every generic type a generic weight, loaded weights for wagons and vans, and stand-ins for the rest (v0.3.41)', () => {
+    for (const c of lib.builtIns().filter((x) => x.origin === 'generic')) {
+      expect(c.tareKg, c.id).toBeGreaterThan(0);
+      expect(c.weightBasis, c.id).toBe('generic');
+      if (canLoad(c)) expect(c.loadedKg!, c.id).toBeGreaterThan(c.tareKg!);
+    }
+    const open = resolveVehicle(v('generic-open-7plank-12t'), lib);
+    const full = resolveVehicle({ ...v('generic-open-7plank-12t'), loaded: true }, lib);
+    expect(open.kg! / KG_PER_TON).toBeCloseTo(6.5, 3);
+    expect(full.kg! / KG_PER_TON).toBeCloseTo(18.5, 3);
+    expect(open.weightApprox).toBe(true);
+    // An LMS coach with no weight: the generic coach's, scaled by its length.
+    const coach = lib.cls('generic-coach-57')!;
+    const d1730 = resolveVehicle(v('LMS-D1730'), lib);
+    expect(d1730.kg).toBeCloseTo((coach.tareKg! * d1730.metres) / coach.metresOverBuffers!, 3);
+    // A weight typed on the user's own type is used as it is.
+    const own = stockLibrary({ ...emptyRollingStock(), classes: [{ id: 'mine', name: 'Mine', category: 'wagon', guard: false, fitted: false, builtIn: false, tareKg: 5000 }] });
+    expect(resolveVehicle(v('mine'), own)).toMatchObject({ kg: 5000, weightApprox: false });
   });
 
   it('notes vehicles shared with other saved rakes (allowed, D20)', () => {
@@ -265,14 +289,14 @@ describe('play mode vehicles (D19)', () => {
   });
 });
 
-describe('saved data (schema 8)', () => {
+describe('saved data (schema 8 on)', () => {
   it('an old save loads cleanly with its anonymous standing stock dropped (D14)', () => {
     const old = JSON.parse(JSON.stringify(createDefaultState())) as Record<string, unknown> & { layouts: Array<Record<string, unknown>> };
     old.schemaVersion = 7;
     old.layouts[0].stock = [{ id: 'rake_1', description: '4 coaches', vehicles: [{ kind: 'coach', count: 4, metres: 20 }], placeId: 'sgc-station', roadId: 'sgc-p1', circuitId: 'sgc-t5' }];
     const s = migrate(old);
     expect(s.schemaVersion).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(8);
     expect(s.layouts[0].stock).toBeUndefined();
     expect(s.layouts[0].rollingStock).toBeUndefined();
   });
@@ -325,5 +349,16 @@ describe('saved data (schema 8)', () => {
     const once = migrate(JSON.parse(JSON.stringify(st)));
     expect(once.layouts[0].rollingStock).toEqual(st.layouts[0].rollingStock);
     expect(migrate(JSON.parse(JSON.stringify(once)))).toEqual(once);
+  });
+});
+
+describe('engine shapes for drawing (v0.3.42)', () => {
+  it('draws each power type as its own kind of engine', () => {
+    expect(locoShape({ powerType: 'Steam (tender)' })).toBe('tender');
+    expect(locoShape({ powerType: 'Steam (tank)' })).toBe('tank');
+    expect(locoShape({ powerType: 'Diesel' })).toBe('diesel');
+    expect(locoShape({ powerType: 'Electric' })).toBe('electric');
+    expect(locoShape({ powerType: 'DMU' })).toBe('unit');
+    expect(locoShape({ powerType: 'Other' })).toBe('tender');
   });
 });

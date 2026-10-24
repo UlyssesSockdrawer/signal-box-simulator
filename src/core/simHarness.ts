@@ -63,7 +63,7 @@ export function play(opts: { state?: AppState; mode?: RunningMode; scale?: numbe
     getState: () => state,
     scheduler: sched,
     layoutId: box.layoutId,
-    box: (id) => (id === box.id ? { sessions, workings, mode: trains.mode, trains: trains.source, railway: trains.mode === 'play' ? { shunt: (b, l, to, done, o) => sim.shunt(b, l, to, done, o), runRound: (b, l, done) => sim.runRound(b, l, done), prepareDeparture: (b, l, c) => sim.prepareDeparture(b, l, c) } : undefined } : null),
+    box: (id) => (id === box.id ? { sessions, workings, mode: trains.mode, trains: trains.source, railway: trains.mode === 'play' ? { shunt: (b, l, to, done, o) => sim.shunt(b, l, to, done, o), runRound: (b, l, done) => sim.runRound(b, l, done), prepareDeparture: (b, l, c) => sim.prepareDeparture(b, l, c), jobsText: (b) => sim.jobsText(b) } : undefined } : null),
     moveLoco: (id, loc) => {
       const l = state.roster.find((x) => x.id === id);
       if (l) l.location = loc;

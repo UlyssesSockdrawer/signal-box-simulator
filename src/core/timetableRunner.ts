@@ -1,3 +1,5 @@
+import { circuitLength, locoLength } from './railway';
+import { findRakeType, hashString, resolveTrainStock, seededRandom, stockKindFor, trainStockOf, type StockChoice } from './trainStock';
 import { signalCode, trainCode } from './bellcodes';
 import { Emitter, type Scheduler } from './scheduler';
 import type { SectionController } from './sectionController';
@@ -60,6 +62,8 @@ export interface RunnerBox {
     runRound?(boxId: string, locoId: string, onDone: (ok: boolean) => void): string | null;
     /** Get a departure's engine to the right end of its train early, while it has nothing else to do (v0.3.35). */
     prepareDeparture?(boxId: string, locoId: string, connId: string): string;
+    /** What the railway is doing by itself in a box's area (running round, a pilot release), in words (v0.3.39). */
+    jobsText?(boxId: string): string[];
   };
 }
 
@@ -161,6 +165,8 @@ export class TimetableRunner {
   operator: RunOperator = 'simulated';
   /** Locos chosen for "any loco" trains, by train id. */
   private anyLoco = new Map<string, string>();
+  /** Trains whose stock has been given them (v0.3.40), with the saved rake used (if any): once per train. */
+  private stockGiven = new Map<string, StockChoice | null>();
   private startedAt = 0;
   /** Session clock started from the time now (in step with this device's clock), and the time it began (minutes). */
   private fromNow = false;
@@ -364,6 +370,7 @@ export class TimetableRunner {
     this.paused = false;
     this.finished = false;
     this.anyLoco.clear();
+    this.stockGiven.clear();
     this.endless = null;
   }
 
@@ -437,6 +444,7 @@ export class TimetableRunner {
     this.timer = null;
     this.tt = tt;
     this.anyLoco = new Map([...this.anyLoco].filter(([trainId]) => finishing.some((f) => f.train?.id === trainId)));
+    this.stockGiven = new Map([...this.stockGiven].filter(([trainId]) => finishing.some((f) => f.train?.id === trainId)));
     this.items = [...finishing, ...this.itemsFor(tt)];
     this.setEndless(opts.endless ?? null);
     this.topUp();
@@ -692,6 +700,8 @@ export class TimetableRunner {
       if (!out || legs!.slice(0, i).some((l) => l.kind === 'line')) continue;
       const rb = this.o.box(out.boxId);
       if (rb?.mode !== 'play' || !rb.railway?.prepareDeparture) continue;
+      // Not while a train is accepted or on its way into the station (v0.3.39): run round in a gap.
+      if (rb.sessions.some((x) => { const inc = x.controller.view.incoming; return !!inc && (inc.acceptedAt !== null || inc.departed) && !inc.arrived; })) continue;
       const text = rb.railway.prepareDeparture(out.boxId, loco.id, out.connectionId);
       if (text && text !== it.status) {
         it.status = `Getting ready: ${text}`;
@@ -701,6 +711,11 @@ export class TimetableRunner {
   }
 
   private activate(it: RunItem): void {
+    const clash = this.rakeClash(it);
+    if (clash) {
+      it.status = clash;
+      return;
+    }
     if (!this.resolveLoco(it)) {
       it.status = `Waiting for a loco: none with the duty for ${this.typeName(it.train?.anyWorking ?? it.entry.trainTypeId).toLowerCase()} is free${it.entry.from.placeId ? ` at ${refText(this.state, it.entry.from)}` : ''}.`;
       return;
@@ -774,8 +789,86 @@ export class TimetableRunner {
     // Running round: the train stays as it is (its engine just changes ends).
     if (it.entry.kind === 'shunt' && it.entry.runRound) return;
     const w: Partial<Working> = { trainTypeId: it.entry.trainTypeId, headcode: it.entry.headcode };
-    if (it.train?.consist && it.entry.trainTypeId !== 'light_engine') w.consist = it.train.consist;
+    const stock = it.train ? trainStockOf(it.train) : { mode: 'text' as const };
+    if (stock.mode === 'text') {
+      if (it.train?.consist && it.entry.trainTypeId !== 'light_engine') w.consist = it.train.consist;
+    } else if (it.train) this.giveStock(it, w);
     this.o.setWorking(it.locoId, w);
+  }
+
+  /** Model railway mode or signaller play mode, for the boxes on the layout (play if any box is in play mode). */
+  private runMode(): 'model' | 'play' {
+    return this.layoutBoxes().some((b) => this.o.box(b.id)?.mode === 'play') ? 'play' : 'model';
+  }
+
+  /** Vehicles of saved rakes given to trains still on the layout (D20: a rake sharing them cannot be used meanwhile). */
+  private vehiclesInUse(except?: string): Set<string> {
+    const out = new Set<string>();
+    for (const [trainId, c] of this.stockGiven) {
+      if (trainId === except || !c?.rakeId) continue;
+      const own = this.items.filter((x) => x.train?.id === trainId);
+      if (own.length && own.every((x) => x.state === 'done' || x.state === 'skipped')) continue;
+      for (const v of c.vehicles) out.add(v.id);
+    }
+    return out;
+  }
+
+  /** A saved rake the train is to use that shares vehicles with one on the layout already (model railway mode, D20), or ''. */
+  private rakeClash(it: RunItem): string {
+    const t = it.train;
+    const s = t ? trainStockOf(t) : null;
+    if (!t || s?.mode !== 'rake' || this.stockGiven.has(t.id) || this.runMode() !== 'model' || stockKindFor(it.entry.trainTypeId) === 'none') return '';
+    const rake = this.layout?.rollingStock?.rakes.find((r) => r.id === s.rakeId);
+    if (!rake) return '';
+    const used = this.vehiclesInUse(t.id);
+    if (!rake.vehicleIds.some((id) => used.has(id))) return '';
+    const other = [...this.stockGiven].find(([tid, c]) => tid !== t.id && c?.vehicles.some((v) => rake.vehicleIds.includes(v.id)));
+    const otherName = other ? (this.tt?.trains.find((x) => x.id === other[0])?.name ?? 'another train') : 'another train';
+    return `Waiting: its rake (${rake.identity}) shares vehicles with ${otherName}’s, which is still on the layout.`;
+  }
+
+  /**
+   * Give a train its stock (v0.3.40), once, on its first move with stock: any suitable, a rake type or a
+   * saved rake. In model railway mode always (it is a plan). In play mode only where the train is made
+   * up: coming on from off the layout or out of a fiddle yard, or where the loco has nothing behind it;
+   * a train starting in a station keeps the stock it stands with.
+   */
+  private giveStock(it: RunItem, w: Partial<Working>): void {
+    const t = it.train!;
+    if (this.stockGiven.has(t.id) || stockKindFor(it.entry.trainTypeId) === 'none' || it.entry.kind === 'shunt') return;
+    const layout = this.layout;
+    const loco = this.state.roster.find((l) => l.id === it.locoId);
+    if (!layout || !loco) return;
+    const mode = this.runMode();
+    const fromYard = layout.places.find((p) => p.id === it.entry.from.placeId)?.kind === 'fiddleYard';
+    const formed = it.entry.kind === 'enter' || fromYard || !loco.working.consist?.trim();
+    if (mode === 'play' && !formed) {
+      this.stockGiven.set(t.id, null);
+      return;
+    }
+    // Long enough for where it is going: the road it is booked into, else the longest road there (track circuit lengths).
+    const dest = it.entry.to.placeId ? it.entry.to : it.entry.from;
+    const roadLen = (roadId: string) => {
+      const c = layout.places.find((p) => p.id === dest.placeId)?.roads.find((r) => r.id === roadId)?.circuitId;
+      return c && layout.trackPlan.circuits.some((x) => x.id === c) ? circuitLength(this.state, layout, c).metres : undefined;
+    };
+    const place = layout.places.find((p) => p.id === dest.placeId);
+    const lens = dest.roadId ? [roadLen(dest.roadId)] : (place?.roads ?? []).map((r) => roadLen(r.id));
+    const known = lens.filter((x): x is number => x !== undefined);
+    const maxMetres = known.length && place?.kind !== 'fiddleYard' ? Math.max(...known) - locoLength(loco) : undefined;
+    const choice = resolveTrainStock(this.state, layout, t, {
+      mode,
+      trainTypeId: it.entry.trainTypeId,
+      rng: seededRandom(hashString(`${this.tt?.id ?? ''}|${t.id}`)),
+      limits: { maxMetres: maxMetres !== undefined && maxMetres > 0 ? maxMetres : undefined },
+      inUse: this.vehiclesInUse(t.id),
+    });
+    this.stockGiven.set(t.id, choice);
+    if (!choice) return;
+    w.consist = choice.text;
+    w.vehicles = choice.vehicles.map((v) => ({ ...v }));
+    const how = choice.rakeId ? `rake ${layout.rollingStock?.rakes.find((r) => r.id === choice.rakeId)?.identity ?? ''}` : choice.rakeTypeId ? (findRakeType(choice.rakeTypeId, layout)?.name ?? 'a rake type') : 'its rake';
+    this.note(`${t.name} runs with ${choice.text} (${how.trim()}).`);
   }
 
   // ------------------------------------------------------------------ segments
@@ -1042,6 +1135,23 @@ export class TimetableRunner {
       if (v.incoming) {
         it.status = `Waiting: ${name} is already offering another train.`;
         return;
+      }
+      // Play mode (v0.3.39): no train is offered into the station while an engine runs round (or the pilot
+      // releases one) there: the move gets its gap, and nothing is left waiting on it at the home signal.
+      const job = rb.mode === 'play' ? rb.railway?.jobsText?.(s.boxId)[0] : undefined;
+      if (job) {
+        it.status = `Waiting until the move in the station is done: ${job}`;
+        return;
+      }
+      // A through train waits while another train is due to depart on to the line it runs on to (the
+      // departure goes first, keeping trains on a single line in order).
+      if (s.kind === 'through') {
+        const onwardSess = rb.sessions.find((x) => x.connection.id === s.toConnId);
+        const onwardOut = onwardSess?.controller.view.outgoing;
+        if (onwardOut && onwardOut.locoId !== it.locoId) {
+          it.status = `Waiting: ${this.locoName(onwardOut.locoId ?? '')} is due to depart to ${onwardSess!.connection.neighbourName} first.`;
+          return;
+        }
       }
       const err = c.requestIncoming(it.locoId, it.entry.trainTypeId);
       if (err) {

@@ -2,29 +2,41 @@ import { mintFromConsist } from './stock';
 import { describe, expect, it } from 'vitest';
 import { createDefaultState } from './defaults';
 import { accept, play } from './simHarness';
-import { clearingPointCircuits } from './stationLimits';
+import { clearingPointCircuits, clearingPointZones, stretchFouls } from './stationLimits';
 import { addTimetable, addTrain } from './timetables';
 
 describe('station limits and the clearing point', () => {
-  it('Sigsim Central: the inner circuits are within the clearing point (440 yd in); more of the station with a longer one', () => {
+  it('Sigsim Central: the clearing point (440 yd in) lies within the 600 yd inner circuits, measured exactly; more of the station with a longer one', () => {
     const s = createDefaultState();
     const l = s.layouts[0];
     expect([...clearingPointCircuits(s, l, s.boxes[0], 'sgc-west')]).toEqual(['sgc-twi']);
     expect([...clearingPointCircuits(s, l, s.boxes[0], 'sgc-east')]).toEqual(['sgc-tei']);
-    l.clearingPoint = 500;
-    expect([...clearingPointCircuits(s, l, s.boxes[0], 'sgc-west')].sort()).toEqual(['sgc-t3', 'sgc-t4', 'sgc-t5', 'sgc-t6', 'sgc-twi']);
+    const twi = l.trackPlan.circuits.find((c) => c.id === 'sgc-twi')!;
+    expect(twi.length).toBeCloseTo(600 * 0.9144, 6);
+    const zones = clearingPointZones(s, l, s.boxes[0], 'sgc-west').get('sgc-twi')!;
+    expect(zones).toHaveLength(1);
+    expect(zones[0].metres).toBeCloseTo(402.336, 3);
+    // An engine drawn 30 m clear of the points (at the inner end) does not foul it; one running the whole circuit does.
+    const fromPoints = (1 - zones[0].end) as 0 | 1; // entered from the points end, it runs towards the home signal
+    expect(stretchFouls(zones, { toward: (1 - fromPoints) as 0 | 1, metres: 30 }, twi.length!)).toBe(false);
+    expect(stretchFouls(zones, { toward: (1 - fromPoints) as 0 | 1, metres: 200 }, twi.length!)).toBe(true);
+    expect(stretchFouls(zones, { toward: zones[0].end === 0 ? 1 : 0, metres: twi.length! }, twi.length!)).toBe(true);
+    l.clearingPoint = 700;
+    expect([...clearingPointCircuits(s, l, s.boxes[0], 'sgc-west')].sort()).toEqual(['sgc-t3', 'sgc-t4', 'sgc-t5', 'sgc-t6', 'sgc-t7', 'sgc-twi']);
   });
 
   it('a long goods train leaving the yard draws forward over the clearing point to set back: it waits for 2-4, and the line is given back with 2-1', () => {
     const t = play();
     const goods = t.loco('lms8233');
     goods.location = { kind: 'place', placeId: 'sgc-goods', roadId: 'sgc-siding' };
+    // Long enough (about 400 m) that drawing forward clear of the points takes it over the clearing point.
+    goods.working.consist = '60 wagons + brake van';
     t.east.setOutgoing('lms8233', 'mineral');
     t.east.sendBell('1');
     t.tick();
     t.east.sendBell('4-1');
     t.tick(8000);
-    // Too long for the West end (it must be clear of the points to set back): it runs on into the West inner, which needs 2-4.
+    // Too long for the West end (it must be clear of the points to set back): it runs on into the West inner, far enough to foul the clearing point, which needs 2-4.
     expect(t.until(() => t.sim.permissions('sigsim-central').waiting.length > 0, 120_000)).toBe(true);
     expect(t.sim.permissions('sigsim-central').waiting[0]).toMatchObject({ locoId: 'lms8233', connId: 'sgc-west', kind: 'inside' });
     t.tick(20_000);

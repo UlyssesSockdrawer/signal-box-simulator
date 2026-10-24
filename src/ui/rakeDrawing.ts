@@ -1,7 +1,7 @@
-import { formatLength } from '../core/railway';
+import { formatLength, locoLength, locoShape, type LocoShape } from '../core/railway';
 import { fittedHead, fromEngine, type ResolvedVehicle } from '../core/stock';
 import type { RakeEnd } from '../core/stockTypes';
-import type { UnitSystem } from '../core/types';
+import type { Loco, UnitSystem } from '../core/types';
 
 /*
  * The rake visualiser (v0.3.38): a schematic side elevation of a rake, each vehicle a block drawn to its
@@ -19,7 +19,6 @@ const NS = 'http://www.w3.org/2000/svg';
 const K = 6;
 const GROUND = 84;
 const PAD = 16;
-const ENGINE_M = 18;
 
 function s<K2 extends keyof SVGElementTagNameMap>(tag: K2, attrs: Record<string, string | number | undefined> = {}, ...kids: Array<SVGElement | string | null>): SVGElementTagNameMap[K2] {
   const el = document.createElementNS(NS, tag);
@@ -33,8 +32,11 @@ export interface RakeDrawingOptions {
   units: UnitSystem;
   /** Short labels under the vehicles (e.g. identities), in rake order. */
   labels?: string[];
-  /** Draw an engine at the engine end. */
-  engine?: boolean;
+  /**
+   * Draw an engine at the engine end: true for a generic steam tender engine, a kind of engine, or the
+   * loco working the train (drawn by its power type, at its length).
+   */
+  engine?: boolean | LocoShape | Pick<Loco, 'powerType'>;
   /** Length of a road or platform to compare with, metres, and its name. */
   road?: { metres: number; name: string };
   /** Accessible description. */
@@ -146,26 +148,146 @@ function vehicleBody(v: ResolvedVehicle, x: number, w: number, cabRight: boolean
   return g;
 }
 
-/** A simple engine outline, facing the rake. */
-function engineShape(x: number, w: number, facingRight: boolean): SVGGElement {
-  const g = s('g', { class: 'rk-engine' });
-  const bottom = GROUND - 12;
-  const cabW = w * 0.28;
-  const cabX = facingRight ? x + w - cabW - 2 : x + 2;
-  const boilerX = facingRight ? x + 6 : x + cabW + 2;
-  const boilerW = w - cabW - 8;
-  g.append(s('rect', { class: 'rk-body', x: cabX, y: bottom - 40, width: cabW, height: 40 }));
-  g.append(s('rect', { class: 'rk-body', x: boilerX, y: bottom - 28, width: boilerW, height: 22, rx: 8 }));
-  const chimX = facingRight ? boilerX + 6 : boilerX + boilerW - 12;
-  g.append(s('rect', { class: 'rk-body', x: chimX, y: bottom - 38, width: 6, height: 11 }));
-  g.append(s('line', { class: 'rk-frame', x1: x + 2, y1: bottom + 1, x2: x + w - 2, y2: bottom + 1 }));
-  for (const cx of [x + w * 0.25, x + w * 0.45, x + w * 0.65]) g.append(s('circle', { class: 'rk-wheel', cx, cy: GROUND - 6, r: 6 }));
+/** Lengths drawn for each kind of engine when no loco is given (metres over buffers). */
+export const ENGINE_METRES: Record<LocoShape, number> = { tender: 20, tank: 11, diesel: 17, electric: 17, unit: 20 };
+
+/**
+ * An engine in side elevation (v0.3.41), drawn in the ink of the board with its wheels and windows picked
+ * out: a steam tender engine (4-6-0 with its tender behind, nearest the train), a steam tank engine (0-6-0
+ * side tank with a coal bunker), a diesel (a cab at each end with short noses, on two six-wheel bogies),
+ * an electric (flat cab ends, a pantograph) or a unit car. x = left edge, w = length in px. The front
+ * (smokebox, or No. 1 end) faces away from the train: `frontLeft` when the engine is left of the rake.
+ */
+function engineShape(kind: LocoShape, x: number, w: number, frontLeft: boolean): SVGGElement {
+  const g = s('g', { class: `rk-engine rk-eng-${kind}`, ...(frontLeft ? {} : { transform: `translate(${2 * x + w},0) scale(-1,1)` }) });
+  const G = GROUND;
+  const body = (attrs: Record<string, string | number>) => g.append(s('rect', { class: 'rk-body', ...attrs }));
+  const path = (d: string, cls = 'rk-body') => g.append(s('path', { class: cls, d }));
+  const win = (wx: number, wy: number, ww: number, wh: number) => g.append(s('rect', { class: 'rk-eng-win', x: wx, y: wy, width: ww, height: wh }));
+  const wheel = (cx: number, r: number) => g.append(s('circle', { class: 'rk-wheel', cx, cy: G - r, r }));
+  const hub = (cx: number, r: number) => g.append(s('circle', { class: 'rk-hub', cx, cy: G - r, r: Math.max(1, r * 0.25) }));
+  const buffers = (bx: number) => g.append(s('rect', { class: 'rk-buffer', x: bx, y: G - 18, width: 2.5, height: 4 }));
+  const line = (x1: number, y1: number, x2: number, y2: number, cls = 'rk-line') => g.append(s('line', { class: cls, x1, y1, x2, y2 }));
+
+  if (kind === 'tender' || kind === 'tank') {
+    const tender = kind === 'tender';
+    const E = tender ? w * 0.64 : w; // the engine itself; the tender takes the rest
+    const at = (f: number) => x + E * f;
+    buffers(x);
+    // Frames and running plate.
+    body({ x: at(0.03), y: G - 21, width: E * 0.95, height: 6 });
+    line(x, G - 21, x + E, G - 21, 'rk-frame');
+    // Smokebox, chimney and boiler.
+    body({ x: at(0.05), y: G - 46, width: E * 0.13, height: 25, rx: 3 });
+    body({ x: at(0.085), y: G - 55, width: 6, height: 10 });
+    body({ x: at(0.075), y: G - 57, width: 8.5, height: 2.5 });
+    const boilerEnd = tender ? 0.72 : 0.62;
+    body({ x: at(0.16), y: G - 44, width: E * (boilerEnd - 0.16), height: 20 });
+    for (const f of tender ? [0.3, 0.45, 0.58] : [0.36]) line(at(f), G - 44, at(f), G - 25, 'rk-band');
+    // Dome and safety valves.
+    const dome = at(tender ? 0.42 : 0.3);
+    path(`M${dome - 5},${G - 43} Q${dome},${G - 54} ${dome + 5},${G - 43} Z`);
+    body({ x: at(boilerEnd - 0.07), y: G - 48, width: 3, height: 5 });
+    if (tender) {
+      // Belpaire firebox, outside cylinders over the leading bogie.
+      body({ x: at(0.6), y: G - 46, width: E * 0.13, height: 22 });
+      body({ x: at(0.05), y: G - 27, width: E * 0.15, height: 12, rx: 2 });
+    } else {
+      // Side tanks alongside the boiler.
+      body({ x: at(0.2), y: G - 39, width: E * 0.42, height: 18 });
+      line(at(0.21), G - 35, at(0.61), G - 35, 'rk-band');
+    }
+    // Cab with its roof, a front spectacle and side window.
+    const cab0 = at(boilerEnd);
+    const cabW = E * (tender ? 0.27 : 0.22);
+    body({ x: cab0, y: G - 51, width: cabW, height: 30 });
+    body({ x: cab0 - 2, y: G - 53, width: cabW + 4, height: 3, rx: 1 });
+    win(cab0 + 2, G - 47, 3.5, 5);
+    win(cab0 + cabW * 0.45, G - 47, cabW * 0.35, 8);
+    if (!tender) {
+      // Coal bunker behind the cab, with buffers at the back.
+      const b0 = cab0 + cabW;
+      body({ x: b0, y: G - 40, width: x + E - b0 - 1, height: 19 });
+      path(`M${b0 + 1},${G - 40} Q${(b0 + x + E) / 2},${G - 46} ${x + E - 2},${G - 40} Z`, 'rk-coal');
+      buffers(x + E - 2.5);
+    }
+    // Wheels: a leading bogie and three coupled drivers (4-6-0), or six coupled (0-6-0T).
+    const drivers = tender ? [0.35, 0.6, 0.85] : [0.22, 0.47, 0.72];
+    const dr = tender ? 9 : 7.5;
+    if (tender) for (const f of [0.07, 0.185]) wheel(at(f), 4);
+    // Splashers over the coupled wheels (a tank engine's are behind its tanks).
+    if (tender) for (const f of drivers) path(`M${at(f) - dr - 1},${G - 20} A${dr + 1},${dr + 1} 0 0 1 ${at(f) + dr + 1},${G - 20} Z`, 'rk-coal');
+    for (const f of drivers) wheel(at(f), dr);
+    for (const f of drivers) hub(at(f), dr);
+    line(at(drivers[0]), G - dr + 1, at(drivers[2]), G - dr + 1, 'rk-rod');
+    if (tender) line(at(0.18), G - 21, at(drivers[1]), G - dr + 1, 'rk-rod');
+    if (tender) {
+      // The tender, nearest the train: coal heaped above a flared body, six wheels, buffers at its back.
+      const t0 = x + E + 2;
+      const tw = w - E - 2;
+      line(x + E - 1, G - 16, t0 + 1, G - 16, 'rk-frame'); // drawbar
+      body({ x: t0, y: G - 21, width: tw, height: 6 });
+      body({ x: t0 + 1, y: G - 41, width: tw - 2, height: 21 });
+      body({ x: t0, y: G - 43, width: tw, height: 3, rx: 1 });
+      path(`M${t0 + 2},${G - 43} Q${t0 + tw * 0.45},${G - 51} ${t0 + tw - 4},${G - 43} Z`, 'rk-coal');
+      line(t0 + 3, G - 33, t0 + tw - 3, G - 33, 'rk-band');
+      for (const f of [0.2, 0.5, 0.8]) wheel(t0 + tw * f, 4.5);
+      buffers(t0 + tw - 2.5);
+    }
+    return g;
+  }
+
+  // Diesels, electrics and units: a body on bogies, buffers at both ends.
+  buffers(x);
+  buffers(x + w - 2.5);
+  const at = (f: number) => x + w * f;
+  if (kind === 'unit') {
+    // A railcar or unit car: a coach body with a cab at the front, windows along it.
+    path(`M${x + 2},${G - 14} V${G - 44} Q${x + 2},${G - 50} ${x + 9},${G - 50} H${x + w - 3} V${G - 14} Z`);
+    win(x + 4, G - 45, 6, 9);
+    for (let wx = x + 18; wx + 5 < x + w - 8; wx += 8) win(wx, G - 44, 5, 9);
+  } else if (kind === 'electric') {
+    body({ x: x + 2, y: G - 46, width: w - 4, height: 32, rx: 3 });
+    for (const f of [0, 1]) {
+      const cx = f ? x + w - 12 : x + 4;
+      win(cx, G - 42, 8, 8);
+    }
+    for (let gx = at(0.3); gx < at(0.7); gx += 4) line(gx, G - 38, gx, G - 26, 'rk-band');
+    // Pantograph on the roof.
+    const p = at(0.32);
+    path(`M${p - 6},${G - 46} L${p},${G - 54} L${p + 6},${G - 46} M${p - 8},${G - 55} H${p + 8}`, 'rk-panto');
+  } else {
+    // Diesel: short noses, a cab at each end, engine room with grilles between.
+    const nose = w * 0.07;
+    const cab = w * 0.11;
+    path(
+      `M${x + 2},${G - 15} V${G - 33} Q${x + 2},${G - 37} ${x + nose},${G - 37} V${G - 45} Q${x + nose + 2},${G - 48} ${x + nose + 6},${G - 48} ` +
+        `H${x + w - nose - 6} Q${x + w - nose - 2},${G - 48} ${x + w - nose},${G - 45} V${G - 37} Q${x + w - 2},${G - 37} ${x + w - 2},${G - 33} V${G - 15} Z`,
+    );
+    for (const f of [0, 1]) {
+      const wx = f ? x + w - nose - cab + 2 : x + nose + 2;
+      win(wx, G - 44, cab * 0.4, 7);
+      win(wx + cab * 0.55, G - 43, cab * 0.3, 6);
+    }
+    for (let gx = at(0.3); gx < at(0.7); gx += 3.5) line(gx, G - 42, gx, G - 32, 'rk-band');
+    line(at(0.07), G - 24, at(0.93), G - 24, 'rk-band');
+  }
+  // Underframe, a fuel tank (diesel), and two bogies.
+  line(x + 2, G - 14, x + w - 2, G - 14, 'rk-frame');
+  if (kind === 'diesel') body({ x: at(0.4), y: G - 14, width: w * 0.2, height: 6, rx: 2 });
+  const axles = kind === 'diesel' ? [-0.09, 0, 0.09] : [-0.06, 0.06];
+  for (const c of [0.2, 0.8]) {
+    g.append(s('rect', { class: 'rk-bogie', x: at(c - 0.13), y: G - 12, width: w * 0.26, height: 5, rx: 1.5 }));
+    for (const a of axles) wheel(at(c + a), 3.6);
+  }
   return g;
 }
 
 /** The rake drawn as an SVG side elevation (end A on the left). */
 export function drawRake(rv: ResolvedVehicle[], o: RakeDrawingOptions): SVGSVGElement {
-  const engineW = o.engine ? ENGINE_M * K : 0;
+  const kind: LocoShape | null = !o.engine ? null : o.engine === true ? 'tender' : typeof o.engine === 'string' ? o.engine : locoShape(o.engine);
+  const engineM = !kind ? 0 : typeof o.engine === 'object' ? locoLength(o.engine as Loco) : ENGINE_METRES[kind];
+  const engineW = engineM * K;
   const total = rv.reduce((m, v) => m + v.metres, 0);
   const roadEnd = o.road ? o.road.metres : 0;
   const leftEngine = !!o.engine && o.engineEnd === 'A';
@@ -196,7 +318,7 @@ export function drawRake(rv: ResolvedVehicle[], o: RakeDrawingOptions): SVGSVGEl
     svgEl.append(g);
     x += w;
   });
-  if (o.engine && rv.length) svgEl.append(engineShape(leftEngine ? PAD : x + 4, engineW, leftEngine));
+  if (kind && rv.length) svgEl.append(engineShape(kind, leftEngine ? PAD : x + 4, engineW, leftEngine));
   // Ends A and B.
   if (rv.length) {
     svgEl.append(s('text', { class: 'rk-end', x: rakeX0, y: 12, 'text-anchor': 'start' }, 'A'));

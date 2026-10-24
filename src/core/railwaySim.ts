@@ -7,7 +7,7 @@ import { Emitter, type Scheduler } from './scheduler';
 import type { SectionSession } from './session';
 import type { ThroughWorkings } from './throughTrains';
 import { findCircuit, findJunction, straightOn } from './trackPlan';
-import { clearingPointCircuits, lineOf } from './stationLimits';
+import { clearingPointZones, lineOf, stretchFouls, type ClearingZone } from './stationLimits';
 import type { ScoreRuleId } from './score';
 import { boxInterlocking, Frame, type Release } from './interlocking';
 import { postKey, signalsOf, SIGNAL_KINDS } from './signals';
@@ -300,7 +300,7 @@ export class RailwaySim {
   /** Each box's lever frame, when its layout has signals placed on the plan (v0.3.31). */
   private frames = new Map<string, { key: string; frame: Frame }>();
   /** Circuits within each line's clearing point (box|line), for the plan as it was when worked out. */
-  private cpCache = new Map<string, { plan: unknown; cp: number; set: Set<string> }>();
+  private cpCache = new Map<string, { plan: unknown; cp: number; sig: string; zones: Map<string, ClearingZone[]> }>();
   /** Each line's instrument as last seen (to catch Line Clear given with the clearing point obstructed). */
   private lastInstrument = new Map<string, string>();
   /** Running round and pilot releases under way, by the train's engine (v0.3.35). */
@@ -545,8 +545,18 @@ export class RailwaySim {
         continue;
       }
       const prev = steps[i - 1];
-      const need = t.length + CLEAR_OF_POINTS - this.lengthOf(layout, prev.circuitId);
-      const ext = need > 0 ? this.drawForward(layout, t, { circuitId: prev.circuitId, toward: prev.toward }, need, blocked) : null;
+      const len = this.lengthOf(layout, prev.circuitId);
+      const need = t.length + CLEAR_OF_POINTS - len;
+      if (need <= 0) {
+        // Room in the circuit itself (v0.3.39): run in only as far as it must, just clear of the points
+        // behind it, not to the far end (which may be over the clearing point, or at the home signal).
+        const last = out[out.length - 1];
+        if (i - 1 > 0 && !prev.reverse && last && last.circuitId === prev.circuitId && last.offset === undefined && last.full === undefined && this.mayReverse(layout, prev.circuitId))
+          out[out.length - 1] = { ...last, metres: t.length + CLEAR_OF_POINTS, full: len };
+        out.push(s);
+        continue;
+      }
+      const ext = this.drawForward(layout, t, { circuitId: prev.circuitId, toward: prev.toward }, need, blocked);
       if (!ext?.length) {
         out.push(s);
         continue;
@@ -569,7 +579,7 @@ export class RailwaySim {
 
   /** A new train standing in a circuit, about to run towards `toward`: drawn up to that end. */
   private standingTrain(layout: Layout, l: Loco, circuitId: string, toward: 0 | 1, purpose: Purpose, lengthOf?: number): SimTrain {
-    const length = lengthOf ?? trainLength(l);
+    const length = lengthOf ?? this.trainLen(l);
     // Which end of the train the engine is at (as far as is known): it leads when it is at the end it sets off towards.
     const end = this.locoEndIn(l, circuitId);
     const c = findCircuit(layout.trackPlan, circuitId)!;
@@ -711,7 +721,7 @@ export class RailwaySim {
           path = findPath(this.state, layout, entry, (d) => !!atHome(d), { blocked: (c) => !line.has(c) });
           if (path) break;
         }
-        const t = this.blank(l, { kind: 'incoming', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
+        const t = this.blank(l, { kind: 'incoming', boxId: b.boxId, connId: s.connection.id }, this.trainLen(l));
         t.fromLine = line;
         // Which way it faces coming on (v0.3.37): off the layout (a fiddle yard, the box beyond) engines and
         // trains are turned as an operator would, ready for their next journey, whatever the line (single or
@@ -896,7 +906,7 @@ export class RailwaySim {
           continue;
         }
         const secs = this.sectionSignals(layout, b.boxId, s.connection.id);
-        const probe = this.blank(l, { kind: 'outgoing', boxId: b.boxId, connId: s.connection.id }, trainLength(l));
+        const probe = this.blank(l, { kind: 'outgoing', boxId: b.boxId, connId: s.connection.id }, this.trainLen(l));
         const blocked = (c: string) => c !== from && this.blockedFor(probe, c);
         const onward = this.lineOnward(layout, probe, b.boxId, s.connection.id, steps[steps.length - 1]);
         if (!onward) {
@@ -965,6 +975,16 @@ export class RailwaySim {
     const loc = l.location;
     const rake = loc.kind === 'place' ? (layout.stock ?? []).find((r) => r.placeId === loc.placeId && r.roadId === loc.roadId) ?? (layout.stock ?? []).find((r) => r.circuitId === circuitId) : undefined;
     return rake ? rake.vehicles : own;
+  }
+
+  /**
+   * A train's length (v0.3.40): its stated length, else the loco plus its vehicles one by one (a rake's
+   * real lengths; a text consist's vehicles are the generic types), or a multiple unit's cars.
+   */
+  private trainLen(l: Loco): number {
+    if (l.working.length || /\b(dmu|emu|railcar|multiple unit|unit)\b/i.test(l.powerType)) return trainLength(l);
+    const lib = stockLibrary(this.layout?.rollingStock);
+    return locoLength(l) + vehiclesMetres(ownVehicles(l, lib), lib);
   }
 
   private departLength(layout: Layout, l: Loco, circuitId: string): number {
@@ -1674,15 +1694,45 @@ export class RailwaySim {
   // ------------------------------------------------------------------------------ station limits (v0.3.32)
 
   /** Circuits within the clearing point inside the home signals of one of a box's lines. */
-  private cpOf(layout: Layout, boxId: string, connId: string): Set<string> {
+  /** The clearing point inside the home signals of a line: circuit → the stretches of it within the clearing point. */
+  private cpOf(layout: Layout, boxId: string, connId: string): Map<string, ClearingZone[]> {
     const key = `${boxId}|${connId}`;
     const cp = layoutClearingPoint(layout);
+    const sig = layout.trackPlan.circuits.map((c) => c.length ?? '').join(',');
     const hit = this.cpCache.get(key);
-    if (hit && hit.plan === layout.trackPlan && hit.cp === cp) return hit.set;
+    if (hit && hit.plan === layout.trackPlan && hit.cp === cp && hit.sig === sig) return hit.zones;
     const box = this.boxDef(boxId);
-    const set = box ? clearingPointCircuits(this.state, layout, box, connId) : new Set<string>();
-    this.cpCache.set(key, { plan: layout.trackPlan, cp, set });
-    return set;
+    const zones = box ? clearingPointZones(this.state, layout, box, connId) : new Map<string, ClearingZone[]>();
+    this.cpCache.set(key, { plan: layout.trackPlan, cp, sig, zones });
+    return zones;
+  }
+
+  /** Does this stretch of a circuit (a part of a path) foul the clearing point inside the home signal of a line? */
+  private foulsCp(layout: Layout, boxId: string, connId: string, p: { circuitId: string | null; toward: 0 | 1; metres: number; offset?: number; full?: number }): boolean {
+    if (!p.circuitId) return false;
+    return stretchFouls(this.cpOf(layout, boxId, connId).get(p.circuitId), p, p.full ?? this.lengthOf(layout, p.circuitId));
+  }
+
+  /**
+   * Is the clearing point obstructed in this circuit? Anything standing in it counts (where it stands in
+   * the circuit is not known); a train on the move only where its footprint lies within the clearing point.
+   */
+  private cpOccupied(layout: Layout, boxId: string, connId: string, circuitId: string, occ: Map<string, Set<string>>): boolean {
+    const who = occ.get(circuitId);
+    if (!who?.size) return false;
+    for (const id of who) {
+      const t = this.trains.find((x) => x.locoId === id);
+      if (!t) return true;
+      const tail = t.head - t.length;
+      for (const p of t.parts) {
+        if (p.circuitId !== circuitId) continue;
+        const from = Math.max(tail, p.start);
+        const to = Math.min(t.head, p.start + p.metres);
+        if (to <= from + 0.01) continue;
+        if (this.foulsCp(layout, boxId, connId, { circuitId, toward: p.toward, metres: to - from, offset: (p.offset ?? 0) + (from - p.start), full: p.full })) return true;
+      }
+    }
+    return false;
   }
 
   /** Is this the train's own signalled run on a line (arriving off it, or leaving on to it with Line Clear)? It needs no permission there. */
@@ -1710,7 +1760,7 @@ export class RailwaySim {
     if (!shunting) return null;
     for (const s of this.box(boxId)?.sessions ?? []) {
       const conn = s.connection.id;
-      if (this.cpOf(layout, boxId, conn).has(p.circuitId) && !this.ownRun(t, conn)) return { boxId, connId: conn, kind: 'inside', pos: p.start, circuitId: p.circuitId };
+      if (this.foulsCp(layout, boxId, conn, p) && !this.ownRun(t, conn)) return { boxId, connId: conn, kind: 'inside', pos: p.start, circuitId: p.circuitId };
     }
     return null;
   }
@@ -1785,7 +1835,7 @@ export class RailwaySim {
           const line = lineOf(layout, boxId, s.circuitId);
           if (line) {
             if (!own(line)) inUse.add(line);
-          } else if (!last || setBack) for (const ss of this.box(boxId)?.sessions ?? []) if (this.cpOf(layout, boxId, ss.connection.id).has(s.circuitId) && !own(ss.connection.id)) inUse.add(ss.connection.id);
+          } else if (!last || setBack) for (const ss of this.box(boxId)?.sessions ?? []) if (this.foulsCp(layout, boxId, ss.connection.id, s) && !own(ss.connection.id)) inUse.add(ss.connection.id);
         }
       });
     }
@@ -1816,7 +1866,7 @@ export class RailwaySim {
         const was = this.lastInstrument.get(key);
         this.lastInstrument.set(key, now);
         if (now !== 'LC' || was === 'LC' || was === undefined || s.controller.view.mode !== 'ab') continue;
-        const blocked = [...this.cpOf(layout, b.boxId, s.connection.id)].filter((c) => occ.get(c)?.size);
+        const blocked = [...this.cpOf(layout, b.boxId, s.connection.id).keys()].filter((c) => this.cpOccupied(layout, b.boxId, s.connection.id, c, occ));
         if (!blocked.length) continue;
         const rule: ScoreRuleId = 'lc_clearing_point';
         s.controller.penalise(rule, `Line Clear given to ${s.connection.neighbourName} with the line inside the home signal obstructed (${blocked.map((c) => this.circuitName(layout, c)).join(', ')} occupied, within the clearing point).`);
@@ -2096,7 +2146,7 @@ export class RailwaySim {
     // Any road of the place ('' road): the first one with a clear way in.
     const place = layout.places.find((p) => p.id === to.placeId);
     const roads = to.roadId ? [to] : (place?.roads ?? []).map((r) => ({ placeId: to.placeId, roadId: r.id }));
-    const probe = this.blank(l, { kind: 'shunt', boxId, to, onDone: () => {} }, trainLength(l));
+    const probe = this.blank(l, { kind: 'shunt', boxId, to, onDone: () => {} }, this.trainLen(l));
     // Into a road with only stock in it (to couple up) is allowed; anything else must be clear.
     const onlyStock = (c: string) => this.o.board.occupants(c).every((x) => x.startsWith('rake:') || x === locoId);
     let found: { steps: PathStep[]; ref: PlaceRef; target: string } | null = null;

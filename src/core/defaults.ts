@@ -1,5 +1,5 @@
 import { DEFAULT_CODE_SETS, DEFAULT_TRAIN_TYPES } from './bellcodes';
-import { DEFAULT_CLEARING_POINT } from './railway';
+import { METRES_PER_YARD } from './railway';
 import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCircuit, TrackPlan } from './types';
 
 /**
@@ -9,8 +9,13 @@ import type { AppState, Junction, Settings, Timetable, TimetableEntry, TrackCirc
  * 7: signals on track plans, facing point locks and lever numbers (v0.3.29; nothing needs filling in).
  * 8: rolling stock (v0.3.38): each layout's library types, fleet and rakes; stock left standing in play mode is
  *    individual vehicles (older anonymous standing stock is dropped on load, D14/D19).
+ * 9: timetable trains choose their stock (v0.3.40): any suitable rake, a rake type, a saved rake or the
+ *    text consist (absent = the text consist, so older timetables run as before).
+ * 10: rake generation (v0.3.41): a layout's railway company, its own rake types and hidden built-in ones,
+ *    train limits on train types and generated formations on trains (Sigsim Central set to LMS on load).
+ * 11: weights (v0.3.42): a library type's weight basis (optional; nothing needs filling in).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 11;
 
 /** Name given to the layout made from a save that predates layouts, when it had no layout name. */
 export const FALLBACK_LAYOUT_NAME = 'My layout';
@@ -84,6 +89,7 @@ export function createDefaultState(): AppState {
         id: 'layout1',
         name: 'Sigsim Central',
         running: 'left',
+        stockCompany: 'LMS',
         places: [
           {
             id: 'fy-west',
@@ -280,8 +286,11 @@ export function createDefaultState(): AppState {
  * catch points (5) protecting the main line from anything running away out of the yard, then
  * points 3 to the goods siding and the goods shed road.
  */
-/** Sigsim Central's station limits at each end: a quarter of a mile (440 yd) inside the home signals. */
-const STATION_LIMIT = DEFAULT_CLEARING_POINT;
+/** Sigsim Central's inner circuits at each end, from the home signals to the points. */
+// The inner circuits run from the home signals to the points: 600 yards (v0.3.39; 440 before), so an engine
+// drawing just clear of the points to set back (a run round, a release) stays outside the clearing point
+// (440 yards inside the home signal) and needs no blocking back.
+const STATION_LIMIT = 600 * METRES_PER_YARD;
 
 function sigsimCentralPlan(): TrackPlan {
   const box = { kind: 'box', boxId: BOX } as const;

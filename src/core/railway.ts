@@ -199,6 +199,19 @@ export function consistVehicles(consist: string): Array<{ count: number; kind: s
 /** Is this loco a multiple unit / railcar (its consist counts cars, itself included)? */
 const isUnit = (l: Loco) => /\b(dmu|emu|railcar|multiple unit|unit)\b/i.test(l.powerType);
 
+/** How a loco is drawn (v0.3.41): a steam tender engine, a steam tank engine, a diesel, an electric, or a unit car. */
+export type LocoShape = 'tender' | 'tank' | 'diesel' | 'electric' | 'unit';
+
+/** A loco's drawing shape from its power type (a steam engine of unknown kind is drawn with a tender). */
+export function locoShape(l: Pick<Loco, 'powerType'>): LocoShape {
+  const p = l.powerType.toLowerCase();
+  if (isUnit(l as Loco)) return 'unit';
+  if (/tank/.test(p)) return 'tank';
+  if (/diesel/.test(p)) return 'diesel';
+  if (/electric/.test(p)) return 'electric';
+  return 'tender';
+}
+
 /** A loco's own length over buffers (metres), roughly, from its power type. */
 export function locoLength(l: Loco): number {
   const p = l.powerType.toLowerCase();

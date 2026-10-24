@@ -2,67 +2,598 @@
   "id": "lms-grouping",
   "name": "LMS, grouping era (1923 to 1947)",
   "origin": "LMS",
-  "eras": ["grouping"],
+  "eras": [
+    "grouping"
+  ],
   "note": "From the rolling stock research doc, sections 12a and 12b. Measured = an LMS diagram (Essery and Jenkinson) or a museum record; estimated = over headstocks plus the LMS buffer allowance; nominal = basis unknown. No weights found yet.",
   "params": {
-    "bufferAllowance": { "coaching": "3 ft 8 in", "freight": "3 ft 5 in" },
+    "bufferAllowance": {
+      "coaching": "3 ft 8 in",
+      "freight": "3 ft 5 in"
+    },
     "bufferAllowanceNote": "Measured on eight LMS coaches (3 ft 8 in) and two LMS wagons/vans (3 ft 5 in): research doc 3 and 3b.",
     "trainLimits": {
-      "express_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "ordinary_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "branch_passenger": { "maxVehicles": 15, "maxTons": 500 },
-      "parcels": { "maxVehicles": 25 },
-      "ecs": { "maxVehicles": 20 },
-      "freight_fitted_half": { "maxVehicles": 50 },
-      "freight_fitted_third": { "maxVehicles": 55 },
-      "freight_fitted_four": { "maxVehicles": 55 },
-      "freight_unfitted": { "maxVehicles": 100 },
-      "through_freight": { "maxVehicles": 100 },
-      "mineral": { "maxVehicles": 90 },
-      "pickup_goods": { "maxVehicles": 100 },
-      "branch_freight": { "maxVehicles": 100 }
+      "express_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "ordinary_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "branch_passenger": {
+        "maxVehicles": 15,
+        "maxTons": 500
+      },
+      "parcels": {
+        "maxVehicles": 25
+      },
+      "ecs": {
+        "maxVehicles": 20
+      },
+      "freight_fitted_half": {
+        "maxVehicles": 50
+      },
+      "freight_fitted_third": {
+        "maxVehicles": 55
+      },
+      "freight_fitted_four": {
+        "maxVehicles": 55
+      },
+      "freight_unfitted": {
+        "maxVehicles": 100
+      },
+      "through_freight": {
+        "maxVehicles": 100
+      },
+      "mineral": {
+        "maxVehicles": 90
+      },
+      "pickup_goods": {
+        "maxVehicles": 100
+      },
+      "branch_freight": {
+        "maxVehicles": 100
+      }
     },
-    "trainLimitsNote": "LMS 1939 rules (W. Wilson, LMS Magazine, March 1939; research doc 8c). Mapping to the app's train types is an inference."
+    "trainLimitsNote": "LMS 1939 rules (W. Wilson, LMS Magazine, March 1939; research doc 8c). Mapping to the app's train types is an inference.",
+    "goodsMix": [
+      {
+        "classId": "LMS-D1666",
+        "weight": 54450
+      },
+      {
+        "classId": "LMS-open-12t",
+        "weight": 37550
+      },
+      {
+        "classId": "LMS-3plank-fitted",
+        "weight": 10100
+      },
+      {
+        "classId": "LMS-mineral-rch",
+        "weight": 37650
+      },
+      {
+        "classId": "LMS-van-12t",
+        "weight": 42990
+      },
+      {
+        "classId": "LMS-cattle-1924",
+        "weight": 4385
+      },
+      {
+        "classId": "LMS-cattle-1935",
+        "weight": 900
+      }
+    ],
+    "goodsMixNote": "LMS new-build production 1924 to 1947 (research doc 3b/12b, R48), by the types the library has: high-sided opens (D1666, 1923-30), other opens 1931-47 (the 32,000, plus the D1666 balance), the 1935 fitted 3-plank (10,100), RCH minerals (21,000 + 16,650), covered vans (11,770 + 31,220), cattle. Bolsters, plate, tube, hopper, ballast and other specials have no library type yet and are left out; private owner wagons are not in the LMS production figures. Not a traffic count: a placeholder mix (D9).",
+    "blockWeight": {
+      "grouping": 0.3
+    },
+    "blockWeightNote": "Block (single-type) trains rarer in the grouping era: private owner wagons went back to their home sidings, often empty (D9). 0.3 is a placeholder weight."
   },
   "classes": [
-    { "key": "LMS-D1730", "diagram": "D1730", "name": "Period II all-steel corridor brake third", "code": "BTK", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 65 [P]" },
-    { "key": "LMS-D1742", "diagram": "D1742", "name": "Period I vestibule first", "code": "FO", "category": "coach", "coachType": "ordinary", "corridor": true, "guard": false, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 73 [P]; open (vestibule) coach, counts as corridor (D2)" },
-    { "key": "LMS-D1693", "diagram": "D1693", "name": "Period I vestibule third brake", "code": "BTO", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 74 [P]; open (vestibule)" },
-    { "key": "LMS-D1686", "diagram": "D1686", "name": "Period I lavatory composite (non-corridor)", "code": "CL", "category": "coach", "coachType": "ordinary", "corridor": false, "guard": false, "overHeadstocks": "57 ft", "overBuffers": "60 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 81 [P]" },
-    { "key": "LMS-D1697", "diagram": "D1697", "name": "Period I kitchen car", "code": "RK", "category": "coach", "coachType": "catering", "guard": false, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 59 [P]; corridor not recorded" },
-    { "key": "LMS-D1792", "diagram": "D1792", "name": "Standard Post Office sorting van", "code": "POS", "category": "coach", "coachType": "tpo", "guard": false, "overHeadstocks": "60 ft", "overBuffers": "63 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 108 [P]; corridor and guard's compartment not recorded" },
-    { "key": "LMS-D1793", "diagram": "D1793", "name": "Standard Post Office stowage van", "code": "POT", "category": "coach", "coachType": "tpo", "guard": false, "overHeadstocks": "50 ft", "overBuffers": "53 ft 8 in", "lengthBasis": "measured", "fitted": true, "source": "Essery and Jenkinson p. 109 [P]; corridor and guard's compartment not recorded" },
-    { "key": "LMS-57-tk", "name": "Standard 57 ft corridor third", "code": "TK", "category": "coach", "coachType": "ordinary", "corridor": true, "guard": false, "overHeadstocks": "57 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5: 57 ft is the bulk of LMS designs; D1730 supports the length" },
-    { "key": "LMS-57-fk", "name": "Standard 57 ft corridor first", "code": "FK", "category": "coach", "coachType": "ordinary", "corridor": true, "guard": false, "overHeadstocks": "57 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; D1730 supports the length" },
-    { "key": "LMS-57-ck", "name": "Standard 57 ft corridor composite", "code": "CK", "category": "coach", "coachType": "ordinary", "corridor": true, "guard": false, "overHeadstocks": "57 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; D1730 supports the length" },
-    { "key": "LMS-57-bfk", "name": "Standard 57 ft corridor brake first", "code": "BFK", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "57 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; D1730 supports the length" },
-    { "key": "LMS-60-ck", "name": "60 ft corridor composite", "code": "CK", "category": "coach", "coachType": "ordinary", "corridor": true, "guard": false, "overHeadstocks": "60 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5: most corridor composites; D1792 supports 60 ft" },
-    { "key": "LMS-60-bck", "name": "60 ft corridor brake composite", "code": "BCK", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "60 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5: most brake composites; D1792 supports 60 ft" },
-    { "key": "LMS-62-bck", "name": "Period III 62 ft corridor brake composite", "code": "BCK", "category": "coach", "coachType": "passengerBrake", "corridor": true, "guard": true, "overHeadstocks": "62 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5 (later Period III corridor brake composites)" },
-    { "key": "LMS-65-rfo", "name": "Period III 65 ft vestibule first dining coach", "code": "RFO", "category": "coach", "coachType": "catering", "corridor": true, "guard": false, "overHeadstocks": "65 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; open (vestibule)" },
-    { "key": "LMS-65-slt", "name": "Period III 65 ft third class sleeping car", "code": "SLT", "category": "coach", "coachType": "sleeping", "guard": false, "overHeadstocks": "65 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5" },
-    { "key": "LMS-68-rck", "name": "68 ft kitchen/dining car (RF, RC, RT, RU)", "code": "RCK", "category": "coach", "coachType": "catering", "guard": false, "overHeadstocks": "68 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5: all LMS kitchen/dining cars were 68 ft; D1810 is a later Period II dining car" },
-    { "key": "LMS-68-sl", "name": "Pre-Stanier 68 ft 12-wheel sleeping car", "code": "SLF", "category": "coach", "coachType": "sleeping", "guard": false, "overHeadstocks": "68 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5" },
-    { "key": "LMS-69-sl", "name": "Period III 69 ft 12-wheel sleeping car", "code": "SLF", "category": "coach", "coachType": "sleeping", "guard": false, "overHeadstocks": "69 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5" },
-    { "key": "LMS-60-slt", "name": "Period I 60 ft third class sleeping car", "code": "SLT", "category": "coach", "coachType": "sleeping", "guard": false, "overHeadstocks": "60 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5" },
-    { "key": "LMS-60-rto", "name": "Period II 60 ft vestibule third dining coach", "code": "RTO", "category": "coach", "coachType": "catering", "guard": false, "overHeadstocks": "60 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; corridor not recorded" },
-    { "key": "LMS-54-t", "name": "54 ft non-corridor coach (LT&S, Cathcart Circle)", "code": "T", "category": "coach", "coachType": "ordinary", "corridor": false, "guard": false, "overHeadstocks": "54 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5; brake versions (BT, BCL) existed" },
-    { "key": "LMS-51-c", "name": "51 ft non-corridor composite (Cathcart Circle, one batch)", "code": "C", "category": "coach", "coachType": "ordinary", "corridor": false, "guard": false, "overHeadstocks": "51 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5" },
-    { "key": "LMS-50-bg", "name": "50 ft passenger full brake with gangway", "code": "BG", "category": "van", "coachType": "fullBrake", "corridor": true, "guard": true, "overHeadstocks": "50 ft", "lengthBasis": "estimated", "fitted": true, "source": "R5, R6 (retail); D1697 and D1793 support 50 ft; LMS code CBR" },
-    { "key": "LMS-bgz", "name": "6-wheel passenger full brake with gangway", "code": "BGZ", "category": "van", "coachType": "fullBrake", "corridor": true, "guard": true, "fitted": true, "source": "R5: the type exists; length not found (LMS code CR)" },
-    { "key": "LMS-bz", "name": "6-wheel passenger full brake without gangway", "code": "BZ", "category": "van", "coachType": "fullBrake", "corridor": false, "guard": true, "fitted": true, "source": "R5: the type exists; length not found (LMS code R)" },
-    { "key": "LMS-42-guv", "name": "42 ft bogie parcels van (CCT, later GUV)", "code": "GUV", "category": "van", "coachType": "van", "guard": false, "overHeadstocks": "42 ft", "overBuffers": "45 ft 8 in", "lengthBasis": "nominal", "fitted": true, "source": "R34 (retail): 240 built 1933 to 1937; basis of the 42 ft unknown, so the length is weak" },
-    { "key": "LMS-3plank-fitted", "name": "12-ton 3-plank open merchandise wagon, vacuum fitted", "code": "OPEN3", "category": "wagon", "guard": false, "shape": "open", "overHeadstocks": "17 ft 6 in", "overBuffers": "20 ft 11 in", "lengthBasis": "measured", "fitted": true, "source": "R47 (Science Museum, No 472867, 1936); 10,100 built from 1935" },
-    { "key": "LMS-open-12t", "name": "Standard 12-ton open goods wagon (medium or low sided)", "code": "OPEN", "category": "wagon", "guard": false, "shape": "open", "overHeadstocks": "17 ft 6 in", "lengthBasis": "estimated", "fitted": false, "source": "R48 (LMS Society); mostly unfitted" },
-    { "key": "LMS-D1666", "diagram": "D1666", "name": "High-sided open goods wagon", "code": "OPENH", "category": "wagon", "guard": false, "shape": "open", "overHeadstocks": "17 ft 6 in", "lengthBasis": "estimated", "fitted": false, "source": "R48: 54,450 built 1923 to 1930; handbrake only" },
-    { "key": "LMS-mineral-rch", "name": "Mineral wagon, RCH standard (wooden)", "code": "MIN", "category": "wagon", "guard": false, "shape": "mineral", "overHeadstocks": "16 ft 6 in", "lengthBasis": "estimated", "fitted": false, "source": "R48: 21,000 built 1924 to 1930; the 16 ft 6 in basis is not stated, so the estimate is weak" },
-    { "key": "LMS-cattle-1924", "name": "Cattle wagon (1924 to 1934)", "code": "CATTLE", "category": "wagon", "guard": false, "shape": "cattle", "overHeadstocks": "19 ft 1 in", "lengthBasis": "estimated", "fitted": false, "source": "R48 (weak estimate); fitted state not recorded, taken as unfitted [I]" },
-    { "key": "LMS-cattle-1935", "name": "Cattle wagon (1935 lot, steel underframe)", "code": "CATTLE", "category": "wagon", "guard": false, "shape": "cattle", "overHeadstocks": "18 ft 6 in", "lengthBasis": "estimated", "fitted": false, "source": "R48 (weak estimate); taken as unfitted [I]" },
-    { "key": "LMS-van-12t", "name": "Covered goods van, 12-ton", "code": "VAN", "category": "van", "guard": false, "shape": "closed", "overBuffers": "21 ft", "lengthBasis": "estimated", "fitted": false, "source": "R48, R56, R57: about 21 ft over buffers (1904 Goods Conference standard); mostly unfitted" },
-    { "key": "LMS-po-7plank", "name": "RCH 1923 private owner 7-plank 12-ton wagon", "code": "PO", "category": "wagon", "guard": false, "shape": "open", "overBuffers": "20 ft 6 in", "lengthBasis": "nominal", "fitted": false, "source": "R31 (retail, model-derived length); unfitted [I]" },
-    { "key": "LMS-D1890", "diagram": "D1890", "name": "20-ton goods brake van (1933, 20 ft type)", "code": "BV", "category": "brakeVan", "guard": true, "shape": "brakeVan", "overHeadstocks": "20 ft", "overBuffers": "7137 mm", "lengthBasis": "measured", "fitted": false, "source": "R26 (Science Museum record) and R48" },
-    { "key": "LMS-bv-20t-1934", "name": "Standard 20-ton brake van (1934 type, 24 ft), unfitted", "code": "BV", "category": "brakeVan", "guard": true, "shape": "brakeVan", "overHeadstocks": "24 ft", "lengthBasis": "estimated", "fitted": false, "source": "R48, R24; D2068 is a variant" },
-    { "key": "LMS-bv-20t-1934-fitted", "name": "Standard 20-ton brake van (1934 type, 24 ft), vacuum fitted (75 built)", "code": "BVF", "category": "brakeVan", "guard": true, "shape": "brakeVan", "overHeadstocks": "24 ft", "lengthBasis": "estimated", "fitted": true, "source": "R24, R51: 75 built vacuum fitted, the only LMS standard vans fully fitted from new" },
-    { "key": "LNWR-van-1917", "name": "LNWR covered van (1917, inherited)", "code": "VAN", "category": "van", "guard": false, "shape": "closed", "overBuffers": "6477 mm", "lengthBasis": "measured", "fitted": false, "origin": "LNWR", "source": "R49 (Science Museum record); unfitted [I]" }
+    {
+      "key": "LMS-D1730",
+      "diagram": "D1730",
+      "name": "Period II all-steel corridor brake third",
+      "code": "BTK",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 65 [P]"
+    },
+    {
+      "key": "LMS-D1742",
+      "diagram": "D1742",
+      "name": "Period I vestibule first",
+      "code": "FO",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 73 [P]; open (vestibule) coach, counts as corridor (D2)"
+    },
+    {
+      "key": "LMS-D1693",
+      "diagram": "D1693",
+      "name": "Period I vestibule third brake",
+      "code": "BTO",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 74 [P]; open (vestibule)"
+    },
+    {
+      "key": "LMS-D1686",
+      "diagram": "D1686",
+      "name": "Period I lavatory composite (non-corridor)",
+      "code": "CL",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": false,
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "overBuffers": "60 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 81 [P]"
+    },
+    {
+      "key": "LMS-D1697",
+      "diagram": "D1697",
+      "name": "Period I kitchen car",
+      "code": "RK",
+      "category": "coach",
+      "coachType": "catering",
+      "guard": false,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 59 [P]; corridor not recorded"
+    },
+    {
+      "key": "LMS-D1792",
+      "diagram": "D1792",
+      "name": "Standard Post Office sorting van",
+      "code": "POS",
+      "category": "coach",
+      "coachType": "tpo",
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "overBuffers": "63 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 108 [P]; corridor and guard's compartment not recorded"
+    },
+    {
+      "key": "LMS-D1793",
+      "diagram": "D1793",
+      "name": "Standard Post Office stowage van",
+      "code": "POT",
+      "category": "coach",
+      "coachType": "tpo",
+      "guard": false,
+      "overHeadstocks": "50 ft",
+      "overBuffers": "53 ft 8 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "Essery and Jenkinson p. 109 [P]; corridor and guard's compartment not recorded"
+    },
+    {
+      "key": "LMS-57-tk",
+      "name": "Standard 57 ft corridor third",
+      "code": "TK",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5: 57 ft is the bulk of LMS designs; D1730 supports the length"
+    },
+    {
+      "key": "LMS-57-fk",
+      "name": "Standard 57 ft corridor first",
+      "code": "FK",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; D1730 supports the length"
+    },
+    {
+      "key": "LMS-57-ck",
+      "name": "Standard 57 ft corridor composite",
+      "code": "CK",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "57 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; D1730 supports the length"
+    },
+    {
+      "key": "LMS-57-bfk",
+      "name": "Standard 57 ft corridor brake first",
+      "code": "BFK",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "57 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; D1730 supports the length"
+    },
+    {
+      "key": "LMS-60-ck",
+      "name": "60 ft corridor composite",
+      "code": "CK",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5: most corridor composites; D1792 supports 60 ft"
+    },
+    {
+      "key": "LMS-60-bck",
+      "name": "60 ft corridor brake composite",
+      "code": "BCK",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "60 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5: most brake composites; D1792 supports 60 ft"
+    },
+    {
+      "key": "LMS-62-bck",
+      "name": "Period III 62 ft corridor brake composite",
+      "code": "BCK",
+      "category": "coach",
+      "coachType": "passengerBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "62 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5 (later Period III corridor brake composites)"
+    },
+    {
+      "key": "LMS-65-rfo",
+      "name": "Period III 65 ft vestibule first dining coach",
+      "code": "RFO",
+      "category": "coach",
+      "coachType": "catering",
+      "corridor": true,
+      "guard": false,
+      "overHeadstocks": "65 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; open (vestibule)"
+    },
+    {
+      "key": "LMS-65-slt",
+      "name": "Period III 65 ft third class sleeping car",
+      "code": "SLT",
+      "category": "coach",
+      "coachType": "sleeping",
+      "guard": false,
+      "overHeadstocks": "65 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5"
+    },
+    {
+      "key": "LMS-68-rck",
+      "name": "68 ft kitchen/dining car (RF, RC, RT, RU)",
+      "code": "RCK",
+      "category": "coach",
+      "coachType": "catering",
+      "guard": false,
+      "overHeadstocks": "68 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5: all LMS kitchen/dining cars were 68 ft; D1810 is a later Period II dining car"
+    },
+    {
+      "key": "LMS-68-sl",
+      "name": "Pre-Stanier 68 ft 12-wheel sleeping car",
+      "code": "SLF",
+      "category": "coach",
+      "coachType": "sleeping",
+      "guard": false,
+      "overHeadstocks": "68 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5"
+    },
+    {
+      "key": "LMS-69-sl",
+      "name": "Period III 69 ft 12-wheel sleeping car",
+      "code": "SLF",
+      "category": "coach",
+      "coachType": "sleeping",
+      "guard": false,
+      "overHeadstocks": "69 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5"
+    },
+    {
+      "key": "LMS-60-slt",
+      "name": "Period I 60 ft third class sleeping car",
+      "code": "SLT",
+      "category": "coach",
+      "coachType": "sleeping",
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5"
+    },
+    {
+      "key": "LMS-60-rto",
+      "name": "Period II 60 ft vestibule third dining coach",
+      "code": "RTO",
+      "category": "coach",
+      "coachType": "catering",
+      "guard": false,
+      "overHeadstocks": "60 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; corridor not recorded"
+    },
+    {
+      "key": "LMS-54-t",
+      "name": "54 ft non-corridor coach (LT&S, Cathcart Circle)",
+      "code": "T",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": false,
+      "guard": false,
+      "overHeadstocks": "54 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5; brake versions (BT, BCL) existed"
+    },
+    {
+      "key": "LMS-51-c",
+      "name": "51 ft non-corridor composite (Cathcart Circle, one batch)",
+      "code": "C",
+      "category": "coach",
+      "coachType": "ordinary",
+      "corridor": false,
+      "guard": false,
+      "overHeadstocks": "51 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5"
+    },
+    {
+      "key": "LMS-50-bg",
+      "name": "50 ft passenger full brake with gangway",
+      "code": "BG",
+      "category": "van",
+      "coachType": "fullBrake",
+      "corridor": true,
+      "guard": true,
+      "overHeadstocks": "50 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R5, R6 (retail); D1697 and D1793 support 50 ft; LMS code CBR"
+    },
+    {
+      "key": "LMS-bgz",
+      "name": "6-wheel passenger full brake with gangway",
+      "code": "BGZ",
+      "category": "van",
+      "coachType": "fullBrake",
+      "corridor": true,
+      "guard": true,
+      "fitted": true,
+      "source": "R5: the type exists; length not found (LMS code CR)"
+    },
+    {
+      "key": "LMS-bz",
+      "name": "6-wheel passenger full brake without gangway",
+      "code": "BZ",
+      "category": "van",
+      "coachType": "fullBrake",
+      "corridor": false,
+      "guard": true,
+      "fitted": true,
+      "source": "R5: the type exists; length not found (LMS code R)"
+    },
+    {
+      "key": "LMS-42-guv",
+      "name": "42 ft bogie parcels van (CCT, later GUV)",
+      "code": "GUV",
+      "category": "van",
+      "coachType": "van",
+      "guard": false,
+      "overHeadstocks": "42 ft",
+      "overBuffers": "45 ft 8 in",
+      "lengthBasis": "nominal",
+      "fitted": true,
+      "source": "R34 (retail): 240 built 1933 to 1937; basis of the 42 ft unknown, so the length is weak"
+    },
+    {
+      "key": "LMS-3plank-fitted",
+      "name": "12-ton 3-plank open merchandise wagon, vacuum fitted",
+      "code": "OPEN3",
+      "category": "wagon",
+      "guard": false,
+      "shape": "open",
+      "overHeadstocks": "17 ft 6 in",
+      "overBuffers": "20 ft 11 in",
+      "lengthBasis": "measured",
+      "fitted": true,
+      "source": "R47 (Science Museum, No 472867, 1936); 10,100 built from 1935"
+    },
+    {
+      "key": "LMS-open-12t",
+      "name": "Standard 12-ton open goods wagon (medium or low sided)",
+      "code": "OPEN",
+      "category": "wagon",
+      "guard": false,
+      "shape": "open",
+      "overHeadstocks": "17 ft 6 in",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48 (LMS Society); mostly unfitted"
+    },
+    {
+      "key": "LMS-D1666",
+      "diagram": "D1666",
+      "name": "High-sided open goods wagon",
+      "code": "OPENH",
+      "category": "wagon",
+      "guard": false,
+      "shape": "open",
+      "overHeadstocks": "17 ft 6 in",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48: 54,450 built 1923 to 1930; handbrake only"
+    },
+    {
+      "key": "LMS-mineral-rch",
+      "name": "Mineral wagon, RCH standard (wooden)",
+      "code": "MIN",
+      "category": "wagon",
+      "guard": false,
+      "shape": "mineral",
+      "overHeadstocks": "16 ft 6 in",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48: 21,000 built 1924 to 1930; the 16 ft 6 in basis is not stated, so the estimate is weak"
+    },
+    {
+      "key": "LMS-cattle-1924",
+      "name": "Cattle wagon (1924 to 1934)",
+      "code": "CATTLE",
+      "category": "wagon",
+      "guard": false,
+      "shape": "cattle",
+      "overHeadstocks": "19 ft 1 in",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48 (weak estimate); fitted state not recorded, taken as unfitted [I]"
+    },
+    {
+      "key": "LMS-cattle-1935",
+      "name": "Cattle wagon (1935 lot, steel underframe)",
+      "code": "CATTLE",
+      "category": "wagon",
+      "guard": false,
+      "shape": "cattle",
+      "overHeadstocks": "18 ft 6 in",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48 (weak estimate); taken as unfitted [I]"
+    },
+    {
+      "key": "LMS-van-12t",
+      "name": "Covered goods van, 12-ton",
+      "code": "VAN",
+      "category": "van",
+      "guard": false,
+      "shape": "closed",
+      "overBuffers": "21 ft",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48, R56, R57: about 21 ft over buffers (1904 Goods Conference standard); mostly unfitted"
+    },
+    {
+      "key": "LMS-po-7plank",
+      "name": "RCH 1923 private owner 7-plank 12-ton wagon",
+      "code": "PO",
+      "category": "wagon",
+      "guard": false,
+      "shape": "open",
+      "overBuffers": "20 ft 6 in",
+      "lengthBasis": "nominal",
+      "fitted": false,
+      "source": "R31 (retail, model-derived length); unfitted [I]"
+    },
+    {
+      "key": "LMS-D1890",
+      "diagram": "D1890",
+      "name": "20-ton goods brake van (1933, 20 ft type)",
+      "code": "BV",
+      "category": "brakeVan",
+      "guard": true,
+      "shape": "brakeVan",
+      "overHeadstocks": "20 ft",
+      "overBuffers": "7137 mm",
+      "lengthBasis": "measured",
+      "fitted": false,
+      "source": "R26 (Science Museum record) and R48"
+    },
+    {
+      "key": "LMS-bv-20t-1934",
+      "name": "Standard 20-ton brake van (1934 type, 24 ft), unfitted",
+      "code": "BV",
+      "category": "brakeVan",
+      "guard": true,
+      "shape": "brakeVan",
+      "overHeadstocks": "24 ft",
+      "lengthBasis": "estimated",
+      "fitted": false,
+      "source": "R48, R24; D2068 is a variant"
+    },
+    {
+      "key": "LMS-bv-20t-1934-fitted",
+      "name": "Standard 20-ton brake van (1934 type, 24 ft), vacuum fitted (75 built)",
+      "code": "BVF",
+      "category": "brakeVan",
+      "guard": true,
+      "shape": "brakeVan",
+      "overHeadstocks": "24 ft",
+      "lengthBasis": "estimated",
+      "fitted": true,
+      "source": "R24, R51: 75 built vacuum fitted, the only LMS standard vans fully fitted from new"
+    },
+    {
+      "key": "LNWR-van-1917",
+      "name": "LNWR covered van (1917, inherited)",
+      "code": "VAN",
+      "category": "van",
+      "guard": false,
+      "shape": "closed",
+      "overBuffers": "6477 mm",
+      "lengthBasis": "measured",
+      "fitted": false,
+      "origin": "LNWR",
+      "source": "R49 (Science Museum record); unfitted [I]"
+    }
   ]
 }

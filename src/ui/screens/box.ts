@@ -113,20 +113,25 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     window.removeEventListener('pointercancel', onUp, true);
   });
   /** Next step for blocking back and shunting into the section (signaller play mode), or ''. */
-  const permissionGuidance = (): string => {
+  const permissionGuidance = (which: 'waiting' | 'giveBack'): string => {
     const sim = runtime.sim;
     if (!sim) return '';
     const p = sim.permissions(box.id);
     for (const s of sessions) {
       const v = s.controller.view;
       const conn = s.connection;
-      // Not while a train is being offered or worked on this line (its own exchange comes first).
-      if (v.incoming && !v.incoming.held) continue;
+      // Not while a train from this line is accepted or on its way (its own working comes first). A train
+      // only offered, not accepted, is held while the line is blocked back (v0.3.39).
+      if (v.incoming?.acceptedAt) continue;
       const held = v.permission;
       const w = p.waiting.find((x) => x.connId === conn.id);
-      if (w && !held.rear && !held.forward) {
-        const l = store.state.roster.find((x) => x.id === w.locoId);
-        return `${l ? locoName(l) : 'A train'}: ${w.text.charAt(0).toLowerCase()}${w.text.slice(1)}`;
+      if (which === 'waiting') {
+        if (w && !held.rear && !held.forward) {
+          const l = store.state.roster.find((x) => x.id === w.locoId);
+          const offered = v.incoming && !v.incoming.acceptedAt ? ` Do not accept the train ${conn.neighbourName} is offering until the line is given back: it waits there.` : '';
+          return `${l ? locoName(l) : 'A train'}: ${w.text.charAt(0).toLowerCase()}${w.text.slice(1)}${offered}`;
+        }
+        continue;
       }
       if ((held.rear || held.forward) && !p.inUse.has(conn.id)) {
         if (held.forward === 'token') return v.tokenWithdrawnHere ? `The shunt is back clear of the line to ${conn.neighbourName}: take the token, press "Replace token", then send 1 and 2-5 to ${conn.neighbourName}.` : `The shunt is back clear of the line to ${conn.neighbourName}: call attention (1), then send 2-5 (token replaced).`;
@@ -146,12 +151,16 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
       nextStep.hidden = true;
       return;
     }
+    // Station limits (play mode): a movement stopped waiting for permission to use a line comes first
+    // (v0.3.39): until it has it, it may be in the way of everything else (a run round, a release).
+    const pw = permissionGuidance('waiting');
     // Two trains offered at once, one of a higher class: warn before the lower class is accepted.
-    const reg = runtime.regulator.advice();
-    // Through trains (offering on) need the signaller to work two lines at once: that guidance comes first.
-    const tg = runtime.workings.guidance();
-    // Station limits (play mode): a movement waiting for permission to use a line, or a line blocked for shunting now clear again.
-    const pg = !reg && !tg ? permissionGuidance() : '';
+    const reg = pw ? null : runtime.regulator.advice();
+    // Through trains (offering on) need the signaller to work two lines at once: that guidance comes next.
+    const tgAll = runtime.workings.guidance();
+    const tg = pw ? null : tgAll;
+    // A line blocked for shunting that is clear again: give it back.
+    const pg = pw || (!reg && !tg ? permissionGuidance('giveBack') : '');
     // A quiet line selected while a train is still being worked on another, or another line is not
     // yet open (nothing can run, a timetable cannot start, until every line is): show that line's next step.
     const other = !tg && !ui.busy() ? (uis.find((u) => u !== ui && u.busy()) ?? (ui.isOpen() ? uis.find((u) => u !== ui && !u.isOpen()) : undefined)) : undefined;
@@ -171,6 +180,8 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
     // The railway running an engine round its train, or the station pilot at work (play mode): said under the step.
     const jobs = runtime.sim?.jobsText(box.id) ?? [];
     if (jobs.length && !g.hint) g.hint = jobs.join(' ');
+    // A through train waiting behind the movement: say so under the step.
+    if (pw && tgAll && !g.hint) g.hint = tgAll.text;
     nextStep.hidden = false;
     replace(
       nextStep,
@@ -388,7 +399,7 @@ export function boxScreen(ctx: Ctx, box: BoxDef): Screen {
   if (runtime.sim)
     ctx.onLeave(
       runtime.sim.events.on('change', () => {
-        const t = permissionGuidance() + (runtime.sim?.jobsText(box.id).join(' ') ?? '');
+        const t = permissionGuidance('waiting') + permissionGuidance('giveBack') + (runtime.sim?.jobsText(box.id).join(' ') ?? '');
         if (t === lastPermText) return;
         lastPermText = t;
         renderNextStep();

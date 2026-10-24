@@ -12,6 +12,7 @@ import { signalSample } from '../signalDrawing';
 import { activeCodeSet, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { h } from '../dom';
 import { drawRake } from '../rakeDrawing';
+import type { LocoShape } from '../../core/railway';
 import { classCode, mintVehicle, resolveVehicle, stockLibrary } from '../../core/stock';
 import { formatLength, layoutClearingPoint } from '../../core/railway';
 
@@ -417,10 +418,10 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
   function stockSection(): HTMLElement[] {
     const lib = stockLibrary();
     const units = ctx.store.state.settings.units;
-    const sample = (ids: string[], loaded: number[], title: string) => {
+    const sample = (ids: string[], loaded: number[], title: string, engine: LocoShape = 'tender') => {
       const vs = ids.map((id, i) => ({ ...mintVehicle(id), ...(loaded.includes(i) ? { loaded: true } : {}) }));
       const rv = vs.map((x) => resolveVehicle(x, lib));
-      return h('div', { class: 'sk-vis' }, drawRake(rv, { engineEnd: 'A', units, engine: true, labels: rv.map((r) => classCode(r.cls)), title }));
+      return h('div', { class: 'sk-vis' }, drawRake(rv, { engineEnd: 'A', units, engine, labels: rv.map((r) => classCode(r.cls)), title }));
     };
     const openStock = () => layout && ctx.goFrom(`plan/${layout.id}/stock`, { route: 'tutorial/stock', label: 'tutorial' });
     const items: Array<HTMLElement | null> = [
@@ -431,12 +432,18 @@ export function tutorialScreen(ctx: Ctx, tab?: string): Screen {
         null,
         h('li', null, h('strong', null, 'Library'), ': types of vehicle with their length over buffers, brake, corridor and guard’s compartment. Built-in types come from research into real railways (the LMS in the grouping era first), with generic types that stand in for any company or era. Lengths marked “about” are estimated, nominal or generic. Add your own types for anything missing; hide or copy the built-in ones.'),
         h('li', null, h('strong', null, 'Fleet'), ': your individual vehicles. Each has a permanent system identity (its type code and part of its id, e.g. BTK-3f9a1c); type your own identity, such as a running number, to override it.'),
+        h('li', null, h('strong', null, 'Railway company'), ': Generic or LMS (Sigsim Central is LMS). It picks the goods mix goods trains are made from, the rake types offered and the default train limits; the era comes from the layout’s headcode era.'),
+        h('li', null, h('strong', null, 'Rake types'), ': recipes for making up trains, such as a local set, an express or a pick-up goods. Copy a built-in type or start a new one: choose the train types it suits, how often it is used, and its vehicles from the engine end with how many of each (or goods from the company mix). An example is drawn to scale. Hide built-in types you do not want.'),
         h('li', null, h('strong', null, 'Rakes'), ': vehicles in order, with ends A and B. Choose which end the engine is assumed at, and the builder works out the length, the fitted head and the goods train class, whether it can work push-pull, and where the guard rides. Notes point out things a railway would avoid (a goods train with no brake van, an unfitted brake van on a fitted train) but never stop you building it. A vehicle can be in several rakes, to try variations.'),
       ),
-      h('p', null, 'The drawing is to scale. A solid brake pipe runs under the fitted vehicles next to the engine and stops at the first unfitted one; dashed outlines are approximate lengths. Choose a road to see whether the rake fits it.'),
-      sample(['generic-passenger-brake-57', 'generic-coach-57', 'generic-coach-57', 'generic-full-brake-50'], [], 'A passenger rake'),
-      sample(['generic-vent-van-12t-fitted', 'generic-vent-van-12t-fitted', 'generic-open-7plank-12t', 'generic-open-7plank-12t', 'generic-brake-van-20t-fitted'], [1, 2], 'A part-fitted goods rake'),
-      h('p', null, 'In signaller play mode, coaches and wagons that an engine leaves standing in a road are individual vehicles too, made from the generic types, and the train that collects them takes the same vehicles away. Later versions will let timetables and the timetable generator use rakes.'),
+      h('p', null, 'The drawing is to scale. A solid brake pipe runs under the fitted vehicles next to the engine and stops at the first unfitted one; dashed outlines are approximate lengths. Choose a road to see whether the rake fits it. The engine is drawn as a steam tender engine (its tender next to the train), a steam tank engine or a diesel: in a timetable, the loco working the train by its power type; on the Stock tab, the one you pick under Drawn with. Weights are worked out too: generic weights stand in where a type has none of its own, so they show as “about”.'),
+      sample(['generic-passenger-brake-57', 'generic-coach-57', 'generic-coach-57', 'generic-full-brake-50'], [], 'A passenger rake behind a tank engine', 'tank'),
+      sample(['generic-vent-van-12t-fitted', 'generic-vent-van-12t-fitted', 'generic-open-7plank-12t', 'generic-open-7plank-12t', 'generic-brake-van-20t-fitted'], [1, 2], 'A part-fitted goods rake behind a tender engine'),
+      sample(['generic-full-brake-50', 'generic-van-50', 'generic-van-50', 'generic-van-48'], [], 'A parcels train behind a diesel', 'diesel'),
+      h('p', null, 'In signaller play mode, coaches and wagons that an engine leaves standing in a road are individual vehicles too, made from the generic types, and the train that collects them takes the same vehicles away.'),
+      h('h3', null, 'Rakes in timetables'),
+      h('p', null, 'Each timetable train says what stock it runs with (the Stock field in the train’s case): any suitable rake (the default), a rake type (generic recipes such as a local set, an express or a pick-up goods), one of your saved rakes, or a consist written in words. The rake is drawn in the train’s case and in its moves. Any suitable takes one of your saved rakes that suits the train and fits in model railway mode (never one sharing vehicles with a rake already on the layout), else a rake type; in signaller play mode a rake type is made up for it. Its length and fitted head then count: the timetable checks warn when a rake makes a goods train a different class from its working. Written consists still work as before.'),
+      h('p', null, 'The timetable generator makes up a rake for each train from a rake type for its working, a random size within the type’s counts but short enough for the roads it stands in and within the train limit (Settings, Train limits). Goods rakes are marshalled with fitted vehicles next to the engine and a brake van at the tail, fitted when the train has a fitted head; pick-up and branch goods are made up unfitted. The rake is kept on the train, so the same pattern gives the same rakes, and a timetable kept from Endless runs them again.'),
       layout ? h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', on: { click: openStock } }, `Open ${layout.name}’s stock`)) : null,
     ];
     return items.filter((x): x is HTMLElement => !!x);

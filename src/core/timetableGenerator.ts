@@ -22,9 +22,10 @@ import { canWork, dutyOf, jobCategory as dutyCategory, isRailcar, pickWorking, r
 import { engineRelease } from './runRound';
 import { HeadcodeAllocator, destinationOf, eraOf } from './headcodes';
 import { CARRIAGE_PLACES, ENGINE_PLACES, roadTrackKey } from './places';
-import { isSteam } from './railway';
+import { circuitLength, isSteam, locoLength } from './railway';
+import { formationOf, generateTrainStock, hashString, seededRandom, stockKindFor } from './trainStock';
 import { routeBetween, type RouteLeg, type TtPos } from './timetables';
-import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTrain } from './types';
+import type { AppState, Busyness, GeneratorOptions, Layout, Loco, LocoJob, Place, PlaceRef, PlaceRoad, Timetable, TimetableCall, TimetableEntry, TimetableTrain } from './types';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -106,6 +107,7 @@ const LINE_MIN = 6; // minutes along a line between boxes
 const LOCAL_MIN = 3; // a move within a box's area
 const STOP_MIN = 1; // standing at a station it calls at
 const PILOT_RELEASE_MIN = 22; // the station pilot releasing a trapped engine (draw off, out, back, on)
+const RUN_ROUND_MIN = 8; // an engine running round its train: uncouple, round by the loop, couple up, with a margin (v0.3.39)
 const INF = Number.POSITIVE_INFINITY;
 
 interface Interval {
@@ -313,6 +315,26 @@ export class TimetableGenerator {
     if (key.endsWith('|')) return true; // a place with no roads: no limit
     if (this.clash(this.roads.get(key), from, to, owner)) return false;
     return !draft?.roads.some((r) => r.key === key && r.iv.owner !== owner && !r.iv.shared?.includes(owner) && r.iv.from < to && from < r.iv.to);
+  }
+
+  /**
+   * A move in a station's throat (a run round, a pilot release) keeps the lines into the boxes that work
+   * the place clear meanwhile (v0.3.39): no train is booked to arrive, pass or leave there then, so the
+   * move has its gap and nothing is left waiting on it (or it on them).
+   */
+  private bookThroat(draft: Draft, placeId: string, from0: number, to0: number, owner: string): void {
+    // A minute either side: trains cross the station's own track for a minute before or after their run on a line.
+    const from = from0 - 1;
+    const to = to0 + 1;
+    for (const boxId of this.boxesOf(placeId)) {
+      for (const c of this.state.boxes.find((b) => b.id === boxId)?.connections ?? []) {
+        for (const key of c.lineType === 'double' ? [`${c.id}|in`, `${c.id}|out`] : [`${c.id}|both`]) {
+          const hit = this.clash(this.lines.get(key), from, to, owner) ?? draft.lines.find((x) => x.key === key && x.iv.owner !== owner && x.iv.from < to && from < x.iv.to)?.iv ?? null;
+          if (hit) throw new Conflict(hit.to);
+          draft.lines.push({ key, iv: { from, to, owner } });
+        }
+      }
+    }
   }
 
   /** The key a line is booked under: a single line both ways, a double line each way. */
@@ -668,7 +690,8 @@ export class TimetableGenerator {
         const rr = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 3, INF, `Run round the coaches in ${this.roadName(platform)}.`);
         if (!rr) return false;
         rr.runRound = true;
-        rr.arr = rr.dep + 6;
+        rr.arr = rr.dep + RUN_ROUND_MIN;
+        this.bookThroat(draft, d, rr.dep, rr.arr, u.loco.id);
         leaveAt = Math.max(leaveAt, rr.arr + 3);
         draft.notes = `Terminates at ${dName}, runs round and works back to ${this.placeName(back)}.`;
       } else if (!released) {
@@ -680,6 +703,7 @@ export class TimetableGenerator {
           if (!rr) return false;
           rr.runRound = true;
           rr.arr = rr.dep + PILOT_RELEASE_MIN;
+          this.bookThroat(draft, d, rr.dep, rr.arr, u.loco.id);
           leaveAt = Math.max(leaveAt, rr.arr + 3);
           (draft.busy ??= []).push({ u: pilot, until: rr.arr + 2 });
           draft.notes = `Terminates at ${dName}, where the station pilot releases the engine; it works the coaches back to ${this.placeName(back)}.`;
@@ -711,6 +735,33 @@ export class TimetableGenerator {
     }
     let dwell = 10 + Math.floor(this.rng() * 8);
     const goods = !COACHING.has(type);
+    // Back the way it came (v0.3.39): the engine is at the wrong end, so it runs round its train first,
+    // in a gap kept clear of other trains, with the time built into the dwell (a railcar needs none).
+    if (!isRailcar(u.loco) && this.returnsSameWay(o, d, back)) {
+      const inb = this.inboundLine(o, d);
+      const road: PlaceRef = { ...m1.to };
+      const rel = inb ? engineRelease(this.state, this.layout, inb.boxId, inb.connectionId, road) : { known: false, canLeave: true, canRunRound: true };
+      if (rel.known && rel.canRunRound) {
+        const rr = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 3, INF, `Run round the train in ${this.roadName(road)}.`);
+        if (!rr) return false;
+        rr.runRound = true;
+        rr.arr = rr.dep + RUN_ROUND_MIN;
+        this.bookThroat(draft, d, rr.dep, rr.arr, u.loco.id);
+        dwell = Math.max(dwell, rr.arr + 3 - m1.arr);
+      } else if (rel.known && !rel.canLeave) {
+        // Trapped at the buffer stops: the station pilot releases it, if there is one.
+        const pilot = this.pilotFor(u, d, m1.arr + 3);
+        if (pilot) {
+          const rr = this.move(draft, u, 'shunt', 'light_engine', d, m1.arr + 3, INF, `Trapped at the buffer stops: the station pilot (${locoLabel(pilot.loco)}) draws the wagons off ${this.roadName(road)} to release it, puts them back, and the engine backs on at the outer end.`);
+          if (!rr) return false;
+          rr.runRound = true;
+          rr.arr = rr.dep + PILOT_RELEASE_MIN;
+          this.bookThroat(draft, d, rr.dep, rr.arr, u.loco.id);
+          (draft.busy ??= []).push({ u: pilot, until: rr.arr + 2 });
+          dwell = Math.max(dwell, rr.arr + 3 - m1.arr);
+        }
+      }
+    }
     // Turned while the yard is shunted, when there is a turntable to hand (v0.3.36).
     const wantTurn = isSteam(u.loco) && this.returnsSameWay(o, d, back);
     if (wantTurn) {
@@ -1004,13 +1055,46 @@ export class TimetableGenerator {
 
   private commit(u: Unit, pilot: boolean, working: string, d: Draft): void {
     if (!d.moves.length) return;
-    this.commitOne(u, pilot, working, d);
+    const train = this.commitOne(u, pilot, working, d);
     for (const b of d.busy ?? []) b.u.freeAt = Math.max(b.u.freeAt, b.until);
-    for (const x of d.extra ?? []) this.commitOne(x.u, false, x.working, x.draft);
+    for (const x of d.extra ?? []) this.commitOne(x.u, false, x.working, x.draft, train);
   }
 
-  private commitOne(u: Unit, pilot: boolean, working: string, d: Draft): void {
-    if (!d.moves.length) return;
+  /**
+   * Room for a train's rake (v0.3.41): the shortest of the roads it stands in (where it is booked into,
+   * and the longest road at each place it stops), less its engine. Fiddle yards do not limit it.
+   */
+  private stockRoom(u: Unit, d: Draft): number | undefined {
+    const roadLen = (r: PlaceRoad) => (r.circuitId && this.layout.trackPlan.circuits.some((c) => c.id === r.circuitId) ? circuitLength(this.state, this.layout, r.circuitId).metres : undefined);
+    const lens: number[] = [];
+    for (const m of d.moves) {
+      if (m.runRound || m.kind === 'leave' || stockKindFor(m.trainTypeId) === 'none') continue;
+      for (const at of [m.to, ...m.calls.filter((c) => c.stop)]) {
+        const place = this.placeMap.get(at.placeId);
+        if (!place || place.kind === 'fiddleYard') continue;
+        const known = (at.roadId ? place.roads.filter((r) => r.id === at.roadId) : place.roads).map(roadLen).filter((x): x is number => x !== undefined);
+        if (known.length) lens.push(Math.max(...known));
+      }
+    }
+    return lens.length ? Math.min(...lens) - locoLength(u.loco) : undefined;
+  }
+
+  /**
+   * A new train's stock (v0.3.41): a rake type for its working, generated from its own seeded stream (so
+   * the timetable itself is the same whatever the rakes), fitted to the roads it stands in and kept on the
+   * train as its formation. A train taking over another's stock (an engine change) keeps that formation.
+   */
+  private stockFor(u: Unit, pilot: boolean, working: string, d: Draft, from?: TimetableTrain): Pick<TimetableTrain, 'stock' | 'consist'> | null {
+    if (from?.stock?.formation?.length && stockKindFor(working) !== 'none') return { stock: structuredClone(from.stock), consist: from.consist };
+    if (from || pilot || isRailcar(u.loco) || stockKindFor(working) === 'none') return null;
+    const rng = seededRandom(hashString(`${this.opts.seed}|${this.trainNo}`));
+    const c = generateTrainStock(this.state, this.layout, working, rng, this.stockRoom(u, d));
+    if (!c?.rakeTypeId) return null;
+    return { stock: { mode: 'type', rakeTypeId: c.rakeTypeId, formation: formationOf(c.vehicles) }, consist: c.text };
+  }
+
+  private commitOne(u: Unit, pilot: boolean, working: string, d: Draft, from?: TimetableTrain): TimetableTrain | undefined {
+    if (!d.moves.length) return undefined;
     const first = d.moves[0];
     for (const r of d.roads) this.addIv(this.roads, r.key, r.iv);
     for (const l of d.lines) this.addIv(this.lines, l.key, l.iv);
@@ -1031,11 +1115,14 @@ export class TimetableGenerator {
       consist: d.consist ?? (u.loco.working.trainTypeId === working ? u.loco.working.consist : ''),
       notes: d.notes,
     };
+    const stock = this.stockFor(u, pilot, working, d, from);
+    if (stock) Object.assign(train, stock);
     this.trains.push(train);
     for (const m of d.moves) this.planned.push({ move: m, trainId: train.id, unit: u.loco.id, seq: this.seq++ });
     this.lastStart = Math.max(this.lastStart, first.dep);
     // The next train starts a gap after this one (a little more or less).
     this.now = Math.max(this.now, first.dep) + Math.max(1, Math.round(this.gap * (0.7 + this.rng() * 0.6)));
+    return train;
   }
 
   /** Locos home at the end: a light engine to its home place, or to a fiddle yard. */

@@ -1,4 +1,4 @@
-import type { CoachType, LengthBasis, Rake, RollingStock, StandingRake, StockCategory, StockShape, Vehicle, VehicleClass } from './stockTypes';
+import type { CoachType, LengthBasis, Rake, RakeSlot, RakeType, RollingStock, StandingRake, StockCategory, StockShape, Vehicle, VehicleClass } from './stockTypes';
 
 /*
  * Sanitising rolling stock on load (v0.3.38): bad values are dropped, good ones kept, so an old or
@@ -20,6 +20,44 @@ const str = (v: unknown, max = 200): string | undefined => {
 };
 const posNum = (v: unknown, max = Infinity): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? v : undefined);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((c): c is string => typeof c === 'string' && !!c) : []);
+
+/** A rake type (v0.3.41: built in, or the layout's own), cleaned; null when it has no id, name or slots. A goods-mix slot needs no class of its own. */
+export function sanitiseRakeType(raw: unknown, builtIn = false): RakeType | null {
+  if (!isObj(raw) || typeof raw.id !== 'string' || !raw.id || typeof raw.name !== 'string' || !Array.isArray(raw.slots)) return null;
+  const slots: RakeSlot[] = raw.slots
+    .filter(isObj)
+    .map((x) => {
+      const classIds = strList(x.classIds);
+      const min = Number.isFinite(x.min) ? Math.max(0, Math.min(200, Math.round(x.min as number))) : 1;
+      const max = Number.isFinite(x.max) ? Math.max(min, Math.min(200, Math.round(x.max as number))) : min;
+      return {
+        classIds,
+        min,
+        max,
+        ...(typeof x.fitted === 'boolean' ? { fitted: x.fitted } : {}),
+        ...(typeof x.loaded === 'boolean' ? { loaded: x.loaded } : {}),
+        ...(x.mix === true ? { mix: true } : {}),
+        ...(typeof x.group === 'string' && x.group ? { group: x.group } : {}),
+      };
+    })
+    .filter((x) => (x.classIds.length || x.mix) && x.max > 0);
+  if (!slots.length) return null;
+  const eras = strList(raw.eras);
+  return {
+    id: raw.id,
+    name: raw.name.trim() || 'Rake type',
+    trainTypeIds: strList(raw.trainTypeIds),
+    weight: Number.isFinite(raw.weight) && (raw.weight as number) > 0 ? Math.min(1000, raw.weight as number) : 1,
+    origin: typeof raw.origin === 'string' && raw.origin ? raw.origin : 'generic',
+    ...(eras.length ? { eras } : {}),
+    slots,
+    ...(raw.block === true ? { block: true } : {}),
+    ...(builtIn ? { builtIn: true } : {}),
+    ...(typeof raw.notes === 'string' && raw.notes ? { notes: raw.notes } : {}),
+  };
+}
 
 /** A library type, cleaned; null when it has no id or name. */
 export function sanitiseVehicleClass(raw: unknown, builtIn = false): VehicleClass | null {
@@ -46,6 +84,7 @@ export function sanitiseVehicleClass(raw: unknown, builtIn = false): VehicleClas
   const loaded = posNum(raw.loadedKg, 500_000);
   if (tare !== undefined) c.tareKg = tare;
   if (loaded !== undefined) c.loadedKg = loaded;
+  if ((tare !== undefined || loaded !== undefined) && LENGTH_BASES.includes(raw.weightBasis as LengthBasis)) c.weightBasis = raw.weightBasis as LengthBasis;
   if (SHAPES.includes(raw.shape as StockShape)) c.shape = raw.shape as StockShape;
   const origin = str(raw.origin, 40);
   if (origin) c.origin = origin;
@@ -124,7 +163,7 @@ export function sanitiseRake(raw: unknown, fleetIds: Set<string>): Rake | null {
  * A layout's rolling stock, cleaned. `builtInIds`: the built-in library's ids (a hidden id must be one;
  * a user type may not take one). Returns undefined when there is nothing worth keeping.
  */
-export function sanitiseRollingStock(raw: unknown, builtInIds: Set<string>, places?: Set<string>): RollingStock | undefined {
+export function sanitiseRollingStock(raw: unknown, builtInIds: Set<string>, places?: Set<string>, builtInRakeTypeIds?: Set<string>): RollingStock | undefined {
   if (!isObj(raw)) return undefined;
   const classes: VehicleClass[] = [];
   const used = new Set<string>();
@@ -147,8 +186,15 @@ export function sanitiseRollingStock(raw: unknown, builtInIds: Set<string>, plac
       rakes.push(k);
     }
   }
-  if (!classes.length && !hidden.length && !fleet.length && !rakes.length) return undefined;
-  return { classes, hidden, fleet, rakes };
+  // Rake types (v0.3.41): the layout's own (ids not shared with built-ins), and built-ins it hides.
+  const rakeTypes: RakeType[] = [];
+  for (const r of Array.isArray(raw.rakeTypes) ? raw.rakeTypes.slice(0, 500) : []) {
+    const k = sanitiseRakeType(r, false);
+    if (k && !builtInRakeTypeIds?.has(k.id) && !rakeTypes.some((x) => x.id === k.id)) rakeTypes.push(k);
+  }
+  const hiddenRakeTypes = [...new Set(strList(raw.hiddenRakeTypes).filter((x) => !builtInRakeTypeIds || builtInRakeTypeIds.has(x)))];
+  if (!classes.length && !hidden.length && !fleet.length && !rakes.length && !rakeTypes.length && !hiddenRakeTypes.length) return undefined;
+  return { classes, hidden, fleet, rakes, ...(rakeTypes.length ? { rakeTypes } : {}), ...(hiddenRakeTypes.length ? { hiddenRakeTypes } : {}) };
 }
 
 /**

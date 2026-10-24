@@ -2262,6 +2262,45 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
   .sk-lib-row { grid-template-columns: minmax(0, 1fr); }
   .sk-btns { justify-content: flex-start; }
 }
+/* v0.3.41 Settings: train limits */
+.set-limit-table { width: 100%; border-collapse: collapse; }
+.set-limit-table th, .set-limit-table td { padding: 3px 4px; text-align: left; border-bottom: 1px solid var(--btn-border); }
+.set-limit-table thead th { color: var(--btn-muted); font-weight: 600; }
+.set-limit-table tbody th { font-weight: 400; text-transform: none; letter-spacing: normal; font-size: 0.95rem; }
+.set-limit-table input { width: 5.5rem; max-width: 100%; min-height: 38px; }
+@media (max-width: 480px) { .set-limit-table input { width: 4.6rem; } }
+/* v0.3.41 Stock tab: the railway company and the rake type editor */
+.sk-company { display: flex; flex-direction: column; gap: 8px; }
+.sk-company .field { max-width: 40rem; }
+.sk-company select { background: var(--shelf-bg); }
+.pl-case .sk-rt-form { grid-template-columns: minmax(0, 2fr) minmax(8rem, 1fr) minmax(0, 2fr); align-items: start; }
+.sk-rt-form > .field input[type='text'] { width: 100%; }
+.sk-rt-notes { grid-column: 1 / -1; }
+.sk-rt-form input[type='number'] { background: var(--btn-bg); max-width: 8rem; }
+.sk-rt-block { align-self: end; min-height: 44px; }
+.sk-rt-types, .sk-rt-slots, .sk-rt-example { grid-column: 1 / -1; }
+.sk-rt-types { display: flex; flex-wrap: wrap; gap: 4px 16px; border: 1px solid var(--btn-border); border-radius: 6px; padding: 6px 10px 8px; margin: 0; }
+.sk-rt-types legend { color: var(--btn-muted); font-weight: 600; padding: 0 4px; }
+.sk-rt-slots { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.sk-slots { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; width: 100%; }
+.sk-slot { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(5rem, 0.5fr) minmax(5rem, 0.5fr) minmax(7rem, 1fr) 6.5rem auto; gap: 6px 8px; align-items: end; background: var(--btn-bg); border: 1px solid var(--btn-border); border-radius: 6px; padding: 6px; }
+.sk-slot select { background: var(--shelf-bg); min-width: 0; max-width: 100%; }
+.sk-slot input[type='number'] { background: var(--shelf-bg); max-width: 100%; }
+.sk-slot .field { margin: 0; min-width: 0; }
+.sk-slot .check { min-height: 44px; grid-column: 5; }
+.sk-slot .sk-slot-brake { grid-column: 4; }
+.sk-slot .sk-btns { grid-column: 6; flex-wrap: nowrap; }
+.sk-rt-example { display: flex; flex-direction: column; gap: 6px; }
+.sk-rt-example .row { gap: 8px; align-items: center; flex-wrap: wrap; }
+.sk-engine-pick select { background: var(--btn-bg); }
+.sk-rt-example .sk-engine-pick { flex-direction: row; align-items: center; gap: 6px; margin: 0; }
+@media (max-width: 720px) {
+  .pl-case .sk-rt-form { grid-template-columns: minmax(0, 1fr); }
+  .sk-slot { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .sk-slot .sk-slot-what { grid-column: 1 / -1; }
+  .sk-slot .sk-slot-brake, .sk-slot .check { grid-column: auto; }
+  .sk-slot .sk-btns { grid-column: 1 / -1; justify-content: flex-start; }
+}
 /* The visualiser: drawn on the enamel board in ink, like the box diagram. */
 .rk-svg { color: var(--enamel-ink); font-family: var(--font-body); }
 .rk-rail { stroke: var(--enamel-ink); stroke-width: 1.5; }
@@ -2279,7 +2318,14 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
 .rk-pipe { stroke: var(--enamel-ink); stroke-width: 2.6; }
 .rk-pipe-off { stroke-dasharray: 3 3; stroke-width: 1.6; }
 .rk-gangway { fill: var(--enamel); stroke: var(--enamel-ink); stroke-width: 1.2; }
-.rk-engine .rk-body { fill: var(--enamel-ink); }
+.rk-engine .rk-body { fill: var(--enamel-ink); stroke: var(--enamel); stroke-width: 0.7; stroke-opacity: 0.5; }
+.rk-engine .rk-coal { fill: var(--enamel-ink); }
+.rk-eng-win { fill: var(--enamel); }
+.rk-band { stroke: var(--enamel); stroke-width: 0.8; opacity: 0.55; }
+.rk-hub { fill: var(--enamel-ink); }
+.rk-rod { stroke: var(--enamel-ink); stroke-width: 2; stroke-linecap: round; }
+.rk-panto { fill: none; stroke: var(--enamel-ink); stroke-width: 1.4; }
+.rk-bogie { fill: var(--enamel-ink); }
 .rk-label { font-size: 9.5px; fill: var(--enamel-ink); }
 .rk-end { font-family: var(--font-plate); font-weight: 700; font-size: 12px; fill: var(--enamel-ink); }
 .rk-q { font-weight: 700; font-size: 16px; fill: var(--enamel-ink); }
@@ -2295,3 +2341,4 @@ button.chip-mode:hover, button.chip-mode:focus-visible { border-color: var(--ink
 }
 .sk-tools input[type='search'] { min-height: 44px; padding: 8px 10px; border-radius: var(--radius); font: inherit; }
 .sk-page .add-tile { min-height: 0; }
+.tt-stock { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; min-width: 0; }

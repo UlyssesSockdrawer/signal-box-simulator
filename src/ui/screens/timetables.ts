@@ -1,4 +1,8 @@
 import { activeLayout, setActiveLayout } from '../../core/layouts';
+import { formatLength } from '../../core/railway';
+import { classCode, rakeLength, resolveVehicle, vehiclesDescription } from '../../core/stock';
+import { findRakeType, previewTrainStock, rakeTypesFor, rakeTypesOf, stockKindFor, trainStockOf } from '../../core/trainStock';
+import { drawRake } from '../rakeDrawing';
 import { PLACE_KINDS } from '../../core/places';
 import {
   addTimetable,
@@ -41,7 +45,7 @@ import {
   type TtStep,
   type TtWalk,
 } from '../../core/timetables';
-import type { AppState, Layout, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTiming, TimetableTrain } from '../../core/types';
+import type { AppState, Layout, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableTiming, TimetableTrain, TrainStock } from '../../core/types';
 import { activeCodeSet, locoFullName, locoName, topBar, trainTypeName, type Ctx, type Screen } from '../app';
 import { confirmButton, confirmDialog, h, option, toast } from '../dom';
 import { plusIcon } from './boxConfig';
@@ -871,7 +875,10 @@ function entryForm(ctx: Ctx, layout: Layout, tt: Timetable, e: TimetableEntry, s
     h('span', { class: 'tt-spacer' }),
     confirmButton('Remove this move', 'Press again to remove', () => upd((t) => removeEntry(t, e.id)), 'btn danger small'),
   );
-  return h('div', { class: 'tt-form', id: bodyId }, issueList(step.issues), h('div', { class: 'form-grid tight tt-grid' }, ...fields), where.length ? h('div', { class: 'form-grid tight tt-grid tt-where' }, ...where) : null, route, calls, notes, actions);
+  // The train's rake, drawn (v0.3.40): for runs and moves on to the layout with stock.
+  const owner = findTrain(tt, e.trainId);
+  const vis = owner && (e.kind === 'run' || e.kind === 'enter') && stockKindFor(e.trainTypeId) !== 'none' ? stockVisual(st, layout, owner) : null;
+  return h('div', { class: 'tt-form', id: bodyId }, issueList(step.issues), h('div', { class: 'form-grid tight tt-grid' }, ...fields), where.length ? h('div', { class: 'form-grid tight tt-grid tt-where' }, ...where) : null, route, vis, calls, notes, actions);
 }
 
 function callsSection(layout: Layout, tt: Timetable, e: TimetableEntry, edit: (fn: (x: TimetableEntry) => void) => void, id: (k: string) => string): HTMLElement {
@@ -970,8 +977,9 @@ function trainCase(ctx: Ctx, layout: Layout, tt: Timetable, t: TimetableTrain, w
             h('small', { class: 'help' }, suitable.length ? `Chosen when it runs from: ${suitable.map(locoName).join(', ')}.` : 'No loco has this duty yet: give locos duties in the roster.'),
           )
         : null,
-      checkedInput(`tt_tcons_${t.id}`, 'Consist', t.consist, 60, () => null, (v) => editT((x) => (x.consist = v)), { placeholder: 'e.g. 4 coaches' }),
+      ...stockFields(st, layout, t, editT),
     ),
+    stockVisual(st, layout, t),
     h('div', { class: 'field' }, h('label', { for: `tt_tnotes_${t.id}` }, 'Notes'), h('textarea', { id: `tt_tnotes_${t.id}`, rows: 2, on: { change: (ev: Event) => editT((x) => (x.notes = (ev.target as HTMLTextAreaElement).value.trim())) } }, t.notes)),
     moves.length ? h('ol', { class: 'plain tt-rows' }, ...moves.map(rowFor)) : h('p', { class: 'help' }, 'No moves yet.'),
     h(
@@ -1143,3 +1151,100 @@ function fillTimes(t: Timetable, gap: number): void {
   }
 }
 
+// ---------------------------------------------------------------- a train's stock (v0.3.40)
+
+const STOCK_MODES: Array<{ mode: TrainStock['mode']; label: string }> = [
+  { mode: 'any', label: 'Any suitable rake' },
+  { mode: 'type', label: 'A rake type' },
+  { mode: 'rake', label: 'One of your rakes' },
+  { mode: 'text', label: 'Written consist (model railway mode)' },
+];
+
+/** The train case's stock fields: how it gets its rake, and which (D10, D14a). */
+function stockFields(st: AppState, layout: Layout, t: TimetableTrain, editT: (fn: (x: TimetableTrain) => void) => void): HTMLElement[] {
+  const s = trainStockOf(t);
+  const rakes = layout.rollingStock?.rakes ?? [];
+  const working = t.anyWorking;
+  const modeSel = h(
+    'select',
+    { id: `tt_tstock_${t.id}`, on: { change: (ev: Event) => editT((x) => {
+      const mode = (ev.target as HTMLSelectElement).value as TrainStock['mode'];
+      x.stock = { mode };
+      const offered = rakeTypesOf(layout);
+      if (mode === 'type' && (rakeTypesFor(working, offered)[0] ?? offered[0])) x.stock.rakeTypeId = (rakeTypesFor(working, offered)[0] ?? offered[0]).id;
+      if (mode === 'rake' && rakes[0]) x.stock.rakeId = rakes[0].id;
+    }) } },
+    ...STOCK_MODES.map((m) => option(m.mode, m.label, m.mode === s.mode)),
+  );
+  const help: Record<TrainStock['mode'], string> = {
+    any: 'Chosen when it runs: in model railway mode one of your saved rakes that suits it and fits (not one in use by another train), else a rake type; in signaller play mode a rake type, its vehicles made up as it comes on.',
+    type: s.formation?.length
+      ? 'Made up by the timetable generator: it runs with exactly this formation (shown below), kept with the timetable.'
+      : 'A rake of this type is made up when it runs, long enough to fit where it is going.',
+    rake: 'This rake from the Stock tab. In signaller play mode its vehicles are copied for the run.',
+    text: 'Written in words. In signaller play mode its vehicles are made from the words (generic types).',
+  };
+  const out: HTMLElement[] = [h('div', { class: 'field' }, h('label', { for: modeSel.id }, 'Stock'), modeSel, h('small', { class: 'help' }, help[s.mode]))];
+  if (s.mode === 'type') {
+    const offered = rakeTypesOf(layout);
+    const suits = rakeTypesFor(working, offered);
+    const others = offered.filter((x) => !suits.includes(x));
+    const current = findRakeType(s.rakeTypeId, layout);
+    out.push(
+      h(
+        'div',
+        { class: 'field' },
+        h('label', { for: `tt_trt_${t.id}` }, 'Rake type'),
+        h(
+          'select',
+          { id: `tt_trt_${t.id}`, on: { change: (ev: Event) => editT((x) => (x.stock = { mode: 'type', rakeTypeId: (ev.target as HTMLSelectElement).value })) } },
+          ...(s.rakeTypeId && !current ? [option(s.rakeTypeId, 'A rake type no longer available', true)] : []),
+          ...(current && !offered.includes(current) ? [option(current.id, `${current.name} (hidden)`, true)] : []),
+          h('optgroup', { label: `For ${trainTypeName(st, working).toLowerCase()}` }, ...suits.map((x) => option(x.id, x.name, x.id === s.rakeTypeId))),
+          others.length ? h('optgroup', { label: 'Others' }, ...others.map((x) => option(x.id, x.name, x.id === s.rakeTypeId))) : null,
+        ),
+      ),
+    );
+    if (s.formation?.length)
+      out.push(
+        h(
+          'div',
+          { class: 'row' },
+          h('button', { class: 'btn small', type: 'button', id: `tt_tform_${t.id}`, on: { click: () => editT((x) => x.stock && delete x.stock.formation) } }, 'Make one up when it runs instead'),
+        ),
+      );
+  }
+  if (s.mode === 'rake')
+    out.push(
+      h(
+        'div',
+        { class: 'field' },
+        h('label', { for: `tt_trk_${t.id}` }, 'Rake'),
+        rakes.length
+          ? h(
+              'select',
+              { id: `tt_trk_${t.id}`, on: { change: (ev: Event) => editT((x) => (x.stock = { mode: 'rake', rakeId: (ev.target as HTMLSelectElement).value })) } },
+              ...(s.rakeId && !rakes.some((r) => r.id === s.rakeId) ? [option(s.rakeId, 'A rake no longer saved', true)] : []),
+              ...rakes.map((r) => option(r.id, `${r.identity} (${r.vehicleIds.length})`, r.id === s.rakeId)),
+            )
+          : h('p', { class: 'help' }, `No rakes saved on ${layout.name} yet: build them on the Layout configurator’s Stock tab.`),
+      ),
+    );
+  if (s.mode === 'text') out.push(checkedInput(`tt_tcons_${t.id}`, 'Consist', t.consist, 60, () => null, (v) => editT((x) => (x.consist = v)), { placeholder: 'e.g. 4 coaches' }));
+  return out;
+}
+
+/** The train's rake drawn to scale (a rake type at its typical size), with its length; null when it is chosen as it runs or written in words. */
+function stockVisual(st: AppState, layout: Layout, t: TimetableTrain): HTMLElement | null {
+  const p = previewTrainStock(layout, t);
+  if (!p?.vehicles.length) return null;
+  const rv = p.vehicles.map((v) => resolveVehicle(v, p.lib));
+  const len = rakeLength(rv);
+  const units = st.settings.units;
+  return h(
+    'div',
+    { class: 'tt-stock' },
+    h('small', { class: 'help' }, `${p.label}: ${vehiclesDescription(p.vehicles, p.lib)}, ${len.approx ? 'about ' : ''}${formatLength(len.metres, units, 'vehicle')}.`),
+    h('div', { class: 'sk-vis' }, drawRake(rv, { engineEnd: 'A', units, engine: st.roster.find((l) => l.id === t.locoId) ?? true, labels: rv.map((r) => r.vehicle.identity?.trim() || classCode(r.cls)), title: `${t.name}: ${p.label}` })),
+  );
+}

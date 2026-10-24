@@ -45,9 +45,11 @@ export interface VehicleClass {
   lengthBasis?: LengthBasis;
   /** A working continuous brake (vacuum or air). Unfitted = handbrake only. */
   fitted: boolean;
-  /** Weights in kg, optional (none are known for the built-in types yet). */
+  /** Weights in kg, optional: tare (empty), and loaded for wagons and vans. */
   tareKg?: number;
   loadedKg?: number;
+  /** How good the weights are (v0.3.41; the generic types carry generic weights). Absent with a weight = as typed. */
+  weightBasis?: LengthBasis;
   shape?: StockShape;
   /** The company that built or owned the type (LMS, LNWR, GWR…, or 'generic'). Also picks its parameters. */
   origin?: string;
@@ -103,7 +105,7 @@ export interface Rake {
   notes: string;
 }
 
-/** A slot in a rake type: a class (or one of several) with a count range. Used by the generator (Stage 3). */
+/** A slot in a rake type: a class (or one of several), or the company goods mix, with a count range. */
 export interface RakeSlot {
   classIds: string[];
   min: number;
@@ -114,6 +116,11 @@ export interface RakeSlot {
   group?: string;
   /** Reserved for day and season variations (D11): not used yet. */
   condition?: string;
+  /**
+   * Filled from the company's goods mix (v0.3.41, D9): wagons and vans drawn by the mix's weights, the
+   * class ids then being only a fallback. A placeholder until goods train make-up is researched.
+   */
+  mix?: boolean;
 }
 
 /** A portion of a rake type, going to a kind of place (or staying with the train). */
@@ -123,7 +130,7 @@ export interface RakeGroup {
   destination: string;
 }
 
-/** A recipe the generator draws rakes from (Stage 3; the type is defined now, nothing stores it yet). */
+/** A recipe rakes are made from (v0.3.41): built in, or a layout's own (RollingStock.rakeTypes). */
 export interface RakeType {
   id: string;
   name: string;
@@ -134,6 +141,11 @@ export interface RakeType {
   eras?: string[];
   slots: RakeSlot[];
   groups?: RakeGroup[];
+  /** A block train (one kind of wagon): weighted by the company's block-train weight for the era (v0.3.41, D9). */
+  block?: boolean;
+  /** Shipped with the app (read-only: hide or copy it to edit). */
+  builtIn?: boolean;
+  notes?: string;
 }
 
 /** A layout's rolling stock: its own library types, hidden built-ins, fleet and saved rakes. */
@@ -144,6 +156,9 @@ export interface RollingStock {
   hidden: string[];
   fleet: Vehicle[];
   rakes: Rake[];
+  /** Rake types the user made (v0.3.41), and built-in rake types hidden from lists and the generator. */
+  rakeTypes?: RakeType[];
+  hiddenRakeTypes?: string[];
 }
 
 /**

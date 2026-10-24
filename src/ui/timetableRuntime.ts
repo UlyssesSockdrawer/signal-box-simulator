@@ -35,7 +35,7 @@ export function getRunner(ctx: Ctx, layoutId: string): TimetableRunner {
         workings: rt.workings,
         mode: rt.mode,
         trains: rt.trains,
-        railway: sim ? { shunt: (b, l, to, done, o) => sim.shunt(b, l, to, done, o), runRound: (b, l, done) => sim.runRound(b, l, done), prepareDeparture: (b, l, c) => sim.prepareDeparture(b, l, c) } : undefined,
+        railway: sim ? { shunt: (b, l, to, done, o) => sim.shunt(b, l, to, done, o), runRound: (b, l, done) => sim.runRound(b, l, done), prepareDeparture: (b, l, c) => sim.prepareDeparture(b, l, c), jobsText: (b) => sim.jobsText(b) } : undefined,
       };
     },
     moveLoco: (id, loc) =>

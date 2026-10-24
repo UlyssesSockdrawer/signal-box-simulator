@@ -4,7 +4,8 @@ import { sanitiseTrackPlan } from './trackPlan';
 import { sanitisePlaces } from './places';
 import { sanitiseTimetables } from './timetables';
 import { sanitiseRailwayData } from './railway';
-import { builtInClasses } from './stockLibrary';
+import { builtInClasses, stockCompanies } from './stockLibrary';
+import { RAKE_TYPES } from './trainStock';
 import { sanitiseRollingStock } from './stockSanitise';
 import type { AppState, BoxDef, ConnectionDef, Layout, Place, PlaceRoad, TrackPlan } from './types';
 
@@ -174,10 +175,30 @@ export function migrate(raw: unknown): AppState {
   sanitiseRailwayData(state);
   // Rolling stock (v0.3.38, schema 8): the library types, fleet and rakes of each layout.
   const builtInIds = new Set(builtInClasses().map((c) => c.id));
+  const builtInRakeTypeIds = new Set(RAKE_TYPES.map((t) => t.id));
   for (const l of state.layouts) {
-    const rs = sanitiseRollingStock(l.rollingStock, builtInIds, new Set(l.places.map((p) => p.id)));
+    const rs = sanitiseRollingStock(l.rollingStock, builtInIds, new Set(l.places.map((p) => p.id)), builtInRakeTypeIds);
     if (rs) l.rollingStock = rs;
     else delete l.rollingStock;
+  }
+  // The layout's railway company (v0.3.41, schema 10): one the library has data for, else generic. The
+  // example layout, Sigsim Central, is set to LMS when an older save is first loaded.
+  const companies = stockCompanies();
+  const oldSchema = typeof s.schemaVersion === 'number' ? s.schemaVersion : 0;
+  for (const l of state.layouts) {
+    if (oldSchema < 10 && l.id === 'layout1' && l.name === 'Sigsim Central' && l.stockCompany === undefined) l.stockCompany = def.layouts[0].stockCompany;
+    const c = companies.find((x) => typeof l.stockCompany === 'string' && x.toLowerCase() === l.stockCompany.toLowerCase());
+    if (c) l.stockCompany = c;
+    else delete l.stockCompany;
+  }
+  // Train limits (v0.3.41, D13): whole numbers above nought, else the company/era default applies.
+  for (const tt of state.trainTypes) {
+    for (const k of ['maxVehicles', 'maxTons'] as const) {
+      const v = tt[k];
+      if (v === undefined) continue;
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 1) tt[k] = Math.min(k === 'maxVehicles' ? 500 : 10000, Math.round(v));
+      else delete tt[k];
+    }
   }
   return state;
 }

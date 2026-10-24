@@ -1,5 +1,5 @@
 import { findLayout } from '../../core/layouts';
-import { circuitLength, formatLength, parseLength } from '../../core/railway';
+import { circuitLength, formatLength, parseLength, type LocoShape } from '../../core/railway';
 import {
   BASIS_NAMES,
   canLoad,
@@ -10,6 +10,7 @@ import {
   emptyRollingStock,
   mintVehicle,
   newVehicleId,
+  resolveVehicle,
   stockLibrary,
   summariseRake,
   systemIdentity,
@@ -17,9 +18,10 @@ import {
   type StockLibrary,
   type StockNote,
 } from '../../core/stock';
-import { overBuffersFromHeadstocks } from '../../core/stockLibrary';
+import { KG_PER_TON, overBuffersFromHeadstocks, stockCompanies } from '../../core/stockLibrary';
+import { generateRake, layoutStock as stockSetting, RAKE_TYPES, rakeTypeFitsLayout, seededRandom, stockKindFor, trainLimit } from '../../core/trainStock';
 import { CATEGORIES, COACH_TYPES } from '../../core/stockSanitise';
-import type { CoachType, LengthBasis, Rake, RollingStock, StockCategory, Vehicle, VehicleClass } from '../../core/stockTypes';
+import type { CoachType, LengthBasis, Rake, RakeSlot, RakeType, RollingStock, StockCategory, Vehicle, VehicleClass } from '../../core/stockTypes';
 import type { AppState, Layout } from '../../core/types';
 import { type Ctx } from '../app';
 import { confirmButton, h, option, toast } from '../dom';
@@ -38,7 +40,13 @@ const open = new Map<string, boolean>([
   ['rakes', true],
   ['fleet', false],
   ['library', false],
+  ['rakeTypes', false],
 ]);
+let editRakeType = '';
+/** The engine drawn with rakes and rake type examples (v0.3.41). */
+let drawEngine: LocoShape = 'tender';
+let rtShowHidden = false;
+let rtExample = 0;
 let selRake = '';
 let editClass = '';
 let checkRoad = '';
@@ -59,8 +67,19 @@ export function resetStockUi(): void {
   open.set('rakes', true);
   open.set('fleet', false);
   open.set('library', false);
+  open.set('rakeTypes', false);
+  editRakeType = '';
+  rtShowHidden = false;
+  rtExample = 0;
+  drawEngine = 'tender';
 }
 
+const ENGINE_NAMES: Array<[LocoShape, string]> = [
+  ['tender', 'A steam tender engine'],
+  ['tank', 'A steam tank engine'],
+  ['diesel', 'A diesel'],
+  ['electric', 'An electric'],
+];
 const ERA_NAMES: Record<string, string> = { grouping: 'Grouping (1923–47)', postwar: 'Post-war (1948–60)', br1960: 'BR 1960 on' };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -128,6 +147,19 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
     }).filter((x): x is HTMLOptGroupElement => !!x);
   };
 
+  /** Which kind of engine to draw with the rake (a picture only: it changes nothing worked out). */
+  const engineSelect = (id: string) =>
+    h(
+      'div',
+      { class: 'field sk-engine-pick' },
+      h('label', { for: id }, 'Drawn with'),
+      h(
+        'select',
+        { id, on: { change: (e: Event) => ((drawEngine = (e.target as HTMLSelectElement).value as LocoShape), ctx.store.update(() => {})) } },
+        ...ENGINE_NAMES.map(([k, n]) => option(k, n, k === drawEngine)),
+      ),
+    );
+
   const sectionCase = (key: string, title: string, summary: string, body: HTMLElement) => {
     const isOpen = open.get(key) ?? false;
     const bodyId = `sk_body_${key}`;
@@ -184,8 +216,7 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
     // Things to check it against: a road (its track circuit length) and a train type (its limits).
     const roads = layout.places.flatMap((p) => p.roads.filter((r) => r.circuitId).map((r) => ({ key: `${p.id}|${r.id}`, name: `${p.name} · ${r.name}`, metres: circuitLength(st, layout, r.circuitId!).metres })));
     const road = roads.find((r) => r.key === checkRoad);
-    const params = lib.params();
-    const limit = checkType ? params.trainLimits[checkType] : undefined;
+    const limit = checkType ? trainLimit(st, layout, checkType) : undefined;
     const sum = summariseRake(rake, rs, lib, { roadMetres: road?.metres, trainTypeId: checkType || undefined, limit });
     const editRake = (fn: (r: Rake, rr: RollingStock) => void) =>
       upd((rr) => {
@@ -199,7 +230,7 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
     const vis = drawRake(fe, {
       engineEnd: rake.engineEnd,
       units,
-      engine: true,
+      engine: drawEngine,
       labels: fe.map((v) => v.vehicle.identity?.trim() || classCode(v.cls)),
       road: road ? { metres: road.metres, name: road.name } : undefined,
       title: `${rake.identity}: ${plural(sum.count, 'vehicle')}, ${sum.length.approx ? 'about ' : ''}${vlen(sum.length.metres)}`,
@@ -211,7 +242,7 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
       { class: 'kv sk-derived' },
       ...kv('Vehicles', String(sum.count)),
       ...kv('Length over buffers', sum.count ? `${sum.length.approx ? 'about ' : ''}${vlen(sum.length.metres)}` : '—'),
-      ...kv('Weight', sum.weight.kg === null ? 'not known (no weights in the library yet)' : `${sum.weight.missing ? 'at least ' : ''}${Math.round(sum.weight.kg / 1016.047)} tons`),
+      ...kv('Weight', sum.weight.kg === null ? 'not known' : `${sum.weight.missing ? 'at least ' : sum.weight.approx ? 'about ' : ''}${Math.round(sum.weight.kg / KG_PER_TON)} tons${sum.weight.approx ? ' (generic weights where none are known)' : ''}`),
       ...kv('Fitted head', sum.count ? `${sum.fittedHead} of ${sum.count} (${Math.round(sum.fittedProportion * 100)}%) from the engine end` : '—'),
       ...(freighty ? kv('Goods train class', typeName(sum.headcodeClass)) : []),
       ...kv('Push-pull', sum.pushPull ? 'yes: a driving trailer at the far end' : 'no'),
@@ -261,6 +292,7 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
         { class: 'form-grid tight sk-rake-head' },
         h('div', { class: 'field' }, h('label', { for: nameInput.id }, 'Rake name'), nameInput),
         h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Engine assumed at'), h('div', { class: 'seg', role: 'group', 'aria-label': 'Engine assumed at' }, seg('A', 'End A'), seg('B', 'End B'))),
+        engineSelect('sk_draw_engine'),
         h(
           'div',
           { class: 'field' },
@@ -459,8 +491,17 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
       (libFilter as Record<string, string | boolean>)[k] = v;
       ctx.store.update(() => {});
     };
+    const tons = (kg: number) => `${Math.round((kg / KG_PER_TON) * 10) / 10}`;
+    const weightText = (c: VehicleClass) => {
+      if (c.tareKg === undefined && c.loadedKg === undefined) {
+        const r = resolveVehicle({ id: '', classId: c.id }, lib);
+        return r.kg !== null ? ` · about ${tons(r.kg)} tons tare (generic)` : '';
+      }
+      const about = c.weightBasis && c.weightBasis !== 'measured' ? 'about ' : '';
+      return ` · ${about}${c.tareKg !== undefined ? `${tons(c.tareKg)} tons tare` : ''}${c.loadedKg !== undefined ? `${c.tareKg !== undefined ? ', ' : ''}${tons(c.loadedKg)} loaded` : ''}`;
+    };
     const lengthText = (c: VehicleClass) =>
-      c.metresOverBuffers === undefined ? 'length not known' : `${c.lengthBasis && c.lengthBasis !== 'measured' ? 'about ' : ''}${vlen(c.metresOverBuffers)} · ${BASIS_NAMES[c.lengthBasis ?? 'estimated']}`;
+      (c.metresOverBuffers === undefined ? 'length not known' : `${c.lengthBasis && c.lengthBasis !== 'measured' ? 'about ' : ''}${vlen(c.metresOverBuffers)} · ${BASIS_NAMES[c.lengthBasis ?? 'estimated']}`) + weightText(c);
     const tags = (c: VehicleClass) =>
       [c.coachType ? COACH_TYPE_NAMES[c.coachType] : CATEGORY_NAMES[c.category].replace(/s$/, ''), c.fitted ? 'fitted' : 'unfitted', c.corridor === true ? 'corridor' : c.corridor === false ? 'non-corridor' : '', c.guard ? 'guard’s compartment' : '', c.origin ? (c.origin === 'generic' ? 'generic' : c.origin) : '', c.diagram ?? '']
         .filter(Boolean)
@@ -649,14 +690,259 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
           else delete x.eras;
         }) } }, option('', 'Any era', !c.eras?.length), ...Object.entries(ERA_NAMES).map(([k, n]) => option(k, n, c.eras?.[0] === k))),
       ),
-      text(`sk_ctare_${c.id}`, 'Tare weight, tons (optional)', c.tareKg ? String(Math.round((c.tareKg / 1016.047) * 10) / 10) : '', 8, (v) => editC((x) => {
+      text(`sk_ctare_${c.id}`, 'Tare weight, tons (optional)', c.tareKg ? String(Math.round((c.tareKg / KG_PER_TON) * 10) / 10) : '', 8, (v) => editC((x) => {
         const n = Number(v);
-        if (v && Number.isFinite(n) && n > 0) x.tareKg = n * 1016.047;
+        if (v && Number.isFinite(n) && n > 0) x.tareKg = n * KG_PER_TON;
         else delete x.tareKg;
-      })),
+        delete x.weightBasis;
+      }), 'Empty. Left blank, a generic weight for its kind is used.'),
+      canLoad(c)
+        ? text(`sk_cloaded_${c.id}`, 'Loaded weight, tons (optional)', c.loadedKg ? String(Math.round((c.loadedKg / KG_PER_TON) * 10) / 10) : '', 8, (v) => editC((x) => {
+            const n = Number(v);
+            if (v && Number.isFinite(n) && n > 0) x.loadedKg = n * KG_PER_TON;
+            else delete x.loadedKg;
+            delete x.weightBasis;
+          }), 'Tare plus its load.')
+        : null,
       text(`sk_cnotes_${c.id}`, 'Notes', c.notes ?? '', 400, (v) => editC((x) => (v ? (x.notes = v) : delete x.notes))),
     );
   };
+
+  // ---------------------------------------------------------------- the railway company (v0.3.41, D25)
+  const companyCase = () => {
+    const { company, era } = stockSetting(layout);
+    const companies = stockCompanies();
+    return h(
+      'article',
+      { class: 'config-case sk-case sk-company', 'aria-labelledby': 'sk_board_company' },
+      h('h2', { class: 'nameboard section-board', id: 'sk_board_company' }, 'Railway company'),
+      h(
+        'div',
+        { class: 'field' },
+        h('label', { for: 'sk_company' }, 'Company'),
+        h(
+          'select',
+          {
+            id: 'sk_company',
+            on: {
+              change: (e: Event) =>
+                ctx.store.update((a) => {
+                  const l = findLayout(a, layoutId);
+                  if (!l) return;
+                  const v = (e.target as HTMLSelectElement).value;
+                  if (v) l.stockCompany = v;
+                  else delete l.stockCompany;
+                }),
+            },
+          },
+          option('', 'Generic (any company)', company === 'generic'),
+          ...companies.map((c) => option(c, c, c === company)),
+        ),
+        h(
+          'small',
+          { class: 'help' },
+          `Picks the goods mix that goods trains are made up from, the rake types offered, and the default train limits (Settings, Train limits). The era comes from the layout’s headcode era: ${ERA_NAMES[era] ?? era}.`,
+        ),
+      ),
+    );
+  };
+
+  // ---------------------------------------------------------------- rake types (v0.3.41, D27)
+  const nonePlain = (id: string) => stockKindFor(id) !== 'none';
+  const ttName = (id: string) => st.trainTypes.find((t) => t.id === id)?.name ?? id;
+  const slotText = (sl: RakeSlot) => {
+    const n = sl.min === sl.max ? `${sl.min}` : `${sl.min}–${sl.max}`;
+    const what = sl.mix ? `goods from the company mix${sl.fitted === true ? ' (fitted)' : sl.fitted === false ? ' (unfitted)' : ''}` : sl.classIds.map((c) => lib.cls(c)?.name ?? c).join(' or ');
+    return `${n} × ${what}${sl.loaded ? ', loaded' : ''}`;
+  };
+  const rakeTypesBody = () => {
+    const body = h('div', { class: 'pl-body sk-body' });
+    const own = rs.rakeTypes ?? [];
+    const hiddenSet = new Set(rs.hiddenRakeTypes ?? []);
+    const builtIns = RAKE_TYPES.filter((t) => rakeTypeFitsLayout(t, layout) && (rtShowHidden || !hiddenSet.has(t.id)));
+    const newId = () => `rtype_${newVehicleId().slice(0, 8)}`;
+    const editT = (id: string, fn: (x: RakeType) => void) =>
+      upd((r) => {
+        const x = r.rakeTypes?.find((y) => y.id === id);
+        if (x) fn(x);
+      });
+    const copy = (t: RakeType) => {
+      const id = newId();
+      upd((r) => (r.rakeTypes ??= []).push({ ...structuredClone(t), id, name: `${t.name} (copy)`, builtIn: undefined }));
+      editRakeType = id;
+      focusNext = `sk_rtname_${id}`;
+    };
+    const row = (t: RakeType) => {
+      const hidden = hiddenSet.has(t.id);
+      const editing = !t.builtIn && editRakeType === t.id;
+      return h(
+        'li',
+        { class: `sk-lib-row${hidden ? ' sk-hidden' : ''}` },
+        h(
+          'div',
+          { class: 'sk-lib-main' },
+          h('strong', null, t.name),
+          t.block ? h('span', { class: 'pl-kind-tag' }, 'Block train') : null,
+          h('small', { class: 'help' }, t.trainTypeIds.length ? t.trainTypeIds.map(ttName).join(', ') : 'No train types chosen: not used yet'),
+          h('small', { class: 'help sk-lib-len' }, t.slots.map(slotText).join(' · ')),
+          h('small', { class: 'help' }, `How often: ${t.weight}${t.builtIn ? ' · built in' : ' · yours'}${t.origin && t.origin !== 'generic' ? ` · ${t.origin}` : ''}`),
+        ),
+        h(
+          'div',
+          { class: 'sk-btns' },
+          t.builtIn
+            ? h('button', { class: 'btn small', type: 'button', on: { click: () => upd((r) => (r.hiddenRakeTypes = hidden ? (r.hiddenRakeTypes ?? []).filter((x) => x !== t.id) : [...(r.hiddenRakeTypes ?? []), t.id])) } }, hidden ? 'Show' : 'Hide')
+            : h('button', { class: 'btn small', type: 'button', 'aria-expanded': String(editing), on: { click: () => ((editRakeType = editing ? '' : t.id), ctx.store.update(() => {})) } }, editing ? 'Done' : 'Edit'),
+          h('button', { class: 'btn small', type: 'button', on: { click: () => copy(t) } }, 'Copy'),
+          t.builtIn ? null : confirmButton('Remove', 'Remove?', () => upd((r) => (r.rakeTypes = (r.rakeTypes ?? []).filter((x) => x.id !== t.id))), 'btn danger small'),
+        ),
+        editing ? rakeTypeForm(t, editT) : null,
+      );
+    };
+    body.append(
+      h('p', { class: 'help' }, 'Recipes for making up trains: the timetable generator and “any suitable” draw rakes from these, at random within each count and short enough for the road. Built-in types can be hidden, or copied to edit; your own are saved with this layout.'),
+      h(
+        'div',
+        { class: 'row sk-tools' },
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: rtShowHidden, on: { change: (e: Event) => ((rtShowHidden = (e.target as HTMLInputElement).checked), ctx.store.update(() => {})) } }), h('span', null, `Show hidden (${hiddenSet.size})`)),
+      ),
+      h(
+        'button',
+        {
+          class: 'add-tile sk-add-type',
+          type: 'button',
+          on: {
+            click: () => {
+              const id = newId();
+              upd((r) => (r.rakeTypes ??= []).push({ id, name: 'New rake type', trainTypeIds: [], weight: 2, origin: 'generic', slots: [{ classIds: ['generic-coach-57'], min: 3, max: 5 }] }));
+              editRakeType = id;
+              focusNext = `sk_rtname_${id}`;
+            },
+          },
+        },
+        plusIcon(),
+        h('span', { class: 'mi-label' }, 'New rake type'),
+        h('span', { class: 'mi-sub' }, 'or copy a built-in one below'),
+      ),
+      own.length || builtIns.length ? h('ul', { class: 'plain sk-lib' }, ...own.map(row), ...builtIns.map(row)) : h('p', { class: 'help' }, 'Every rake type is hidden.'),
+    );
+    return body;
+  };
+
+  /** The form for one of the layout's own rake types, with an example drawn to scale. */
+  const rakeTypeForm = (t: RakeType, editT: (id: string, fn: (x: RakeType) => void) => void) => {
+    const ed = (fn: (x: RakeType) => void) => editT(t.id, fn);
+    const edSlot = (i: number, fn: (x: RakeSlot) => void) =>
+      ed((x) => {
+        const sl = x.slots[i];
+        if (sl) fn(sl);
+      });
+    const num = (id: string, label: string, value: number, min: number, max: number, apply: (n: number) => void) =>
+      h('div', { class: 'field sk-num' }, h('label', { for: id }, label), h('input', { type: 'number', id, value: String(value), min: String(min), max: String(max), step: '1', inputmode: 'numeric', on: { change: (e: Event) => {
+        const n = Math.round(Number((e.target as HTMLInputElement).value));
+        if (Number.isFinite(n)) apply(Math.max(min, Math.min(max, n)));
+      } } }));
+    const MIX = '__mix';
+    const slotRow = (sl: RakeSlot, i: number) => {
+      const value = sl.mix ? MIX : (sl.classIds[0] ?? '');
+      const others = !sl.mix && sl.classIds.length > 1 ? sl.classIds.slice(1).map((c) => lib.cls(c)?.name ?? c).join(', ') : '';
+      const goods = sl.mix || isGoodsClass(sl.classIds[0]);
+      return h(
+        'li',
+        { class: 'sk-slot' },
+        h(
+          'div',
+          { class: 'field sk-slot-what' },
+          h('label', { for: `sk_rts_${t.id}_${i}` }, `Vehicles ${i + 1}`),
+          h(
+            'select',
+            {
+              id: `sk_rts_${t.id}_${i}`,
+              on: {
+                change: (e: Event) =>
+                  edSlot(i, (x) => {
+                    const v = (e.target as HTMLSelectElement).value;
+                    if (v === MIX) {
+                      x.mix = true;
+                      x.classIds = [];
+                    } else {
+                      delete x.mix;
+                      delete x.fitted;
+                      x.classIds = [v];
+                    }
+                  }),
+              },
+            },
+            option(MIX, 'Goods from the company mix', sl.mix === true),
+            ...classOptions(value === MIX ? '' : value),
+          ),
+          others ? h('small', { class: 'help' }, `Or: ${others}`) : null,
+        ),
+        num(`sk_rtmin_${t.id}_${i}`, 'At least', sl.min, 0, 200, (n) => edSlot(i, (x) => ((x.min = n), (x.max = Math.max(x.max, n))))),
+        num(`sk_rtmax_${t.id}_${i}`, 'At most', sl.max, 1, 200, (n) => edSlot(i, (x) => ((x.max = n), (x.min = Math.min(x.min, n))))),
+        sl.mix
+          ? h('div', { class: 'field sk-slot-brake' }, h('label', { for: `sk_rtfit_${t.id}_${i}` }, 'Brake'), h('select', { id: `sk_rtfit_${t.id}_${i}`, on: { change: (e: Event) => edSlot(i, (x) => {
+              const v = (e.target as HTMLSelectElement).value;
+              if (v === 'any') delete x.fitted;
+              else x.fitted = v === 'fitted';
+            }) } }, option('any', 'Any', sl.fitted === undefined), option('fitted', 'Fitted', sl.fitted === true), option('unfitted', 'Unfitted', sl.fitted === false)))
+          : null,
+        goods ? h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!sl.loaded, on: { change: (e: Event) => edSlot(i, (x) => ((e.target as HTMLInputElement).checked ? (x.loaded = true) : delete x.loaded)) } }), h('span', null, 'Loaded')) : null,
+        h('span', { class: 'sk-btns' },
+          h('button', { class: 'btn small', type: 'button', disabled: i === 0, 'aria-label': `Move vehicles ${i + 1} towards the engine`, on: { click: () => ed((x) => ([x.slots[i - 1], x.slots[i]] = [x.slots[i], x.slots[i - 1]])) } }, '▲'),
+          h('button', { class: 'btn small', type: 'button', disabled: i === t.slots.length - 1, 'aria-label': `Move vehicles ${i + 1} away from the engine`, on: { click: () => ed((x) => ([x.slots[i + 1], x.slots[i]] = [x.slots[i], x.slots[i + 1]])) } }, '▼'),
+          h('button', { class: 'btn danger small', type: 'button', disabled: t.slots.length <= 1, 'aria-label': `Remove vehicles ${i + 1}`, on: { click: () => ed((x) => x.slots.splice(i, 1)) } }, '✕'),
+        ),
+      );
+    };
+    // An example, drawn to scale (for its first train type, from the layout's company mix).
+    const example = generateRake(t, layout, lib, t.trainTypeIds[0] ?? '', rtExample ? seededRandom(rtExample) : undefined).map((v) => resolveVehicleFor(v));
+    const exLen = example.reduce((m, v) => m + v.metres, 0);
+    return h(
+      'div',
+      { class: 'form-grid tight sk-class-form sk-rt-form' },
+      h('div', { class: 'field' }, h('label', { for: `sk_rtname_${t.id}` }, 'Name'), h('input', { type: 'text', id: `sk_rtname_${t.id}`, value: t.name, maxlength: 80, autocomplete: 'off', on: { change: (e: Event) => {
+        const v = (e.target as HTMLInputElement).value.trim();
+        if (v) ed((x) => (x.name = v));
+      } } })),
+      num(`sk_rtw_${t.id}`, 'How often (1 to 100)', t.weight, 1, 100, (n) => ed((x) => (x.weight = n))),
+      h('label', { class: 'check sk-rt-block' }, h('input', { type: 'checkbox', checked: !!t.block, on: { change: (e: Event) => ed((x) => ((e.target as HTMLInputElement).checked ? (x.block = true) : delete x.block)) } }), h('span', null, 'Block train (one kind of wagon): rarer in the grouping era')),
+      h(
+        'fieldset',
+        { class: 'sk-rt-types' },
+        h('legend', null, 'Suitable for'),
+        ...st.trainTypes.filter((x) => nonePlain(x.id)).map((x) =>
+          h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.trainTypeIds.includes(x.id), on: { change: (e: Event) => ed((y) => {
+            const on = (e.target as HTMLInputElement).checked;
+            y.trainTypeIds = on ? [...new Set([...y.trainTypeIds, x.id])] : y.trainTypeIds.filter((z) => z !== x.id);
+          }) } }), h('span', null, x.name)),
+        ),
+      ),
+      h('div', { class: 'sk-rt-slots' },
+        h('h3', { class: 'shelf-label' }, 'Vehicles, from the engine end'),
+        h('ol', { class: 'plain sk-slots' }, ...t.slots.map(slotRow)),
+        h('button', { class: 'btn small', type: 'button', on: { click: () => ed((x) => x.slots.push({ classIds: ['generic-coach-57'], min: 1, max: 1 })) } }, 'Add vehicles'),
+        h('small', { class: 'help' }, 'Goods trains are marshalled as they are made: fitted vehicles next to the engine and a brake van at the tail (fitted when the train has a fitted head).'),
+      ),
+      h('div', { class: 'sk-rt-example' },
+        h('div', { class: 'row' },
+          h('small', { class: 'help' }, `${rtExample ? 'An example' : 'A typical one'}: ${example.length} vehicles, ${example.some((v) => v.approx) ? 'about ' : ''}${vlen(exLen)}.`),
+          h('button', { class: 'btn small', type: 'button', on: { click: () => ((rtExample = rtExample + 1), ctx.store.update(() => {})) } }, 'Another example'),
+          engineSelect(`sk_rtengine_${t.id}`),
+        ),
+        h('div', { class: 'sk-vis' }, drawRake(example, { engineEnd: 'A', units, engine: drawEngine, labels: example.map((r) => classCode(r.cls)), title: `${t.name}: an example` })),
+      ),
+      h('div', { class: 'field sk-rt-notes' }, h('label', { for: `sk_rtnotes_${t.id}` }, 'Notes'), h('input', { type: 'text', id: `sk_rtnotes_${t.id}`, value: t.notes ?? '', maxlength: 400, autocomplete: 'off', on: { change: (e: Event) => {
+        const v = (e.target as HTMLInputElement).value.trim();
+        ed((x) => (v ? (x.notes = v) : delete x.notes));
+      } } })),
+    );
+  };
+  const isGoodsClass = (id: string | undefined) => {
+    const c = id ? lib.cls(id) : undefined;
+    return !!c && !c.coachType && c.category !== 'brakeVan' && c.category !== 'other';
+  };
+  const resolveVehicleFor = (v: Vehicle) => resolveVehicle(v, lib);
 
   const el = h(
     'div',
@@ -667,8 +953,10 @@ export function layoutStock(ctx: Ctx, layoutId: string): HTMLElement {
       `The rolling stock of ${layout.name}: a library of vehicle types, your fleet of individual vehicles, and rakes built from them, drawn to scale with what they add up to. `,
       'Use it to plan formations for timetables. In signaller play mode, stock left standing in roads is made of individual vehicles too.',
     ),
+    companyCase(),
     sectionCase('rakes', 'Rakes', `${plural(rs.rakes.length, 'rake')} saved`, rakesBody()),
     sectionCase('fleet', 'Fleet', `${plural(rs.fleet.length, 'vehicle')}`, fleetBody()),
+    sectionCase('rakeTypes', 'Rake types', `${RAKE_TYPES.filter((t) => rakeTypeFitsLayout(t, layout) && !(rs.hiddenRakeTypes ?? []).includes(t.id)).length} built in${rs.rakeTypes?.length ? ` + ${rs.rakeTypes.length} of your own` : ''}${rs.hiddenRakeTypes?.length ? ` · ${rs.hiddenRakeTypes.length} hidden` : ''}`, rakeTypesBody()),
     sectionCase('library', 'Library', `${lib.builtIns().length} built-in types${rs.classes.length ? ` + ${rs.classes.length} of your own` : ''}${rs.hidden.length ? ` · ${rs.hidden.length} hidden` : ''}`, libraryBody()),
   );
   if (focusNext) {

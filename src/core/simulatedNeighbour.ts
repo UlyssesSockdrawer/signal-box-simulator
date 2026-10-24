@@ -338,7 +338,16 @@ export class SimulatedNeighbour {
     }
 
     // Is this the reply we are waiting for?
-    const aw = this.awaiting;
+    let aw = this.awaiting;
+    // Call attention instead of repeating a train being offered (v0.3.39): the offer is not accepted (a
+    // refusal, as by not replying), the train is held, and the user's box starts its own exchange
+    // (e.g. blocking back for a shunt).
+    if (aw && code === this.sig('call_attention') && this.incoming?.stage === 'offered' && aw.code === this.incoming.code) {
+      this.cancel(aw.repeatTimer);
+      this.awaiting = null;
+      aw = null;
+      this.refused(this.incoming);
+    }
     if (aw) {
       if (code === aw.code) {
         if (aw.expectHold && !hold) {
@@ -1118,7 +1127,8 @@ export class SimulatedNeighbour {
   /** Is the line from here to the user's box in use by a train (so it cannot be blocked back)? */
   private incomingInUse(): string {
     const mv = this.incoming;
-    if (mv && mv.stage !== 'held' && mv.stage !== 'calling') return mv.stage === 'offered' ? `${this.o.name} is offering you a train` : `a train from ${this.o.name} is accepted or in the section`;
+    // A train only offered (not accepted) or held there does not stop it: it is held while the line is blocked back.
+    if (mv && mv.stage !== 'held' && mv.stage !== 'calling' && mv.stage !== 'offered') return `a train from ${this.o.name} is accepted or in the section`;
     if (!this.token && this.localInstrument !== 'LB') return 'your instrument is not at LINE BLOCKED (send 2-1 for the last train and put it back first)';
     if (this.o.lineType === 'single' && (this.outgoing || this.tokenOut)) return 'a train is being sent on the single line';
     return '';
@@ -1141,7 +1151,7 @@ export class SimulatedNeighbour {
       this.irregular(`${code} (blocking back) sent while ${busy}.`, 'block_busy');
       return;
     }
-    if (this.incoming?.stage === 'calling') {
+    if (this.incoming?.stage === 'calling' || this.incoming?.stage === 'offered') {
       // They were about to offer a train: it waits until the line is given back.
       this.incoming.stage = 'held';
       if (this.awaiting) this.cancel(this.awaiting.repeatTimer);

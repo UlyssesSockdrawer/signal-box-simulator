@@ -1,0 +1,372 @@
+{
+  "id": "rake-types-generic",
+  "name": "Generic rake types (any company, any era)",
+  "origin": "generic",
+  "eras": [],
+  "note": "Company-neutral recipes built from the generic vehicle types, following the shapes of the research doc's section 13 (brake at each end of a passenger set, counted blocks). The goods types are placeholders until Stage 3 (D9). There is no generic catering or sleeping type yet, so express and night sets carry ordinary coaches only. Goods slots marked mix are filled from the layout company's goods mix (the LMS production figures for LMS; a generic mix otherwise); block trains are weighted by the company's block-train weight for the era.",
+  "types": [
+    {
+      "id": "rt-local",
+      "name": "Local set (3 to 4 coaches)",
+      "trainTypeIds": [
+        "ordinary_passenger",
+        "branch_passenger"
+      ],
+      "weight": 3,
+      "slots": [
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-coach-57",
+            "generic-coach-50"
+          ],
+          "min": 1,
+          "max": 2
+        },
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-medium",
+      "name": "Medium-distance set (4 to 7 coaches)",
+      "trainTypeIds": [
+        "ordinary_passenger",
+        "express_passenger",
+        "ecs"
+      ],
+      "weight": 3,
+      "slots": [
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-coach-57",
+            "generic-coach-60"
+          ],
+          "min": 2,
+          "max": 5
+        },
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-express",
+      "name": "Express (8 to 12 coaches)",
+      "trainTypeIds": [
+        "express_passenger",
+        "ecs"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-coach-57",
+            "generic-coach-60"
+          ],
+          "min": 6,
+          "max": 10
+        },
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-excursion",
+      "name": "Excursion set (6 to 11 coaches)",
+      "trainTypeIds": [
+        "ordinary_passenger",
+        "express_passenger",
+        "ecs"
+      ],
+      "weight": 1,
+      "slots": [
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-coach-57"
+          ],
+          "min": 4,
+          "max": 9
+        },
+        {
+          "classIds": [
+            "generic-passenger-brake-57"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-push-pull",
+      "name": "Push-pull (1 or 2 coaches)",
+      "trainTypeIds": [
+        "branch_passenger",
+        "ordinary_passenger"
+      ],
+      "weight": 1,
+      "slots": [
+        {
+          "classIds": [
+            "generic-coach-57"
+          ],
+          "min": 0,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-driving-trailer-57"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-mail",
+      "name": "Mail and TPO train (6 to 10 vehicles)",
+      "trainTypeIds": [
+        "express_passenger",
+        "parcels"
+      ],
+      "weight": 1,
+      "slots": [
+        {
+          "classIds": [
+            "generic-full-brake-50"
+          ],
+          "min": 1,
+          "max": 2
+        },
+        {
+          "classIds": [
+            "generic-tpo-50"
+          ],
+          "min": 1,
+          "max": 2
+        },
+        {
+          "classIds": [
+            "generic-tpo-60"
+          ],
+          "min": 2,
+          "max": 4
+        },
+        {
+          "classIds": [
+            "generic-full-brake-50"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-parcels",
+      "name": "Parcels train (3 to 7 vans)",
+      "trainTypeIds": [
+        "parcels"
+      ],
+      "weight": 3,
+      "slots": [
+        {
+          "classIds": [
+            "generic-full-brake-50"
+          ],
+          "min": 1,
+          "max": 1
+        },
+        {
+          "classIds": [
+            "generic-van-50",
+            "generic-van-48"
+          ],
+          "min": 2,
+          "max": 6
+        }
+      ]
+    },
+    {
+      "id": "rt-fitted-goods",
+      "name": "Fitted goods (placeholder)",
+      "trainTypeIds": [
+        "freight_fitted_half"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-vent-van-12t-fitted"
+          ],
+          "min": 8,
+          "max": 20
+        },
+        {
+          "classIds": [
+            "generic-brake-van-20t-fitted"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "block": true
+    },
+    {
+      "id": "rt-part-fitted-goods",
+      "name": "Part-fitted goods (placeholder)",
+      "trainTypeIds": [
+        "freight_fitted_third",
+        "freight_fitted_four"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-vent-van-12t-fitted"
+          ],
+          "min": 4,
+          "max": 8
+        },
+        {
+          "classIds": [
+            "generic-vent-van-12t",
+            "generic-open-7plank-12t"
+          ],
+          "min": 6,
+          "max": 12,
+          "mix": true,
+          "fitted": false
+        },
+        {
+          "classIds": [
+            "generic-brake-van-20t-fitted"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-unfitted-goods",
+      "name": "Unfitted goods (placeholder)",
+      "trainTypeIds": [
+        "freight_unfitted",
+        "through_freight"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-open-7plank-12t",
+            "generic-vent-van-12t"
+          ],
+          "min": 10,
+          "max": 30,
+          "mix": true,
+          "fitted": false
+        },
+        {
+          "classIds": [
+            "generic-brake-van-20t"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "rt-mineral",
+      "name": "Mineral train (block of opens)",
+      "trainTypeIds": [
+        "mineral"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-open-7plank-12t"
+          ],
+          "min": 15,
+          "max": 40
+        },
+        {
+          "classIds": [
+            "generic-brake-van-20t"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "block": true
+    },
+    {
+      "id": "rt-pickup-goods",
+      "name": "Pick-up goods (placeholder)",
+      "trainTypeIds": [
+        "pickup_goods",
+        "branch_freight"
+      ],
+      "weight": 2,
+      "slots": [
+        {
+          "classIds": [
+            "generic-vent-van-12t",
+            "generic-open-7plank-12t"
+          ],
+          "min": 3,
+          "max": 10,
+          "mix": true,
+          "fitted": false
+        },
+        {
+          "classIds": [
+            "generic-brake-van-20t"
+          ],
+          "min": 1,
+          "max": 1
+        }
+      ]
+    }
+  ]
+}

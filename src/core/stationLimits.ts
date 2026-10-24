@@ -20,10 +20,20 @@ import type { AppState, BoxDef, Layout } from './types';
  * needs none of these.
  */
 
-/** Box circuits within the clearing point inside the home signals of one line: those beginning less than the clearing point in. */
-export function clearingPointCircuits(state: AppState, layout: Layout, box: BoxDef, connId: string): Set<string> {
+/**
+ * How much of a circuit lies within the clearing point (v0.3.39): the stretch within `metres` of its end
+ * `end` (the end nearer the home signal). Measured to the metre, so a movement at the far end of a long
+ * circuit inside the home signal does not foul the clearing point.
+ */
+export interface ClearingZone {
+  end: 0 | 1;
+  metres: number;
+}
+
+/** The clearing point inside the home signals of one line, circuit by circuit: circuit id → the stretches of it within the clearing point. */
+export function clearingPointZones(state: AppState, layout: Layout, box: BoxDef, connId: string): Map<string, ClearingZone[]> {
   const cp = layoutClearingPoint(layout);
-  const out = new Set<string>();
+  const out = new Map<string, ClearingZone[]>();
   const homes = boxSignals(state, layout, box).filter((s) => s.kind === 'home' && s.connectionId === connId);
   for (const h of homes) {
     const open: Array<{ d: Dir; at: number }> = [{ d: { circuitId: h.circuitId, toward: h.end }, at: 0 }];
@@ -36,12 +46,33 @@ export function clearingPointCircuits(state: AppState, layout: Layout, box: BoxD
         const k = `${n.circuitId}|${n.toward}`;
         if (seen.has(k)) continue;
         seen.add(k);
-        out.add(n.circuitId);
+        // Entered from the home side towards n.toward: the clearing point reaches (cp - at) metres in from the end entered by.
+        out.set(n.circuitId, [...(out.get(n.circuitId) ?? []), { end: (1 - n.toward) as 0 | 1, metres: cp - at }]);
         open.push({ d: n, at: at + circuitLength(state, layout, c).metres });
       }
     }
   }
   return out;
+}
+
+/** Box circuits within the clearing point inside the home signals of one line (wholly or in part). */
+export function clearingPointCircuits(state: AppState, layout: Layout, box: BoxDef, connId: string): Set<string> {
+  return new Set(clearingPointZones(state, layout, box, connId).keys());
+}
+
+/**
+ * Does a stretch of a circuit foul the clearing point? The stretch is run towards `toward`, starting
+ * `offset` metres in from the end it is entered by and `metres` long, in a circuit `full` metres long.
+ */
+export function stretchFouls(zones: ClearingZone[] | undefined, stretch: { toward: 0 | 1; metres: number; offset?: number }, full: number): boolean {
+  if (!zones?.length) return false;
+  const entry = (1 - stretch.toward) as 0 | 1;
+  const a0 = stretch.offset ?? 0;
+  const b0 = a0 + stretch.metres;
+  return zones.some((z) => {
+    const a = z.end === entry ? a0 : full - b0;
+    return a < z.metres - 0.01;
+  });
 }
 
 /** The line (connection) of a box that a circuit belongs to, or null. */

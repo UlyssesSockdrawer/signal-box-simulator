@@ -176,8 +176,13 @@ export interface ResolvedVehicle {
   category: StockCategory;
   corridor?: boolean;
   loaded: boolean;
-  /** Weight in kg if known (loaded weight when loaded and known, else tare). */
+  /**
+   * Weight in kg (loaded weight when loaded, else tare): its type's, else its generic stand-in's (coaching
+   * stock scaled by length, v0.3.41). Null only when neither has one.
+   */
   kg: number | null;
+  /** The weight is not a measured one (generic, estimated, or a stand-in's): shown as "about". */
+  weightApprox: boolean;
 }
 
 export function resolveVehicle(v: Vehicle, lib: StockLibrary): ResolvedVehicle {
@@ -192,7 +197,18 @@ export function resolveVehicle(v: Vehicle, lib: StockLibrary): ResolvedVehicle {
     unknownLength = true;
   }
   const loaded = v.loaded === true && canLoad(c);
-  const kg = loaded ? (c?.loadedKg ?? null) : (c?.tareKg ?? null);
+  const weightOf = (x: VehicleClass | undefined) => (x ? (loaded ? (x.loadedKg ?? x.tareKg) : x.tareKg) : undefined);
+  let kg: number | null = weightOf(c) ?? null;
+  let weightApprox = kg !== null && c?.weightBasis !== undefined && c.weightBasis !== 'measured';
+  if (kg === null) {
+    // No weight of its own: the generic stand-in's, scaled by length for coaching stock (bogie vehicles).
+    const stand = lib.cls(fallbackClassId(c));
+    const sk = weightOf(stand);
+    if (sk !== undefined) {
+      kg = c?.coachType && stand?.metresOverBuffers ? (sk * metres) / stand.metresOverBuffers : sk;
+      weightApprox = true;
+    }
+  }
   return {
     vehicle: v,
     cls: c,
@@ -206,6 +222,7 @@ export function resolveVehicle(v: Vehicle, lib: StockLibrary): ResolvedVehicle {
     corridor: c?.corridor,
     loaded,
     kg,
+    weightApprox,
   };
 }
 
@@ -228,9 +245,9 @@ export function rakeLength(rv: ResolvedVehicle[]): { metres: number; approx: boo
 }
 
 /** Weight (tare, or loaded where loaded), tolerating missing weights: `missing` vehicles had none. */
-export function rakeWeight(rv: ResolvedVehicle[]): { kg: number | null; missing: number } {
+export function rakeWeight(rv: ResolvedVehicle[]): { kg: number | null; missing: number; approx: boolean } {
   const known = rv.filter((v) => v.kg !== null);
-  return { kg: known.length ? known.reduce((m, v) => m + (v.kg ?? 0), 0) : null, missing: rv.length - known.length };
+  return { kg: known.length ? known.reduce((m, v) => m + (v.kg ?? 0), 0) : null, missing: rv.length - known.length, approx: known.some((v) => v.weightApprox) };
 }
 
 /** The fitted head: the unbroken run of fitted vehicles from the engine end (an unfitted vehicle breaks it). */
@@ -376,7 +393,7 @@ export interface RakeSummary {
   vehicles: ResolvedVehicle[];
   count: number;
   length: { metres: number; approx: boolean; unknown: number };
-  weight: { kg: number | null; missing: number };
+  weight: { kg: number | null; missing: number; approx: boolean };
   fittedHead: number;
   fittedProportion: number;
   headcodeClass: string;

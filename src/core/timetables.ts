@@ -1,3 +1,4 @@
+import { sanitiseTrainStock, stockIssues } from './trainStock';
 import { canWork, migrateJob, newJob, runsLight } from './duties';
 import { CARRIAGE_PLACES, ENGINE_PLACES, findPlace, findRoad, roadTrackKey } from './places';
 import type { AppState, Layout, Loco, LocoJob, Place, PlaceRef, Timetable, TimetableCall, TimetableEntry, TimetableEntryKind, TimetableTiming, TimetableTrain } from './types';
@@ -216,6 +217,8 @@ export function addTrain(state: AppState, layout: Layout, tt: Timetable, opts: {
     locoId: loco?.id ?? '',
     anyWorking: loco?.working.trainTypeId ?? 'ordinary_passenger',
     consist: loco?.working.consist ?? '',
+    // New trains take any suitable rake (D10; v0.3.40); the consist text is kept for the text option.
+    stock: { mode: 'any' },
     notes: '',
   };
   tt.trains.push(train);
@@ -358,6 +361,8 @@ export function sanitiseTimetables(state: AppState): void {
         t.anyWorking ??= 'ordinary_passenger';
         t.consist ??= '';
         t.notes ??= '';
+        // Its rolling stock (v0.3.40): an unknown choice is dropped, so the text consist applies.
+        sanitiseTrainStock(t);
       }
       const trains = new Set(tt.trains.map((t) => t.id));
       tt.entries = Array.isArray(tt.entries) ? tt.entries.filter((e) => e && typeof e.id === 'string') : [];
@@ -672,6 +677,8 @@ export function walkTimetable(state: AppState, layout: Layout, tt: Timetable): T
   let errors = 0;
   let warnings = 0;
   for (const s of steps) for (const i of s.issues) i.level === 'error' ? errors++ : warnings++;
+  // Rolling stock (v0.3.40): rakes and rake types gone, a rake that does not match the working, shared vehicles.
+  for (const [id, list] of stockIssues(state, layout, tt)) for (const i of list) trainIssue(id, i);
   for (const list of trainIssues.values()) for (const i of list) i.level === 'error' ? errors++ : warnings++;
   return { units, steps, trainIssues, errors, warnings };
 }

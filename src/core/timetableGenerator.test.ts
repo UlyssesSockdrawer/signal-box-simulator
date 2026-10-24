@@ -288,3 +288,30 @@ describe('turntables, servicing and carriage sidings when generating (v0.3.36)',
     expect(found).toBeGreaterThan(0);
   });
 });
+
+describe('run rounds in generated timetables (v0.3.39)', () => {
+  it('plan a run round with time for it, and keep other trains off the lines into the station meanwhile; goods trains too', () => {
+    let rounds = 0;
+    let goodsRounds = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const s = createDefaultState();
+      const l = s.layouts[0];
+      const tt = generateTimetable(s, l, opts({ timing: 'session', seed, length: 240, busyness: 'busy' }), 'G').tt;
+      for (const rr of tt.entries.filter((e) => e.runRound && e.dep !== null)) {
+        rounds++;
+        const train = tt.trains.find((x) => x.id === rr.trainId)!;
+        const own = tt.entries.filter((e) => e.trainId === rr.trainId);
+        const next = own[own.indexOf(rr) + 1];
+        // Time for it: the train leaves at least 11 minutes after the run round starts (8 for the move, 3 to spare).
+        if (next) expect(next.dep! - rr.dep!).toBeGreaterThanOrEqual(11);
+        if (own.some((e) => !['ordinary_passenger', 'express_passenger', 'branch_passenger', 'parcels', 'ecs', 'light_engine'].includes(e.trainTypeId))) goodsRounds++;
+        // No other train runs on a line (every run at Sigsim Central does) while it runs round.
+        const until = rr.dep! + 8;
+        const others = tt.entries.filter((e) => e.trainId !== rr.trainId && e.kind === 'run' && e.dep !== null && e.arr !== null && e.dep < until && rr.dep! < e.arr);
+        expect(others.map((e) => `${e.headcode} ${e.dep}-${e.arr}`), `${train.name} runs round at ${rr.dep}`).toEqual([]);
+      }
+    }
+    expect(rounds).toBeGreaterThan(0);
+    expect(goodsRounds).toBeGreaterThan(0);
+  });
+});
